@@ -392,7 +392,25 @@ class PipelineService:
                     else pipe.GetGraphicsPipelineObject()
                 )
                 bind = pipe.GetConstantBlock(stage, i, 0)
-                if bind.descriptor.resource != rd.ResourceId.Null():
+
+                # 检测 $Globals (OpenGL 内联 uniform block)
+                is_globals = (cb.name == "$Globals")
+
+                if is_globals:
+                    # $Globals 没有底层 buffer 资源，使用空 ResourceId
+                    variables = controller.GetCBufferVariableContents(
+                        pipeline_obj,
+                        reflection.resourceId,
+                        stage,
+                        reflection.entryPoint,
+                        i,
+                        rd.ResourceId(),  # 空 ResourceId
+                        0,
+                        0
+                    )
+                    cb_info["variables"] = Serializers.serialize_variables(variables)
+                elif bind.descriptor.resource != rd.ResourceId.Null():
+                    # 普通 buffer-backed constant block
                     variables = controller.GetCBufferVariableContents(
                         pipeline_obj,
                         reflection.resourceId,
