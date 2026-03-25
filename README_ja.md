@@ -93,6 +93,7 @@ uv tool update-shell  # PATHに追加
 | `get_buffer_contents` | バッファの内容を取得 (Base64) |
 | `get_texture_info` | テクスチャのメタデータを取得 |
 | `get_texture_data` | テクスチャのピクセルデータを取得 (Base64) |
+| `save_texture` | テクスチャを画像ファイルに保存 (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
 | `get_pipeline_state` | パイプライン状態を取得 |
 
 ## 使用例
@@ -139,6 +140,25 @@ get_buffer_contents(resource_id="ResourceId::123")
 
 # オフセット256から512バイト取得
 get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
+```
+
+### テクスチャをファイルに保存
+
+```
+# PNG形式で保存
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
+
+# JPG形式で保存
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
+
+# 特定のmipレベルを保存
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
+
+# キューブマップの特定の面を保存 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
+save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
+
+# アルファチャンネルを破棄
+save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
 
 ## 要件

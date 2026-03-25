@@ -25,6 +25,7 @@ class RequestHandler:
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "get_texture_data": self._handle_get_texture_data,
+            "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
@@ -162,6 +163,27 @@ class RequestHandler:
         sample = params.get("sample", 0)
         depth_slice = params.get("depth_slice")  # None = full volume
         return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice)
+
+    def _handle_save_texture(self, params):
+        """Handle save_texture request"""
+        resource_id = params.get("resource_id")
+        if resource_id is None:
+            raise ValueError("resource_id is required")
+        output_path = params.get("output_path")
+        if output_path is None:
+            raise ValueError("output_path is required")
+        format_type = params.get("format_type", "PNG")
+        mip = params.get("mip", 0)
+        slice_index = params.get("slice_index", 0)
+        alpha_mode = params.get("alpha_mode", "preserve")
+        return self.facade.save_texture(
+            resource_id=resource_id,
+            output_path=output_path,
+            format_type=format_type,
+            mip=mip,
+            slice_index=slice_index,
+            alpha_mode=alpha_mode,
+        )
 
     def _handle_get_pipeline_state(self, params):
         """Handle get_pipeline_state request"""

@@ -94,6 +94,7 @@ uv tool update-shell  # 把renderdoc-mcp添加到 PATH
 | `get_buffer_contents` | 获取缓冲区内容 (Base64) |
 | `get_texture_info` | 获取纹理元数据 |
 | `get_texture_data` | 获取纹理像素数据 (Base64) |
+| `save_texture` | 保存纹理到图片文件 (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
 | `get_pipeline_state` | 获取管线状态 |
 
 ## 使用示例
@@ -140,6 +141,25 @@ get_buffer_contents(resource_id="ResourceId::123")
 
 # 从偏移量 256 获取 512 字节
 get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
+```
+
+### 保存纹理到文件
+
+```
+# 保存纹理为 PNG
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
+
+# 保存为 JPG 格式
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
+
+# 保存特定 mip 级别
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
+
+# 保存立方体贴图的特定面 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
+save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
+
+# 丢弃 alpha 通道
+save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
 
 ## 系统要求

@@ -2,6 +2,7 @@
 Resource information service for RenderDoc.
 """
 
+import os
 import base64
 
 import renderdoc as rd
@@ -25,6 +26,91 @@ class ResourceService:
             if tex_id == target_id:
                 return tex
         return None
+
+    def save_texture(
+        self,
+        resource_id,
+        output_path,
+        format_type="PNG",
+        mip=0,
+        slice_index=0,
+        alpha_mode="preserve",
+    ):
+        """
+        Save texture to file.
+
+        Args:
+            resource_id: The resource ID of the texture (e.g. "ResourceId::2495")
+            output_path: Output file path
+            format_type: Output format (PNG, JPG, BMP, TGA, EXR, DDS, HDR)
+            mip: Mip level to save (-1 for all mips)
+            slice_index: Array slice or cube face index
+            alpha_mode: Alpha handling (preserve, discard, blend_to_black)
+
+        Returns:
+            dict with success status and texture info
+        """
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        result = {"success": False, "error": None}
+
+        def callback(controller):
+            # Find texture
+            tex_desc = self._find_texture_by_id(controller, resource_id)
+            if not tex_desc:
+                result["error"] = "Texture not found: %s" % resource_id
+                return
+
+            # Create TextureSave configuration
+            tex_save = rd.TextureSave()
+            tex_save.resourceId = tex_desc.resourceId
+            tex_save.mip = mip
+            tex_save.slice.sliceIndex = slice_index
+
+            # Set alpha mode
+            alpha_map = {
+                "preserve": rd.AlphaMapping.Preserve,
+                "discard": rd.AlphaMapping.Discard,
+                "blend_to_black": rd.AlphaMapping.BlendToColor,
+            }
+            tex_save.alpha = alpha_map.get(alpha_mode.lower(), rd.AlphaMapping.Preserve)
+
+            # Set output format
+            format_map = {
+                "PNG": rd.FileType.PNG,
+                "JPG": rd.FileType.JPG,
+                "JPEG": rd.FileType.JPG,
+                "BMP": rd.FileType.BMP,
+                "TGA": rd.FileType.TGA,
+                "EXR": rd.FileType.EXR,
+                "DDS": rd.FileType.DDS,
+                "HDR": rd.FileType.HDR,
+            }
+            tex_save.destType = format_map.get(format_type.upper(), rd.FileType.PNG)
+
+            # Ensure output directory exists
+            output_dir = os.path.dirname(output_path)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+
+            # Save texture
+            controller.SaveTexture(tex_save, output_path)
+
+            result["success"] = True
+            result["output_path"] = output_path
+            result["resource_id"] = resource_id
+            result["format"] = format_type.upper()
+            result["width"] = tex_desc.width
+            result["height"] = tex_desc.height
+            result["mip"] = mip
+            result["slice"] = slice_index
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result
 
     def get_buffer_contents(self, resource_id, offset=0, length=0):
         """Get buffer data"""

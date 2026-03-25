@@ -261,6 +261,46 @@ def get_texture_data(
 
 
 @mcp.tool
+def save_texture(
+    resource_id: str,
+    output_path: str,
+    format_type: Literal["PNG", "JPG", "BMP", "TGA", "EXR", "DDS", "HDR"] = "PNG",
+    mip: int = 0,
+    slice_index: int = 0,
+    alpha_mode: Literal["preserve", "discard", "blend_to_black"] = "preserve",
+) -> dict:
+    """
+    Save a texture to an image file.
+
+    Args:
+        resource_id: The resource ID of the texture to save (e.g. "ResourceId::2495")
+        output_path: Output file path (e.g. "D:/output/texture.png")
+        format_type: Output format - PNG (default), JPG, BMP, TGA, EXR, DDS, HDR
+        mip: Mip level to save, -1 for all mips (default: 0)
+        slice_index: Array slice or cube face index (default: 0)
+                     For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
+        alpha_mode: Alpha channel handling (default: preserve)
+                    - preserve: Keep alpha channel
+                    - discard: Remove alpha channel
+                    - blend_to_black: Blend alpha with black background
+
+    Returns success status and texture info including dimensions and output path.
+    This is the recommended way to save textures as it handles format conversion automatically.
+    """
+    return bridge.call(
+        "save_texture",
+        {
+            "resource_id": resource_id,
+            "output_path": output_path,
+            "format_type": format_type,
+            "mip": mip,
+            "slice_index": slice_index,
+            "alpha_mode": alpha_mode,
+        },
+    )
+
+
+@mcp.tool
 def get_pipeline_state(event_id: int) -> dict:
     """
     Get the full graphics pipeline state at a specific event.

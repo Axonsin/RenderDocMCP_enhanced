@@ -94,6 +94,7 @@ Add to `.mcp.json`:
 | `get_buffer_contents` | Get buffer contents (Base64) |
 | `get_texture_info` | Get texture metadata |
 | `get_texture_data` | Get texture pixel data (Base64) |
+| `save_texture` | Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
 | `get_pipeline_state` | Get pipeline state |
 
 ## Examples
@@ -140,6 +141,25 @@ get_buffer_contents(resource_id="ResourceId::123")
 
 # Get 512 bytes from offset 256
 get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
+```
+
+### Save Texture to File
+
+```
+# Save texture as PNG
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
+
+# Save as JPG format
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
+
+# Save specific mip level
+save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
+
+# Save specific face of cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
+save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
+
+# Discard alpha channel
+save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
 
 ## Requirements

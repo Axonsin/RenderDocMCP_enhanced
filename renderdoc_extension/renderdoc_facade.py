@@ -126,6 +126,25 @@ class RenderDocFacade:
         """Get texture pixel data"""
         return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice)
 
+    def save_texture(
+        self,
+        resource_id,
+        output_path,
+        format_type="PNG",
+        mip=0,
+        slice_index=0,
+        alpha_mode="preserve",
+    ):
+        """Save texture to file"""
+        return self._resource.save_texture(
+            resource_id=resource_id,
+            output_path=output_path,
+            format_type=format_type,
+            mip=mip,
+            slice_index=slice_index,
+            alpha_mode=alpha_mode,
+        )
+
     # ==================== Pipeline Operations ====================
 
     def get_shader_info(self, event_id, stage):
