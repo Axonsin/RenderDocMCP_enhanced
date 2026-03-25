@@ -115,46 +115,48 @@ class PipelineService:
 
             pipeline_info["shaders"] = stages
 
-            # Viewport and scissor
+            # Viewport and scissor — GetViewport(index) returns one Viewport at a time
             try:
-                vp_scissor = pipe.GetViewportScissor()
-                if vp_scissor:
-                    viewports = []
-                    for v in vp_scissor.viewports:
-                        viewports.append(
-                            {
-                                "x": v.x,
-                                "y": v.y,
-                                "width": v.width,
-                                "height": v.height,
-                                "min_depth": v.minDepth,
-                                "max_depth": v.maxDepth,
-                            }
-                        )
+                viewports = []
+                for idx in range(8):  # D3D11 supports up to 8 viewports
+                    v = pipe.GetViewport(idx)
+                    if not v.enabled:
+                        break
+                    viewports.append({
+                        "x": v.x,
+                        "y": v.y,
+                        "width": v.width,
+                        "height": v.height,
+                        "min_depth": v.minDepth,
+                        "max_depth": v.maxDepth,
+                    })
+                if viewports:
                     pipeline_info["viewports"] = viewports
             except Exception:
                 pass
 
-            # Render targets
+            # Render targets — GetOutputTargets() returns List[Descriptor], resource via .resource
             try:
-                om = pipe.GetOutputMerger()
-                if om:
-                    rts = []
-                    for i, rt in enumerate(om.renderTargets):
-                        if rt.resourceId != rd.ResourceId.Null():
-                            rts.append({"index": i, "resource_id": str(rt.resourceId)})
-                    pipeline_info["render_targets"] = rts
-
-                    if om.depthTarget.resourceId != rd.ResourceId.Null():
-                        pipeline_info["depth_target"] = str(om.depthTarget.resourceId)
+                rts = []
+                for i, rt in enumerate(pipe.GetOutputTargets()):
+                    if rt.resource != rd.ResourceId.Null():
+                        rts.append({"index": i, "resource_id": str(rt.resource)})
+                pipeline_info["render_targets"] = rts
             except Exception:
                 pass
 
-            # Input assembly
             try:
-                ia = pipe.GetIAState()
-                if ia:
-                    pipeline_info["input_assembly"] = {"topology": str(ia.topology)}
+                depth = pipe.GetDepthTarget()
+                if depth.resource != rd.ResourceId.Null():
+                    pipeline_info["depth_target"] = str(depth.resource)
+            except Exception:
+                pass
+
+            # Input assembly — GetPrimitiveTopology() returns Topology directly
+            try:
+                pipeline_info["input_assembly"] = {
+                    "topology": str(pipe.GetPrimitiveTopology())
+                }
             except Exception:
                 pass
 
@@ -256,7 +258,7 @@ class PipelineService:
                     "name": name_map.get(slot, ""),
                 }
 
-                desc = samp.descriptor
+                desc = samp.sampler
                 try:
                     samp_info["address_u"] = str(desc.addressU)
                     samp_info["address_v"] = str(desc.addressV)
@@ -265,7 +267,13 @@ class PipelineService:
                     pass
 
                 try:
-                    samp_info["filter"] = str(desc.filter)
+                    tf = desc.filter
+                    samp_info["filter"] = {
+                        "minify": str(tf.minify),
+                        "magnify": str(tf.magnify),
+                        "mip": str(tf.mip),
+                        "function": str(tf.filter),
+                    }
                 except AttributeError:
                     pass
 
@@ -277,17 +285,13 @@ class PipelineService:
                 try:
                     samp_info["min_lod"] = desc.minLOD
                     samp_info["max_lod"] = desc.maxLOD
-                    samp_info["mip_lod_bias"] = desc.mipLODBias
+                    samp_info["mip_lod_bias"] = desc.mipBias
                 except AttributeError:
                     pass
 
                 try:
-                    samp_info["border_color"] = [
-                        desc.borderColor[0],
-                        desc.borderColor[1],
-                        desc.borderColor[2],
-                        desc.borderColor[3],
-                    ]
+                    fv = desc.borderColorValue.floatValue
+                    samp_info["border_color"] = [fv[0], fv[1], fv[2], fv[3]]
                 except (AttributeError, TypeError):
                     pass
 
@@ -310,7 +314,7 @@ class PipelineService:
                 return cbuffers
 
             for cb in reflection.constantBlocks:
-                slot = cb.bindPoint if hasattr(cb, 'bindPoint') else cb.fixedBindNumber
+                slot = cb.fixedBindNumber
                 cb_info = {
                     "slot": slot,
                     "name": cb.name,
@@ -377,17 +381,17 @@ class PipelineService:
             }
 
             try:
-                bind = pipe.GetConstantBuffer(stage, i, 0)
-                if bind.resourceId != rd.ResourceId.Null():
+                bind = pipe.GetConstantBlock(stage, i, 0)
+                if bind.descriptor.resource != rd.ResourceId.Null():
                     variables = controller.GetCBufferVariableContents(
                         pipe.GetGraphicsPipelineObject(),
                         reflection.resourceId,
                         stage,
                         reflection.entryPoint,
                         i,
-                        bind.resourceId,
-                        bind.byteOffset,
-                        bind.byteSize,
+                        bind.descriptor.resource,
+                        bind.descriptor.byteOffset,
+                        bind.descriptor.byteSize,
                     )
                     cb_info["variables"] = Serializers.serialize_variables(variables)
             except Exception as e:

@@ -125,17 +125,16 @@ class SearchService:
 
             # Check render targets
             try:
-                om = pipe.GetOutputMerger()
-                if om:
-                    for i, rt in enumerate(om.renderTargets):
-                        if rt.resourceId != rd.ResourceId.Null():
-                            res_name = ""
-                            try:
-                                res_name = ctx.GetResourceName(rt.resourceId)
-                            except Exception:
-                                pass
-                            if res_name and texture_name.lower() in res_name.lower():
-                                return "RenderTarget[%d]: '%s'" % (i, res_name)
+                for i, rt in enumerate(pipe.GetOutputTargets()):
+                    if rt.resource == rd.ResourceId.Null():
+                        continue
+                    res_name = ""
+                    try:
+                        res_name = ctx.GetResourceName(rt.resource)
+                    except Exception:
+                        pass
+                    if res_name and texture_name.lower() in res_name.lower():
+                        return "RenderTarget[%d]: '%s'" % (i, res_name)
             except Exception:
                 pass
 
@@ -175,13 +174,15 @@ class SearchService:
 
             # Check render targets
             try:
-                om = pipe.GetOutputMerger()
-                if om:
-                    for i, rt in enumerate(om.renderTargets):
-                        if rt.resourceId == target_rid:
-                            return "RenderTarget[%d]" % i
-                    if om.depthTarget.resourceId == target_rid:
-                        return "DepthTarget"
+                for i, rt in enumerate(pipe.GetOutputTargets()):
+                    if rt.resource == target_rid:
+                        return "RenderTarget[%d]" % i
+            except Exception:
+                pass
+
+            try:
+                if pipe.GetDepthTarget().resource == target_rid:
+                    return "DepthTarget"
             except Exception:
                 pass
 
