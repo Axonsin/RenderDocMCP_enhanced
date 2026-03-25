@@ -37,8 +37,8 @@ python scripts/install_extension.py
 ### 3. 安装 MCP 服务器
 
 ```bash
-uv tool install
-uv tool update-shell  # 添加到 PATH
+uv tool install . # 从当前目录安装
+uv tool update-shell  # 把renderdoc-mcp添加到 PATH
 ```
 
 重启终端后，`renderdoc-mcp` 命令将可用。
@@ -75,6 +75,8 @@ uv tool update-shell  # 添加到 PATH
   }
 }
 ```
+>还可以让Claude Code在此目录下打开(在这个目录下打开终端 -> claude command)。Claude Code将自动检测“.mcp.json”并注册mcp服务器（在此会话中）。
+
 
 ## 使用方法
 

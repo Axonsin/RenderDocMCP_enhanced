@@ -37,8 +37,8 @@ The extension will be installed to `%APPDATA%\qrenderdoc\extensions\renderdoc_mc
 ### 3. Install MCP Server
 
 ```bash
-uv tool install
-uv tool update-shell  # Add to PATH
+uv tool install . # Install from current directory
+uv tool update-shell  # Add renderdoc-mcp command to PATH
 ```
 
 After restarting your shell, the `renderdoc-mcp` command will be available.
@@ -75,6 +75,8 @@ Add to `.mcp.json`:
   }
 }
 ```
+
+>You can also open shell to wake Claude Code in this root-dir. Claude Code will automatically detect `.mcp.json` and register the MCP server (in this session).
 
 ## Usage
 

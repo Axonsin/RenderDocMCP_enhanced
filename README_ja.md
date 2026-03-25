@@ -37,7 +37,7 @@ python scripts/install_extension.py
 ### 3. MCPサーバーのインストール
 
 ```bash
-uv tool install
+uv tool install . # 現在のディレクトリからインストール
 uv tool update-shell  # PATHに追加
 ```
 
@@ -75,6 +75,7 @@ uv tool update-shell  # PATHに追加
   }
 }
 ```
+>このディレクトリを作業フォルダとして Claude Code を開くこともできます（このディレクトリでターミナルを開き、claude コマンドを実行するのと同じ動作です）。Claude Code は .mcp.json を自動的に検出し、このセッション限りで MCP サーバーを登録します。
 
 ## 使い方
 
