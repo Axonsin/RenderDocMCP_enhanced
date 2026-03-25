@@ -45,8 +45,13 @@ class PipelineService:
             try:
                 targets = controller.GetDisassemblyTargets(True)
                 if targets:
+                    pipeline_obj = (
+                        pipe.GetComputePipelineObject()
+                        if stage_enum == rd.ShaderStage.Compute
+                        else pipe.GetGraphicsPipelineObject()
+                    )
                     disasm = controller.DisassembleShader(
-                        pipe.GetGraphicsPipelineObject(), reflection, targets[0]
+                        pipeline_obj, reflection, targets[0]
                     )
                     shader_info["disassembly"] = disasm
             except Exception as e:
@@ -381,10 +386,15 @@ class PipelineService:
             }
 
             try:
+                pipeline_obj = (
+                    pipe.GetComputePipelineObject()
+                    if stage == rd.ShaderStage.Compute
+                    else pipe.GetGraphicsPipelineObject()
+                )
                 bind = pipe.GetConstantBlock(stage, i, 0)
                 if bind.descriptor.resource != rd.ResourceId.Null():
                     variables = controller.GetCBufferVariableContents(
-                        pipe.GetGraphicsPipelineObject(),
+                        pipeline_obj,
                         reflection.resourceId,
                         stage,
                         reflection.entryPoint,
