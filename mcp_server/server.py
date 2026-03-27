@@ -219,6 +219,62 @@ def get_buffer_contents(
 
 
 @mcp.tool
+def list_textures(
+    name_filter: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """
+    List all textures in the current capture with optional filtering and pagination.
+
+    Args:
+        name_filter: Optional partial name match (case-insensitive).
+                    E.g. "Character" matches "CharacterSkin_Diffuse", "CharacterNormal", etc.
+        offset: Starting index for pagination (default: 0)
+        limit: Maximum number of textures to return (default: 50)
+
+    Returns a list of textures with metadata:
+    - textures: List of {resource_id, name, width, height, depth, format, mip_levels,
+              array_size, byte_size, dimension, cubemap, msaa_samples}
+    - total_count: Total number of textures matching the filter
+    - offset/limit: Current pagination state
+    - returned_count: Number of textures in this response
+    """
+    params: dict[str, object] = {"offset": offset, "limit": limit}
+    if name_filter is not None:
+        params["name_filter"] = name_filter
+    return bridge.call("list_textures", params)
+
+
+@mcp.tool
+def list_buffers(
+    name_filter: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """
+    List all buffers in the current capture with optional filtering and pagination.
+
+    Args:
+        name_filter: Optional partial name match (case-insensitive).
+                    E.g. "Camera" matches "CameraCB", "CameraData", etc.
+        offset: Starting index for pagination (default: 0)
+        limit: Maximum number of buffers to return (default: 50)
+
+    Returns a list of buffers with metadata:
+    - buffers: List of {resource_id, name, byte_size, creation_flags}
+              creation_flags can include: "Vertex", "Index", "Constants", "ReadWrite", "Indirect"
+    - total_count: Total number of buffers matching the filter
+    - offset/limit: Current pagination state
+    - returned_count: Number of buffers in this response
+    """
+    params: dict[str, object] = {"offset": offset, "limit": limit}
+    if name_filter is not None:
+        params["name_filter"] = name_filter
+    return bridge.call("list_buffers", params)
+
+
+@mcp.tool
 def get_texture_info(resource_id: str) -> dict:
     """
     Get metadata about a texture resource.

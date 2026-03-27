@@ -17,6 +17,122 @@ class ResourceService:
         self.ctx = ctx
         self._invoke = invoke_fn
 
+    @staticmethod
+    def _parse_buffer_flags(flags):
+        """Parse BufferCategory flags to human-readable list"""
+        flag_names = []
+        if flags & rd.BufferCategory.Vertex:
+            flag_names.append("Vertex")
+        if flags & rd.BufferCategory.Index:
+            flag_names.append("Index")
+        if flags & rd.BufferCategory.Constants:
+            flag_names.append("Constants")
+        if flags & rd.BufferCategory.ReadWrite:
+            flag_names.append("ReadWrite")
+        if flags & rd.BufferCategory.Indirect:
+            flag_names.append("Indirect")
+        if not flag_names:
+            flag_names.append("None")
+        return flag_names
+
+    def list_textures(self, name_filter=None, offset=0, limit=50):
+        """List all textures in the capture with optional name filtering and pagination."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        result = {"textures": None, "error": None}
+
+        def callback(controller):
+            all_textures = controller.GetTextures()
+
+            items = []
+            for tex in all_textures:
+                name = ""
+                try:
+                    name = self.ctx.GetResourceName(tex.resourceId)
+                except Exception:
+                    pass
+
+                if name_filter is not None and name_filter.lower() not in name.lower():
+                    continue
+
+                items.append({
+                    "resource_id": str(tex.resourceId),
+                    "name": name,
+                    "width": tex.width,
+                    "height": tex.height,
+                    "depth": tex.depth,
+                    "format": str(tex.format.Name()),
+                    "mip_levels": tex.mips,
+                    "array_size": tex.arraysize,
+                    "byte_size": tex.byteSize,
+                    "dimension": str(tex.type),
+                    "cubemap": tex.cubemap,
+                    "msaa_samples": tex.msSamp,
+                })
+
+            total_count = len(items)
+            paginated = items[offset:offset + limit]
+
+            result["textures"] = {
+                "textures": paginated,
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+                "returned_count": len(paginated),
+            }
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["textures"]
+
+    def list_buffers(self, name_filter=None, offset=0, limit=50):
+        """List all buffers in the capture with optional name filtering and pagination."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        result = {"buffers": None, "error": None}
+
+        def callback(controller):
+            all_buffers = controller.GetBuffers()
+
+            items = []
+            for buf in all_buffers:
+                name = ""
+                try:
+                    name = self.ctx.GetResourceName(buf.resourceId)
+                except Exception:
+                    pass
+
+                if name_filter is not None and name_filter.lower() not in name.lower():
+                    continue
+
+                items.append({
+                    "resource_id": str(buf.resourceId),
+                    "name": name,
+                    "byte_size": buf.length,
+                    "creation_flags": self._parse_buffer_flags(buf.creationFlags),
+                })
+
+            total_count = len(items)
+            paginated = items[offset:offset + limit]
+
+            result["buffers"] = {
+                "buffers": paginated,
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+                "returned_count": len(paginated),
+            }
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["buffers"]
+
     def _find_texture_by_id(self, controller, resource_id):
         """Find texture by resource ID"""
         target_id = Parsers.extract_numeric_id(resource_id)

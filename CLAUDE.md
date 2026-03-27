@@ -55,7 +55,9 @@ RenderDocMCP/
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
 | `get_shader_info` | 着色器源码/常量缓冲区 |
 | `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
-| `get_texture_info` | 纹理元数据 |
+| `list_textures` | 列出捕获中所有纹理（支持名称过滤和分页） |
+| `list_buffers` | 列出捕获中所有缓冲区（支持名称过滤和分页） |
+| `get_texture_info` | **纹理元数据** |
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
 | `get_pipeline_state` | 管线状态整体 |
@@ -87,6 +89,48 @@ list_captures(directory="D:\\captures")
 # 打开捕获文件（现有捕获会自动关闭）
 open_capture(capture_path="D:\\captures\\game.rdc")
 # → {"success": true, "filename": "game.rdc", "api": "D3D11"}
+```
+
+### 资源枚举工具
+
+```python
+# 列出捕获中所有纹理
+list_textures()
+# → {
+#     "textures": [
+#         {"resource_id": "ResourceId::2495", "name": "SceneColor", "width": 1920, "height": 1080,
+#          "depth": 1, "format": "R8G8B8A8_UNORM", "mip_levels": 1, "array_size": 1,
+#          "byte_size": 8294400, "dimension": "Texture2D", "cubemap": false, "msaa_samples": 1},
+#         ...
+#     ],
+#     "total_count": 150,
+#     "offset": 0, "limit": 50, "returned_count": 50
+# }
+
+# 按名称过滤（部分匹配，不区分大小写）
+list_textures(name_filter="Character")
+
+# 分页
+list_textures(offset=50, limit=50)
+
+# 列出捕获中所有缓冲区
+list_buffers()
+# → {
+#     "buffers": [
+#         {"resource_id": "ResourceId::3001", "name": "CameraCB",
+#          "byte_size": 256, "creation_flags": ["Constants"]},
+#         {"resource_id": "ResourceId::3002", "name": "VertexBuffer",
+#          "byte_size": 12096, "creation_flags": ["Vertex"]},
+#         ...
+#     ],
+#     "total_count": 80,
+#     "offset": 0, "limit": 50, "returned_count": 50
+# }
+
+# 按名称过滤
+list_buffers(name_filter="Camera")
+
+# creation_flags 可能的值: "Vertex", "Index", "Constants", "ReadWrite", "Indirect"
 ```
 
 ### 反向搜索工具

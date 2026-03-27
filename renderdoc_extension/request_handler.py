@@ -24,6 +24,8 @@ class RequestHandler:
             "get_shader_info": self._handle_get_shader_info,
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
+            "list_textures": self._handle_list_textures,
+            "list_buffers": self._handle_list_buffers,
             "get_texture_data": self._handle_get_texture_data,
             "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
@@ -155,6 +157,20 @@ class RequestHandler:
         if resource_id is None:
             raise ValueError("resource_id is required")
         return self.facade.get_texture_info(resource_id)
+
+    def _handle_list_textures(self, params):
+        """Handle list_textures request"""
+        name_filter = params.get("name_filter")
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", 50))
+        return self.facade.list_textures(name_filter, offset, limit)
+
+    def _handle_list_buffers(self, params):
+        """Handle list_buffers request"""
+        name_filter = params.get("name_filter")
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", 50))
+        return self.facade.list_buffers(name_filter, offset, limit)
 
     def _handle_get_texture_data(self, params):
         """Handle get_texture_data request"""

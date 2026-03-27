@@ -117,6 +117,14 @@ class RenderDocFacade:
 
     # ==================== Resource Operations ====================
 
+    def list_textures(self, name_filter=None, offset=0, limit=50):
+        """List all textures with optional name filtering and pagination."""
+        return self._resource.list_textures(name_filter, offset, limit)
+
+    def list_buffers(self, name_filter=None, offset=0, limit=50):
+        """List all buffers with optional name filtering and pagination."""
+        return self._resource.list_buffers(name_filter, offset, limit)
+
     def get_buffer_contents(self, resource_id, offset=0, length=0):
         """Get buffer data"""
         return self._resource.get_buffer_contents(resource_id, offset, length)
