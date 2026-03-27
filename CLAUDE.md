@@ -221,6 +221,38 @@ export_mesh_csv(
 - 属性命名格式：`in_{语义名}{语义索引}.{分量}`
 - 索引 sidecar 文件（.idx）：每行一个重映射后的顶点索引
 
+## MCP 服务器启动
+
+通过 FastMCP 框架实现，启动流程：
+
+1. **入口点定义**：`pyproject.toml` 中定义命令行入口
+2. **执行 main()**：运行 `renderdoc-mcp` 命令时调用 `mcp.run()`. renderdoc-mcp已被uv注册为命令
+3. **通信机制**：
+   - 与 MCP 客户端（Claude）：通过 stdio 通信
+   - 与 RenderDoc 扩展：通过文件 IPC（`%TEMP%/renderdoc_mcp/`）
+
+**使用方式**：
+
+```bash
+# 安装后直接运行
+renderdoc-mcp
+```
+
+在 Claude Code 配置中添加：
+```json
+{
+  "mcpServers": {
+    "renderdoc": {
+      "command": "renderdoc-mcp"
+    }
+  }
+}
+```
+
+**启动顺序**：
+1. 先启动 RenderDoc（扩展自动加载）
+2. MCP 服务器由 Claude 客户端自动启动.
+
 ## 通信协议
 
 基于文件的 IPC:
