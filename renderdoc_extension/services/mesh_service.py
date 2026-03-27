@@ -209,6 +209,32 @@ class MeshService:
                 buffer_cache[res_id] = controller.GetBufferData(res_id, 0, 0)
         return buffer_cache
 
+    def _get_resource_name(self, controller, resource_id) -> str:
+        """Get resource name from RenderDoc"""
+        if resource_id == rd.ResourceId.Null():
+            return ""
+
+        # Try to get from buffer list
+        try:
+            for buf in controller.GetBuffers():
+                if buf.resourceId == resource_id:
+                    if hasattr(buf, 'customName') and buf.customName:
+                        return buf.customName
+                    if hasattr(buf, 'name') and buf.name:
+                        return buf.name
+        except:
+            pass
+
+        # Try to get from resource list
+        try:
+            for res in controller.GetResources():
+                if res.resourceId == resource_id and hasattr(res, 'name') and res.name:
+                    return res.name
+        except:
+            pass
+
+        return ""
+
     def get_mesh_summary(self, event_id: int) -> dict:
         """
         Get mesh summary information for an event.
@@ -284,8 +310,29 @@ class MeshService:
             if mesh_inputs:
                 topology = str(mesh_inputs[0].topology)
 
+            # Get mesh name from resource
+            mesh_name = ""
+            if mesh_inputs:
+                # Try to get name from vertex buffer first
+                for mesh in mesh_inputs:
+                    if mesh.vertexResourceId != rd.ResourceId.Null():
+                        mesh_name = self._get_resource_name(controller, mesh.vertexResourceId)
+                        if mesh_name:
+                            break
+
+                # Clean up name (remove common prefixes)
+                if mesh_name:
+                    import re
+                    mesh_name = re.sub(r'^(vb_|VB_|vertexbuffer_|VertexBuffer_)', '', mesh_name)
+                    mesh_name = re.sub(r'(_vb|_VB)$', '', mesh_name)
+
+            # Fallback to action name if no resource name
+            if not mesh_name:
+                mesh_name = getattr(action, 'name', '')
+
             result["summary"] = {
                 "event_id": event_id,
+                "name": mesh_name,
                 "topology": topology,
                 "num_vertices": action.numIndices,
                 "num_indices": action.numIndices if action.flags & rd.ActionFlags.Indexed else 0,
