@@ -10,6 +10,7 @@ from .services import (
     SearchService,
     ResourceService,
     PipelineService,
+    MeshService,
 )
 
 
@@ -23,6 +24,7 @@ class RenderDocFacade:
     - SearchService: Reverse lookup searches
     - ResourceService: Texture and buffer data
     - PipelineService: Pipeline state and shader info
+    - MeshService: Mesh data operations
     """
 
     def __init__(self, ctx):
@@ -40,6 +42,7 @@ class RenderDocFacade:
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke)
+        self._mesh = MeshService(ctx, self._invoke)
 
     def _invoke(self, callback):
         """Invoke callback on replay thread via BlockInvoke"""
@@ -154,3 +157,36 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
+
+    # ==================== Mesh Operations ====================
+
+    def get_mesh_summary(self, event_id):
+        """Get mesh summary information for a draw call"""
+        return self._mesh.get_mesh_summary(event_id)
+
+    def get_mesh_data(
+        self,
+        event_id,
+        stage="VSIn",
+        start_offset=0,
+        max_vertices=100,
+        attributes=None,
+    ):
+        """Get mesh vertex and index data for a draw call (with pagination)"""
+        return self._mesh.get_mesh_data(
+            event_id=event_id,
+            stage=stage,
+            start_offset=start_offset,
+            max_vertices=max_vertices,
+            attributes=attributes,
+        )
+
+    def export_mesh_csv(
+        self,
+        event_id,
+        output_path,
+        stage="VSIn",
+        include_attributes=None,
+    ):
+        """Export mesh data to CSV file"""
+        return self._mesh.export_mesh_csv(event_id, output_path, stage, include_attributes)

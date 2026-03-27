@@ -29,6 +29,9 @@ class RequestHandler:
             "get_pipeline_state": self._handle_get_pipeline_state,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
+            "get_mesh_summary": self._handle_get_mesh_summary,
+            "get_mesh_data": self._handle_get_mesh_data,
+            "export_mesh_csv": self._handle_export_mesh_csv,
         }
 
     def handle(self, request):
@@ -205,3 +208,44 @@ class RequestHandler:
         if capture_path is None:
             raise ValueError("capture_path is required")
         return self.facade.open_capture(capture_path)
+
+    def _handle_get_mesh_summary(self, params):
+        """Handle get_mesh_summary request"""
+        event_id = params.get("event_id")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        return self.facade.get_mesh_summary(int(event_id))
+
+    def _handle_get_mesh_data(self, params):
+        """Handle get_mesh_data request"""
+        event_id = params.get("event_id")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        stage = params.get("stage", "VSIn")
+        start_offset = params.get("start_offset", 0)
+        max_vertices = params.get("max_vertices", 100)
+        attributes = params.get("attributes")
+        return self.facade.get_mesh_data(
+            event_id=int(event_id),
+            stage=stage,
+            start_offset=int(start_offset),
+            max_vertices=int(max_vertices),
+            attributes=attributes,
+        )
+
+    def _handle_export_mesh_csv(self, params):
+        """Handle export_mesh_csv request"""
+        event_id = params.get("event_id")
+        output_path = params.get("output_path")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        if output_path is None:
+            raise ValueError("output_path is required")
+        stage = params.get("stage", "VSIn")
+        include_attributes = params.get("include_attributes")
+        return self.facade.export_mesh_csv(
+            event_id=int(event_id),
+            output_path=output_path,
+            stage=stage,
+            include_attributes=include_attributes,
+        )

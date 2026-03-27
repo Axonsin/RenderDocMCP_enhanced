@@ -31,7 +31,9 @@ RenderDocMCP/
 │   ├── extension.json                 # 清单文件
 │   ├── socket_server.py               # 基于文件的 IPC 服务器
 │   ├── request_handler.py             # 请求处理
-│   └── renderdoc_facade.py            # RenderDoc API 封装
+│   ├── renderdoc_facade.py            # RenderDoc API 封装
+│   └── services/
+│       ├── mesh_service.py            # 网格数据处理服务
 │
 └── scripts/
     └── install_extension.py           # 扩展安装脚本
@@ -57,6 +59,9 @@ RenderDocMCP/
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
 | `get_pipeline_state` | 管线状态整体 |
+| `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒） |
+| `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
+| `export_mesh_csv` | 将网格导出为 CSV 文件 |
 
 ### get_draw_calls 过滤选项
 
@@ -138,6 +143,83 @@ save_texture(
 ```
 
 **注意**: 这是推荐的纹理保存方式，会自动处理格式转换。
+
+### 网格数据工具
+
+```python
+# 获取网格概要信息
+get_mesh_summary(event_id=1234)
+# → {
+#     "event_id": 1234,
+#     "topology": "TriangleList",
+#     "num_vertices": 3024,
+#     "num_indices": 9072,
+#     "indexed": true,
+#     "attributes": [
+#         {"name": "POSITION", "format": "R32G32B32_FLOAT", "components": 3},
+#         {"name": "NORMAL", "format": "R32G32B32_FLOAT", "components": 3}
+#     ],
+#     "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]}
+# }
+
+# 获取网格顶点和索引数据（分页方式）
+# 建议：每次获取 100-500 顶点，避免数据过大
+get_mesh_data(
+    event_id=1234,
+    stage="VSIn",           # VSIn, VSOut, GSOut
+    start_offset=0,         # 起始偏移量（分页）
+    max_vertices=100,       # 每次获取的顶点数（建议 100-500）
+    attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选，过滤属性
+)
+# → {
+#     "vertices": [
+#         {"POSITION": [1.0, 2.0, 3.0], "NORMAL": [0.0, 1.0, 0.0], "TEXCOORD": [0.5, 0.5]},
+#         ...
+#     ],
+#     "indices": [0, 1, 2, 3, 4, 5, ...],
+#     "topology": "TriangleList",
+#     "total_count": 3024,      # 总顶点数
+#     "start_offset": 0,        # 当前偏移
+#     "has_more": true,         # 是否有更多数据
+#     "truncated": false
+# }
+
+# 分页获取下一批数据
+get_mesh_data(event_id=1234, start_offset=100, max_vertices=100)
+
+# 导出网格为 CSV 文件（与 csv_obj 项目兼容）
+export_mesh_csv(
+    event_id=1234,
+    output_path="D:/output/mesh.csv",
+    stage="VSIn",
+    include_attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选
+)
+# → {
+#     "success": true,
+#     "output_path": "D:/output/mesh.csv",
+#     "index_path": "D:/output/mesh.idx",
+#     "vertex_count": 3024,
+#     "index_count": 9072
+# }
+```
+
+**数据阶段说明**：
+- `VSIn`: 顶点着色器输入（原始顶点缓冲区数据）
+- `VSOut`: 顶点着色器输出（变换后的顶点数据）
+- `GSOut`: 几何着色器输出
+
+**分页说明**：
+- 使用 `start_offset` 和 `max_vertices` 进行分页
+- `total_count` 表示总顶点数
+- `has_more` 表示是否还有更多数据
+- 建议每次获取 100-500 顶点
+
+**CSV 格式说明**：
+- 第一行为表头：`VTX,IDX,in_POSITION0.x,in_POSITION0.y,...`
+- VTX: 去重后的顶点索引
+- IDX: 原始顶点索引
+- 属性命名格式：`in_{语义名}{语义索引}.{分量}`
+- 索引 sidecar 文件（.idx）：每行一个重映射后的顶点索引
 
 ## 通信协议
 

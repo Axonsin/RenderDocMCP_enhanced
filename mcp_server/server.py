@@ -351,6 +351,112 @@ def open_capture(capture_path: str) -> dict:
     return bridge.call("open_capture", {"capture_path": capture_path})
 
 
+@mcp.tool
+def get_mesh_summary(event_id: int) -> dict:
+    """
+    Get a summary of mesh data for a specific draw call event.
+
+    Args:
+        event_id: The event ID of the draw call to inspect
+
+    Returns mesh information including:
+    - topology: Primitive topology (TriangleList, LineList, etc.)
+    - num_vertices: Total vertex count
+    - num_indices: Total index count (0 if non-indexed)
+    - indexed: Whether the draw call uses an index buffer
+    - attributes: List of vertex attributes with their formats
+    - bounding_box: Min/max bounds if position attribute available
+    """
+    return bridge.call("get_mesh_summary", {"event_id": event_id})
+
+
+@mcp.tool
+def get_mesh_data(
+    event_id: int,
+    stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
+    start_offset: int = 0,
+    max_vertices: int = 100,
+    attributes: list[str] | None = None,
+) -> dict:
+    """
+    Get mesh vertex and index data for a specific draw call (with pagination).
+
+    IMPORTANT: For large meshes, use pagination instead of requesting all data at once.
+    Recommended: Request 100-500 vertices per call, use start_offset for pagination.
+
+    Args:
+        event_id: The event ID of the draw call to inspect
+        stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
+        start_offset: Starting vertex offset for pagination (default: 0)
+        max_vertices: Maximum number of vertices to return (default: 100, max recommended: 500)
+        attributes: Optional list of attribute names to include (e.g., ["POSITION", "NORMAL", "TEXCOORD"])
+                   If None, all attributes are included.
+
+    Returns mesh data including:
+    - vertices: List of vertex data, each vertex is a dict of attribute_name -> values
+    - indices: Index buffer data (empty for non-indexed draws)
+    - topology: Primitive topology
+    - attribute_info: Metadata about each attribute
+    - total_count: Total number of vertices in the mesh
+    - has_more: Whether more vertices are available
+    - truncated: Whether data was truncated
+
+    Example pagination usage:
+        # First page
+        result = get_mesh_data(event_id=123, start_offset=0, max_vertices=100)
+        # Next page
+        result = get_mesh_data(event_id=123, start_offset=100, max_vertices=100)
+    """
+    params: dict[str, object] = {
+        "event_id": event_id,
+        "stage": stage,
+        "start_offset": start_offset,
+        "max_vertices": max_vertices,
+    }
+    if attributes is not None:
+        params["attributes"] = attributes
+    return bridge.call("get_mesh_data", params)
+
+
+@mcp.tool
+def export_mesh_csv(
+    event_id: int,
+    output_path: str,
+    stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
+    include_attributes: list[str] | None = None,
+) -> dict:
+    """
+    Export mesh data to a CSV file.
+
+    Args:
+        event_id: The event ID of the draw call to export
+        output_path: Output file path (e.g. "D:/output/mesh.csv")
+        stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
+        include_attributes: Optional list of attributes to include
+                           If None, all available attributes are included.
+
+    Returns success status and mesh info including:
+    - output_path: Path to the exported CSV file
+    - index_path: Path to the index sidecar file (.idx)
+    - vertex_count: Number of exported vertices
+    - index_count: Number of indices
+    - format: Export format (always "CSV")
+
+    The CSV format is compatible with csv_obj project:
+    - First row: VTX, IDX, attribute columns
+    - Subsequent rows: vertex data with deduplication
+    - Index file (.idx): remapped triangle stream
+    """
+    params: dict[str, object] = {
+        "event_id": event_id,
+        "output_path": output_path,
+        "stage": stage,
+    }
+    if include_attributes is not None:
+        params["include_attributes"] = include_attributes
+    return bridge.call("export_mesh_csv", params)
+
+
 def main():
     """Run the MCP server"""
     mcp.run()
