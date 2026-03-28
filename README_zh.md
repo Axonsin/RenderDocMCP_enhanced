@@ -65,7 +65,12 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 ### 4. 配置 MCP 客户端
 
-#### Claude Desktop
+也可以直接在本项目目录下启动 Claude Code。Claude Code 会自动检测 `.mcp.json` 并在当前会话中注册该 MCP 服务器。
+
+一般更推荐使用项目级配置，以避免全局 MCP 配置影响其他工作区的上下文环境。
+![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
+
+#### Claude Desktop（全局配置）
 
 添加到 `claude_desktop_config.json`:
 
@@ -79,7 +84,7 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 }
 ```
 
-#### Claude Code / 其他兼容 MCP 的客户端
+#### Claude Code / 其他兼容 MCP 的客户端（全局配置）
 
 添加到 `.mcp.json`:
 
@@ -92,10 +97,6 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
   }
 }
 ```
-也可以直接在本项目目录下启动 Claude Code。Claude Code 会自动检测 `.mcp.json` 并在当前会话中注册该 MCP 服务器。
-
-一般更推荐使用项目级配置，以避免全局 MCP 配置影响其他工作区的上下文环境。
-![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
 
 
 ## 使用方法

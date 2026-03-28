@@ -69,7 +69,13 @@ After restarting your shell, the `renderdoc-mcp` command will be available.
 
 ### 4. Configure MCP Client
 
-#### Claude Desktop
+You can open Claude Code directly in this project directory. Claude Code will automatically detect `.mcp.json` and register the MCP server for the current session.
+
+Using project-level configuration is generally recommended to avoid global MCP settings affecting other workspace contexts.
+
+![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
+
+#### Claude Desktop (global configuration)
 
 Add to `claude_desktop_config.json`:
 
@@ -83,7 +89,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-#### Claude Code / Other MCP-compatible clients
+#### Claude Code / Other MCP-compatible clients (global configuration)
 
 Add to `.mcp.json`:
 
@@ -96,12 +102,6 @@ Add to `.mcp.json`:
   }
 }
 ```
-
-You can also open Claude Code directly in this project directory. Claude Code will automatically detect `.mcp.json` and register the MCP server for the current session.
-
-Using project-level configuration is generally recommended to avoid global MCP settings affecting other workspace contexts.
-
-![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
 
 ## Usage
 

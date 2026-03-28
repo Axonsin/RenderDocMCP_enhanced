@@ -69,7 +69,13 @@ uv tool update-shell  # PATH に renderdoc-mcp を追加
 
 ### 4. MCP クライアントの設定
 
-#### Claude Desktop
+このプロジェクトディレクトリで直接 Claude Code を起動することもできます。Claude Code は `.mcp.json` を自動的に検出し、現在のセッションで MCP サーバーを登録します。
+
+プロジェクトレベルの設定を使用することをお勧めします。グローバル MCP 設定が他のワークスペースのコンテキストに影響するのを防ぐためです。
+
+![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
+
+#### Claude Desktop（グローバル設定）
 
 `claude_desktop_config.json` に追加：
 
@@ -83,7 +89,7 @@ uv tool update-shell  # PATH に renderdoc-mcp を追加
 }
 ```
 
-#### Claude Code / その他の MCP 対応クライアント
+#### Claude Code / その他の MCP 対応クライアント（グローバル設定）
 
 `.mcp.json` に追加：
 
@@ -96,12 +102,6 @@ uv tool update-shell  # PATH に renderdoc-mcp を追加
   }
 }
 ```
-
-このプロジェクトディレクトリで直接 Claude Code を起動することもできます。Claude Code は `.mcp.json` を自動的に検出し、現在のセッションで MCP サーバーを登録します。
-
-プロジェクトレベルの設定を使用することをお勧めします。グローバル MCP 設定が他のワークスペースのコンテキストに影響するのを防ぐためです。
-
-![claudeprojectmcp.gif](docs/images/claudeprojectmcp.gif)
 
 ## 使い方
 
