@@ -112,17 +112,6 @@ uv tool update-shell  # 把renderdoc-mcp添加到 PATH
 - `list_captures` - 列出目录中的 `.rdc` 文件
 - `export_mesh_csv` - 为下游工作流导出网格 CSV
 
-### 兼容层工具
-
-以下旧工具仍然可用，但新 prompt 与新文档应优先使用上面的 canonical 工具：
-
-- `find_draws_by_shader`
-- `find_draws_by_texture`
-- `find_draws_by_resource`
-- `list_textures`
-- `list_buffers`
-- `get_event_textures`
-
 ## 使用示例
 
 ### 统一搜索 draw call
@@ -158,7 +147,7 @@ get_shader_info(event_id=123, stage="pixel")
 get_pipeline_state(event_id=123)
 ```
 
-现在 `get_pipeline_state` 的返回中已经包含精简版的 `input_textures` / `output_textures` 摘要，因此大多数场景不再需要额外调用 `get_event_textures`。
+`get_pipeline_state` 的返回中包含精简版的 `input_textures` / `output_textures` 摘要。
 
 ### 按 canonical 分页获取网格数据
 
@@ -199,13 +188,6 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
 ```
-
-## 迁移说明
-
-- 优先使用 `search_draws(...)`，不要再优先写 `find_draws_by_*`。
-- 优先使用 `list_resources(...)`，不要再优先写 `list_textures(...)` / `list_buffers(...)`。
-- 网格分页参数优先使用 `offset` / `limit`；`start_offset` / `max_vertices` 仍保留兼容。
-- 如果你需要事件的输入/输出纹理摘要，优先读取 `get_pipeline_state(...)` 的结果。
 
 ## 系统要求
 

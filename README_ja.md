@@ -111,17 +111,6 @@ uv tool update-shell  # PATHに追加
 - `list_captures` - ディレクトリ内の `.rdc` ファイルを列挙
 - `export_mesh_csv` - 下流ワークフロー向けにメッシュ CSV を出力
 
-### 互換レイヤー
-
-以下の旧ツールは移行期間中も利用できますが、新しい prompt やサンプルでは上記の canonical ツールを優先してください。
-
-- `find_draws_by_shader`
-- `find_draws_by_texture`
-- `find_draws_by_resource`
-- `list_textures`
-- `list_buffers`
-- `get_event_textures`
-
 ## 使用例
 
 ### draw call の統一検索
@@ -157,7 +146,7 @@ get_shader_info(event_id=123, stage="pixel")
 get_pipeline_state(event_id=123)
 ```
 
-`get_pipeline_state` の結果には簡潔な `input_textures` / `output_textures` 要約も含まれるため、多くのケースでは `get_event_textures` を追加で呼ぶ必要はありません。
+`get_pipeline_state` の結果には簡潔な `input_textures` / `output_textures` 要約が含まれます。
 
 ### canonical なページングでメッシュ取得
 
@@ -198,13 +187,6 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
 ```
-
-## 移行メモ
-
-- `find_draws_by_*` より `search_draws(...)` を優先してください。
-- `list_textures(...)` / `list_buffers(...)` より `list_resources(...)` を優先してください。
-- メッシュのページングは `offset` / `limit` を優先し、`start_offset` / `max_vertices` は互換用として残します。
-- イベントの入出力テクスチャ要約が必要な場合は、まず `get_pipeline_state(...)` を見てください。
 
 ## 要件
 

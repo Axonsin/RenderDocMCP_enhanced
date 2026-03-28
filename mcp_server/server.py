@@ -112,51 +112,6 @@ def search_draws(
 
 
 @mcp.tool
-def find_draws_by_shader(
-    shader_name: str,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"] | None = None,
-) -> dict:
-    """
-    Find all draw calls using a shader with the given name (partial match).
-
-    Args:
-        shader_name: Partial name to search for in shader names or entry points
-        stage: Optional shader stage to search (if not specified, searches all stages)
-
-    Returns a list of matching draw calls with event IDs and match reasons.
-    """
-    return search_draws(by="shader", query=shader_name, stage=stage)
-
-
-@mcp.tool
-def find_draws_by_texture(texture_name: str) -> dict:
-    """
-    Find all draw calls using a texture with the given name (partial match).
-
-    Args:
-        texture_name: Partial name to search for in texture resource names
-
-    Returns a list of matching draw calls with event IDs and match reasons.
-    Searches SRVs, UAVs, and render targets.
-    """
-    return search_draws(by="texture", query=texture_name)
-
-
-@mcp.tool
-def find_draws_by_resource(resource_id: str) -> dict:
-    """
-    Find all draw calls using a specific resource ID (exact match).
-
-    Args:
-        resource_id: Resource ID to search for (e.g. "ResourceId::12345" or "12345")
-
-    Returns a list of matching draw calls with event IDs and match reasons.
-    Searches shaders, SRVs, UAVs, render targets, and depth targets.
-    """
-    return search_draws(by="resource", query=resource_id)
-
-
-@mcp.tool
 def get_draw_call_details(event_id: int) -> dict:
     """
     Get detailed information about a specific draw call.
@@ -270,62 +225,6 @@ def list_resources(
 
 
 @mcp.tool
-def list_textures(
-    name_filter: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
-) -> dict:
-    """
-    List all textures in the current capture with optional filtering and pagination.
-
-    Args:
-        name_filter: Optional partial name match (case-insensitive).
-                    E.g. "Character" matches "CharacterSkin_Diffuse", "CharacterNormal", etc.
-        offset: Starting index for pagination (default: 0)
-        limit: Maximum number of textures to return (default: 50)
-
-    Returns a list of textures with metadata:
-    - textures: List of {resource_id, name, width, height, depth, format, mip_levels,
-              array_size, byte_size, dimension, cubemap, msaa_samples}
-    - total_count: Total number of textures matching the filter
-    - offset/limit: Current pagination state
-    - returned_count: Number of textures in this response
-    """
-    return bridge.call(
-        "list_textures",
-        {"name_filter": name_filter, "offset": offset, "limit": limit},
-    )
-
-
-@mcp.tool
-def list_buffers(
-    name_filter: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
-) -> dict:
-    """
-    List all buffers in the current capture with optional filtering and pagination.
-
-    Args:
-        name_filter: Optional partial name match (case-insensitive).
-                    E.g. "Camera" matches "CameraCB", "CameraData", etc.
-        offset: Starting index for pagination (default: 0)
-        limit: Maximum number of buffers to return (default: 50)
-
-    Returns a list of buffers with metadata:
-    - buffers: List of {resource_id, name, byte_size, creation_flags}
-              creation_flags can include: "Vertex", "Index", "Constants", "ReadWrite", "Indirect"
-    - total_count: Total number of buffers matching the filter
-    - offset/limit: Current pagination state
-    - returned_count: Number of buffers in this response
-    """
-    return bridge.call(
-        "list_buffers",
-        {"name_filter": name_filter, "offset": offset, "limit": limit},
-    )
-
-
-@mcp.tool
 def get_texture_info(resource_id: str) -> dict:
     """
     Get metadata about a texture resource.
@@ -426,30 +325,6 @@ def get_pipeline_state(event_id: int) -> dict:
     - Viewports and input assembly state
     """
     return bridge.call("get_pipeline_state", {"event_id": event_id})
-
-
-@mcp.tool
-def get_event_textures(event_id: int) -> dict:
-    """
-    Get input and output textures for a specific draw call event.
-
-    A concise summary of which textures a draw call reads from (inputs via SRVs)
-    and writes to (outputs via render targets and depth target).
-
-    Args:
-        event_id: The event ID of the draw call
-
-    Returns:
-    - input_textures: List of textures bound as shader resources (SRVs)
-      [{resource_id, name, stage, slot}]
-    - output_textures: List of render targets and depth target
-      [{resource_id, name, type: "render_target"|"depth_target", index?}]
-    - input_count / output_count: Totals
-
-    Compatibility note:
-        Prefer `get_pipeline_state`, which now includes the same concise texture summary.
-    """
-    return bridge.call("get_event_textures", {"event_id": event_id})
 
 
 @mcp.tool

@@ -48,20 +48,16 @@ RenderDocMCP/
 | `get_capture_status` | 确认捕获加载状态 |
 | `get_draw_calls` | Draw call 列表（支持层级结构、过滤） |
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
-| `find_draws_by_shader` | 按着色器名称反向搜索 draw call |
-| `find_draws_by_texture` | 按纹理名称反向搜索 draw call |
-| `find_draws_by_resource` | 按资源 ID 反向搜索 draw call |
+| `search_draws` | 按 shader/texture/resource 搜索 draw call |
 | `get_draw_call_details` | 特定 draw call 的详情 |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
 | `get_shader_info` | 着色器源码/常量缓冲区 |
 | `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
-| `list_textures` | 列出捕获中所有纹理（支持名称过滤和分页） |
-| `list_buffers` | 列出捕获中所有缓冲区（支持名称过滤和分页） |
-| `get_texture_info` | **纹理元数据** |
+| `list_resources` | 资源枚举（texture/buffer，支持名称过滤和分页） |
+| `get_texture_info` | 纹理元数据 |
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
-| `get_pipeline_state` | 管线状态整体 |
-| `get_event_textures` | 获取指定事件的输入/输出纹理列表 |
+| `get_pipeline_state` | 管线状态（含 `input_textures`/`output_textures` 摘要） |
 | `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件 |
@@ -95,10 +91,10 @@ open_capture(capture_path="D:\\captures\\game.rdc")
 ### 资源枚举工具
 
 ```python
-# 列出捕获中所有纹理
-list_textures()
+# 统一资源枚举接口
+list_resources(resource_type="texture")
 # → {
-#     "textures": [
+#     "items": [
 #         {"resource_id": "ResourceId::2495", "name": "SceneColor", "width": 1920, "height": 1080,
 #          "depth": 1, "format": "R8G8B8A8_UNORM", "mip_levels": 1, "array_size": 1,
 #          "byte_size": 8294400, "dimension": "Texture2D", "cubemap": false, "msaa_samples": 1},
@@ -108,28 +104,22 @@ list_textures()
 #     "offset": 0, "limit": 50, "returned_count": 50
 # }
 
-# 按名称过滤（部分匹配，不区分大小写）
-list_textures(name_filter="Character")
-
-# 分页
-list_textures(offset=50, limit=50)
-
-# 列出捕获中所有缓冲区
-list_buffers()
+list_resources(resource_type="buffer")
 # → {
-#     "buffers": [
+#     "items": [
 #         {"resource_id": "ResourceId::3001", "name": "CameraCB",
 #          "byte_size": 256, "creation_flags": ["Constants"]},
-#         {"resource_id": "ResourceId::3002", "name": "VertexBuffer",
-#          "byte_size": 12096, "creation_flags": ["Vertex"]},
 #         ...
 #     ],
 #     "total_count": 80,
 #     "offset": 0, "limit": 50, "returned_count": 50
 # }
 
-# 按名称过滤
-list_buffers(name_filter="Camera")
+# 按名称过滤（部分匹配，不区分大小写）
+list_resources(resource_type="texture", name_filter="Character")
+
+# 分页
+list_resources(resource_type="texture", offset=50, limit=50)
 
 # creation_flags 可能的值: "Vertex", "Index", "Constants", "ReadWrite", "Indirect"
 ```
@@ -137,33 +127,29 @@ list_buffers(name_filter="Camera")
 ### 反向搜索工具
 
 ```python
-# 按着色器名搜索（部分匹配）
-find_draws_by_shader(shader_name="Toon", stage="pixel")
-
-# 按纹理名搜索（部分匹配）
-find_draws_by_texture(texture_name="CharacterSkin")
-
-# 按资源 ID 搜索（完全匹配）
-find_draws_by_resource(resource_id="ResourceId::12345")
+search_draws(by="shader", query="Toon", stage="pixel")
+search_draws(by="texture", query="CharacterSkin")
+search_draws(by="resource", query="ResourceId::12345")
+# → {
+#     "matches": [...],
+#     "scanned_count": 150,
+#     "total_matches": 3
+# }
 ```
 
 ### 事件纹理输入/输出
 
+纹理摘要已并入 `get_pipeline_state` 响应中。
+
 ```python
-# 获取指定 draw call 的输入/输出纹理列表
-get_event_textures(event_id=150)
-# → {
-#     "event_id": 150,
-#     "input_textures": [
-#         {"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", "stage": "ShaderStage.Pixel", "slot": 0},
-#         ...
-#     ],
-#     "output_textures": [
-#         {"resource_id": "ResourceId::3001", "name": "Backbuffer Color", "type": "render_target", "index": 0},
-#         {"resource_id": "ResourceId::2949", "name": "DepthBuffer", "type": "depth_target"},
-#     ],
-#     "input_count": 3,
-#     "output_count": 2
+get_pipeline_state(event_id=150)
+# → { ..., "input_textures": [
+#       {"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", "stage": "ShaderStage.Pixel", "slot": 0},
+#       ...
+#     ], "output_textures": [
+#       {"resource_id": "ResourceId::3001", "name": "Backbuffer Color", "type": "render_target", "index": 0},
+#       {"resource_id": "ResourceId::2949", "name": "DepthBuffer", "type": "depth_target"},
+#     ], "input_count": 3, "output_count": 2
 # }
 ```
 
@@ -236,25 +222,30 @@ get_mesh_summary(event_id=1234)
 get_mesh_data(
     event_id=1234,
     stage="VSIn",           # VSIn, VSOut, GSOut
-    start_offset=0,         # 起始偏移量（分页）
-    max_vertices=100,       # 每次获取的顶点数（建议 100-500）
+    offset=0,               # 起始偏移量（分页）
+    limit=100,              # 每次获取的顶点数（建议 100-500）
     attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选，过滤属性
 )
 # → {
-#     "vertices": [
+#     "event_id": 1234,
+#     "stage": "VSIn",
+#     "topology": "TriangleList",
+#     "items": [
 #         {"POSITION": [1.0, 2.0, 3.0], "NORMAL": [0.0, 1.0, 0.0], "TEXCOORD": [0.5, 0.5]},
 #         ...
 #     ],
 #     "indices": [0, 1, 2, 3, 4, 5, ...],
-#     "topology": "TriangleList",
-#     "total_count": 3024,      # 总顶点数
-#     "start_offset": 0,        # 当前偏移
-#     "has_more": true,         # 是否有更多数据
-#     "truncated": false
+#     "offset": 0,
+#     "limit": 100,
+#     "returned_count": 100,
+#     "total_count": 3024,
+#     "has_more": true,
+#     "truncated": false,
+#     "attributes": [...]
 # }
 
 # 分页获取下一批数据
-get_mesh_data(event_id=1234, start_offset=100, max_vertices=100)
+get_mesh_data(event_id=1234, offset=100, limit=100)
 
 # 导出网格为 CSV 文件（与 csv_obj 项目兼容）
 export_mesh_csv(
@@ -278,8 +269,8 @@ export_mesh_csv(
 - `GSOut`: 几何着色器输出
 
 **分页说明**：
-- 使用 `start_offset` 和 `max_vertices` 进行分页
-- `total_count` 表示总顶点数
+- 使用 `offset` 和 `limit` 进行分页（旧参数 `start_offset`/`max_vertices` 仍兼容）
+- `total_count` 表示总顶点数，`returned_count` 为本次返回数量
 - `has_more` 表示是否还有更多数据
 - 建议每次获取 100-500 顶点
 

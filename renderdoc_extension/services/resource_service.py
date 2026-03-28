@@ -123,28 +123,6 @@ class ResourceService:
         self._invoke(callback)
         return result["data"]
 
-    def list_textures(self, name_filter=None, offset=0, limit=50):
-        """List all textures in the capture with optional name filtering and pagination."""
-        canonical = self.list_resources("texture", name_filter=name_filter, offset=offset, limit=limit)
-        return {
-            "textures": canonical["items"],
-            "total_count": canonical["total_count"],
-            "offset": canonical["offset"],
-            "limit": canonical["limit"],
-            "returned_count": canonical["returned_count"],
-        }
-
-    def list_buffers(self, name_filter=None, offset=0, limit=50):
-        """List all buffers in the capture with optional name filtering and pagination."""
-        canonical = self.list_resources("buffer", name_filter=name_filter, offset=offset, limit=limit)
-        return {
-            "buffers": canonical["items"],
-            "total_count": canonical["total_count"],
-            "offset": canonical["offset"],
-            "limit": canonical["limit"],
-            "returned_count": canonical["returned_count"],
-        }
-
     def _find_texture_by_id(self, controller, resource_id):
         """Find texture by resource ID"""
         target_id = Parsers.extract_numeric_id(resource_id)

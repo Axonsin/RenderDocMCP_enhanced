@@ -112,17 +112,6 @@ Add to `.mcp.json`:
 - `list_captures` - List `.rdc` files in a directory
 - `export_mesh_csv` - Export mesh data for downstream workflows
 
-### Compatibility aliases
-
-These legacy tools still work during migration, but new prompts and examples should prefer the canonical tools above:
-
-- `find_draws_by_shader`
-- `find_draws_by_texture`
-- `find_draws_by_resource`
-- `list_textures`
-- `list_buffers`
-- `get_event_textures`
-
 ## Examples
 
 ### Search draw calls by shader/texture/resource
@@ -158,7 +147,7 @@ get_shader_info(event_id=123, stage="pixel")
 get_pipeline_state(event_id=123)
 ```
 
-The response now includes concise `input_textures` and `output_textures` summaries, so most prompts no longer need to call `get_event_textures`.
+The response includes concise `input_textures` and `output_textures` summaries.
 
 ### Get mesh data with canonical paging
 
@@ -189,13 +178,6 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
 ```
-
-## Migration notes
-
-- Prefer `search_draws(...)` over `find_draws_by_*`.
-- Prefer `list_resources(...)` over `list_textures(...)` and `list_buffers(...)`.
-- Prefer `offset` / `limit` for mesh pagination; `start_offset` / `max_vertices` remain accepted for compatibility.
-- Prefer `get_pipeline_state(...)` when you need concise read/write texture summaries.
 
 ## Requirements
 

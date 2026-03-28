@@ -103,31 +103,11 @@ class RenderDocFacade:
 
     # ==================== Search Operations ====================
 
-    def find_draws_by_shader(self, shader_name, stage=None):
-        """Find all draw calls using a shader with the given name (partial match)"""
-        return self._search.find_draws_by_shader(shader_name, stage)
-
-    def find_draws_by_texture(self, texture_name):
-        """Find all draw calls using a texture with the given name (partial match)"""
-        return self._search.find_draws_by_texture(texture_name)
-
-    def find_draws_by_resource(self, resource_id):
-        """Find all draw calls using a specific resource ID (exact match)"""
-        return self._search.find_draws_by_resource(resource_id)
-
     def search_draws(self, by, query, stage=None):
         """Search draw calls using a canonical search interface."""
         return self._search.search_draws(by, query, stage)
 
     # ==================== Resource Operations ====================
-
-    def list_textures(self, name_filter=None, offset=0, limit=50):
-        """List all textures with optional name filtering and pagination."""
-        return self._resource.list_textures(name_filter, offset, limit)
-
-    def list_buffers(self, name_filter=None, offset=0, limit=50):
-        """List all buffers with optional name filtering and pagination."""
-        return self._resource.list_buffers(name_filter, offset, limit)
 
     def list_resources(self, resource_type, name_filter=None, offset=0, limit=50):
         """List resources using a canonical resource-listing interface."""
@@ -173,10 +153,6 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
-
-    def get_event_textures(self, event_id):
-        """Get input and output textures for a draw call event."""
-        return self._pipeline.get_event_textures(event_id)
 
     # ==================== Mesh Operations ====================
 

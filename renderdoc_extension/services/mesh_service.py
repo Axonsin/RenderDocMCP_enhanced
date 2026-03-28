@@ -492,7 +492,6 @@ class MeshService:
                 "has_more": has_more,
                 "truncated": truncated,
                 "attributes": attribute_info,
-                "vertices": vertices,
                 "indices": list(indices) if stage == "VSIn" else [],
             }
 

@@ -345,17 +345,6 @@ class PipelineService:
 
         return cbuffers
 
-    def get_event_textures(self, event_id):
-        """Get input and output textures for a draw call event."""
-        pipeline_info = self.get_pipeline_state(event_id)
-        return {
-            "event_id": event_id,
-            "input_textures": pipeline_info.get("input_textures", []),
-            "output_textures": pipeline_info.get("output_textures", []),
-            "input_count": pipeline_info.get("input_count", 0),
-            "output_count": pipeline_info.get("output_count", 0),
-        }
-
     def _collect_event_textures(self, controller, pipe):
         """Collect concise input/output texture summaries for an event."""
         tex_ids = {tex.resourceId for tex in controller.GetTextures()}

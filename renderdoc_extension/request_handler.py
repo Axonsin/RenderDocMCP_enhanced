@@ -17,21 +17,15 @@ class RequestHandler:
             "get_draw_calls": self._handle_get_draw_calls,
             "get_frame_summary": self._handle_get_frame_summary,
             "search_draws": self._handle_search_draws,
-            "find_draws_by_shader": self._handle_find_draws_by_shader,
-            "find_draws_by_texture": self._handle_find_draws_by_texture,
-            "find_draws_by_resource": self._handle_find_draws_by_resource,
             "get_draw_call_details": self._handle_get_draw_call_details,
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "list_resources": self._handle_list_resources,
-            "list_textures": self._handle_list_textures,
-            "list_buffers": self._handle_list_buffers,
             "get_texture_data": self._handle_get_texture_data,
             "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
-            "get_event_textures": self._handle_get_event_textures,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
             "get_mesh_summary": self._handle_get_mesh_summary,
@@ -145,22 +139,6 @@ class RequestHandler:
         """Handle get_frame_summary request"""
         return self.facade.get_frame_summary()
 
-    def _handle_find_draws_by_shader(self, params):
-        """Handle find_draws_by_shader request"""
-        shader_name = self._require_param(params, "shader_name")
-        stage = params.get("stage")
-        return self.facade.search_draws("shader", shader_name, stage)
-
-    def _handle_find_draws_by_texture(self, params):
-        """Handle find_draws_by_texture request"""
-        texture_name = self._require_param(params, "texture_name")
-        return self.facade.search_draws("texture", texture_name)
-
-    def _handle_find_draws_by_resource(self, params):
-        """Handle find_draws_by_resource request"""
-        resource_id = self._require_param(params, "resource_id")
-        return self.facade.search_draws("resource", resource_id)
-
     def _handle_search_draws(self, params):
         """Handle search_draws request."""
         search_type = self._require_param(params, "by")
@@ -210,20 +188,6 @@ class RequestHandler:
         limit = int(params.get("limit", 50))
         return self.facade.list_resources(resource_type, name_filter, offset, limit)
 
-    def _handle_list_textures(self, params):
-        """Handle list_textures request"""
-        name_filter = params.get("name_filter")
-        offset = int(params.get("offset", 0))
-        limit = int(params.get("limit", 50))
-        return self.facade.list_textures(name_filter, offset, limit)
-
-    def _handle_list_buffers(self, params):
-        """Handle list_buffers request"""
-        name_filter = params.get("name_filter")
-        offset = int(params.get("offset", 0))
-        limit = int(params.get("limit", 50))
-        return self.facade.list_buffers(name_filter, offset, limit)
-
     def _handle_get_texture_data(self, params):
         """Handle get_texture_data request"""
         resource_id = self._require_param(params, "resource_id")
@@ -254,11 +218,6 @@ class RequestHandler:
         """Handle get_pipeline_state request"""
         event_id = self._require_param(params, "event_id")
         return self.facade.get_pipeline_state(int(event_id))
-
-    def _handle_get_event_textures(self, params):
-        """Handle get_event_textures request"""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.get_event_textures(int(event_id))
 
     def _handle_list_captures(self, params):
         """Handle list_captures request"""
