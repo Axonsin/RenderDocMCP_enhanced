@@ -17,13 +17,28 @@ This project uses a process-separation architecture based on FastMCP 2.0.
 The MCP Server communicates with the AI client via stdio, and forwards requests to the extension running in RenderDoc's built-in Python 3.6 environment via file-based IPC.
 
 ```
-Claude/AI Client (stdio)
-        │
-        ▼
-MCP Server Process (Python + FastMCP 2.0)
-        │ File-based IPC (%TEMP%/renderdoc_mcp/)
-        ▼
-RenderDoc Process (Extension)
+  Claude/AI Client
+      │  (stdio, JSON-RPC via FastMCP)
+      ▼
+  mcp_server/server.py          ← @mcp.tool definitions
+      │  bridge.call("method", params)
+      ▼
+  mcp_server/bridge/client.py   ← writes %TEMP%/renderdoc_mcp/request.json
+      │  (file-based IPC, polls response.json)
+      ▼
+  renderdoc_extension/socket_server.py  ← reads request.json, dispatches to RequestHandler
+      │
+      ▼
+  request_handler.py            ← method → _handle_xxx() → facade.xxx()
+      │
+      ▼
+  renderdoc_facade.py           ← thin proxy layer, dispatches to services
+      │
+      ▼
+  services/*.py                 ← operates RenderDoc ReplayController API
+      │  controller.BlockInvoke(callback)  ← all API calls must run on replay thread
+      ▼
+  RenderDoc Core
 ```
 
 Since the built-in Python in RenderDoc does not have the socket module, file-based IPC is used for communication.
@@ -144,6 +159,7 @@ The entire MCP toolset is organized into three capability tiers:
 - `list_captures` - List `.rdc` files in a directory
 - `get_capture_status` - Check capture loading status
 - `get_frame_summary` - Get frame-wide statistics and top-level marker summaries
+- `summarize_capture` - Builds on `get_frame_summary` with additional full-frame GPU timing, sorting, and deduplication; returns a high-level overview with suggested investigation entry points
 - `get_draw_calls` - Get draw call / action hierarchy with filtering
 - `search_draws` - Unified search for draw calls by shader, texture, or resource
 - `list_resources` - List textures or buffers with one paginated interface
@@ -159,6 +175,11 @@ The entire MCP toolset is organized into three capability tiers:
 - `get_buffer_contents` - Get buffer contents (Base64)
 - `get_mesh_summary` - Get mesh topology, counts, attributes, and bounds
 - `get_mesh_data` - Get paginated mesh data
+- `inspect_event` - Inspect one event with compact details, timing, shader summaries, pipeline summaries, and mesh summary
+- `trace_resource_usage` - Trace where a resource is read, written, and consumed across matching events
+- `trace_event_dependencies` - Trace the immediate resource dependencies and likely producer events of one event
+- `diff_events` - Compare two events and highlight meaningful state differences
+- `analyze_pass` - Summarize one marker subtree or pass as a coherent workload
 
 ### Upper-level Tools
 

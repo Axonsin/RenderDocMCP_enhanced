@@ -16,6 +16,8 @@ class RequestHandler:
             "get_capture_status": self._handle_get_capture_status,
             "get_draw_calls": self._handle_get_draw_calls,
             "get_frame_summary": self._handle_get_frame_summary,
+            "inspect_event": self._handle_inspect_event,
+            "summarize_capture": self._handle_summarize_capture,
             "search_draws": self._handle_search_draws,
             "get_draw_call_details": self._handle_get_draw_call_details,
             "get_action_timings": self._handle_get_action_timings,
@@ -26,6 +28,10 @@ class RequestHandler:
             "get_texture_data": self._handle_get_texture_data,
             "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
+            "trace_resource_usage": self._handle_trace_resource_usage,
+            "trace_event_dependencies": self._handle_trace_event_dependencies,
+            "diff_events": self._handle_diff_events,
+            "analyze_pass": self._handle_analyze_pass,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
             "get_mesh_summary": self._handle_get_mesh_summary,
@@ -73,6 +79,7 @@ class RequestHandler:
             "INVALID_RESOURCE_ID",
             "INVALID_RESOURCE_TYPE",
             "INVALID_SEARCH_TYPE",
+            "INVALID_MARKER_FILTER",
             "INVALID_MIP_LEVEL",
             "INVALID_SLICE",
             "INVALID_SAMPLE",
@@ -138,6 +145,15 @@ class RequestHandler:
     def _handle_get_frame_summary(self, params):
         """Handle get_frame_summary request"""
         return self.facade.get_frame_summary()
+
+    def _handle_inspect_event(self, params):
+        """Handle inspect_event request."""
+        event_id = self._require_param(params, "event_id")
+        return self.facade.inspect_event(int(event_id))
+
+    def _handle_summarize_capture(self, params):
+        """Handle summarize_capture request."""
+        return self.facade.summarize_capture()
 
     def _handle_search_draws(self, params):
         """Handle search_draws request."""
@@ -218,6 +234,45 @@ class RequestHandler:
         """Handle get_pipeline_state request"""
         event_id = self._require_param(params, "event_id")
         return self.facade.get_pipeline_state(int(event_id))
+
+    def _handle_trace_resource_usage(self, params):
+        """Handle trace_resource_usage request."""
+        resource_id = self._require_param(params, "resource_id")
+        marker_filter = params.get("marker_filter")
+        exclude_markers = params.get("exclude_markers")
+        event_id_range = params.get("event_id_range")
+        if event_id_range is not None:
+            event_id_min = event_id_range.get("min")
+            event_id_max = event_id_range.get("max")
+        else:
+            event_id_min = params.get("event_id_min")
+            event_id_max = params.get("event_id_max")
+        before_event_id = params.get("before_event_id")
+        return self.facade.trace_resource_usage(
+            resource_id=resource_id,
+            marker_filter=marker_filter,
+            exclude_markers=exclude_markers,
+            event_id_min=int(event_id_min) if event_id_min is not None else None,
+            event_id_max=int(event_id_max) if event_id_max is not None else None,
+            before_event_id=int(before_event_id) if before_event_id is not None else None,
+        )
+
+    def _handle_trace_event_dependencies(self, params):
+        """Handle trace_event_dependencies request."""
+        event_id = self._require_param(params, "event_id")
+        return self.facade.trace_event_dependencies(int(event_id))
+
+    def _handle_diff_events(self, params):
+        """Handle diff_events request."""
+        event_id_a = self._require_param(params, "event_id_a")
+        event_id_b = self._require_param(params, "event_id_b")
+        return self.facade.diff_events(int(event_id_a), int(event_id_b))
+
+    def _handle_analyze_pass(self, params):
+        """Handle analyze_pass request."""
+        marker_filter = self._require_param(params, "marker_filter")
+        exclude_markers = params.get("exclude_markers")
+        return self.facade.analyze_pass(marker_filter, exclude_markers)
 
     def _handle_list_captures(self, params):
         """Handle list_captures request"""

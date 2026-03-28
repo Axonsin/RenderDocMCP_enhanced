@@ -11,6 +11,7 @@ from .services import (
     ResourceService,
     PipelineService,
     MeshService,
+    AnalysisService,
 )
 
 
@@ -43,6 +44,14 @@ class RenderDocFacade:
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke)
         self._mesh = MeshService(ctx, self._invoke)
+        self._analysis = AnalysisService(
+            ctx,
+            self._invoke,
+            self._action,
+            self._pipeline,
+            self._resource,
+            self._mesh,
+        )
 
     def _invoke(self, callback):
         """Invoke callback on replay thread via BlockInvoke"""
@@ -101,6 +110,14 @@ class RenderDocFacade:
             exclude_markers=exclude_markers,
         )
 
+    def inspect_event(self, event_id):
+        """Get a compact analysis-oriented event inspection bundle."""
+        return self._analysis.inspect_event(event_id)
+
+    def summarize_capture(self):
+        """Get a high-level summary of the current capture."""
+        return self._analysis.summarize_capture()
+
     # ==================== Search Operations ====================
 
     def search_draws(self, by, query, stage=None):
@@ -153,6 +170,37 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
+
+    def trace_resource_usage(
+        self,
+        resource_id,
+        marker_filter=None,
+        exclude_markers=None,
+        event_id_min=None,
+        event_id_max=None,
+        before_event_id=None,
+    ):
+        """Trace how a resource is used across matching events."""
+        return self._analysis.trace_resource_usage(
+            resource_id=resource_id,
+            marker_filter=marker_filter,
+            exclude_markers=exclude_markers,
+            event_id_min=event_id_min,
+            event_id_max=event_id_max,
+            before_event_id=before_event_id,
+        )
+
+    def trace_event_dependencies(self, event_id):
+        """Trace the resource dependencies of an event."""
+        return self._analysis.trace_event_dependencies(event_id)
+
+    def diff_events(self, event_id_a, event_id_b):
+        """Compare two events."""
+        return self._analysis.diff_events(event_id_a, event_id_b)
+
+    def analyze_pass(self, marker_filter, exclude_markers=None):
+        """Summarize work under a marker subtree."""
+        return self._analysis.analyze_pass(marker_filter, exclude_markers)
 
     # ==================== Mesh Operations ====================
 

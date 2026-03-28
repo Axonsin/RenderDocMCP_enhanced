@@ -8,6 +8,7 @@ from .search_service import SearchService
 from .resource_service import ResourceService
 from .pipeline_service import PipelineService
 from .mesh_service import MeshService
+from .analysis_service import AnalysisService
 
 __all__ = [
     "CaptureManager",
@@ -16,4 +17,5 @@ __all__ = [
     "ResourceService",
     "PipelineService",
     "MeshService",
+    "AnalysisService",
 ]

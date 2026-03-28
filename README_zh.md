@@ -16,13 +16,28 @@ RenderDoc MCP Enhanced 允许 AI 助手基于 RenderDoc 捕获数据进行更高
 MCP Server 通过 stdio 与 AI 客户端通信，并通过文件 IPC 将请求转发给运行在 RenderDoc 内置 Python 3.6 环境中的扩展。
 
 ```
-Claude/AI Client (stdio)
-        │
-        ▼
-MCP Server Process (Python + FastMCP 2.0)
-        │ File-based IPC (%TEMP%/renderdoc_mcp/)
-        ▼
-RenderDoc Process (Extension)
+  Claude/AI 客户端
+      │  (stdio, JSON-RPC via FastMCP)
+      ▼
+  mcp_server/server.py          ← @mcp.tool 定义的 Python 函数
+      │  bridge.call("method", params)
+      ▼
+  mcp_server/bridge/client.py   ← 写入 %TEMP%/renderdoc_mcp/request.json
+      │  (文件 IPC, 轮询 response.json)
+      ▼
+  renderdoc_extension/socket_server.py  ← 读取 request.json，派发给 RequestHandler
+      │
+      ▼
+  request_handler.py            ← method → _handle_xxx() → facade.xxx()
+      │
+      ▼
+  renderdoc_facade.py           ← 薄代理层，分发给各 Service
+      │
+      ▼
+  services/*.py                 ← 实际操作 RenderDoc ReplayController API
+      │  controller.BlockInvoke(callback)  ← 所有 API 调用必须在 replay 线程
+      ▼
+  RenderDoc 内核
 ```
 
 由于 RenderDoc 内置的 Python 没有 socket 模块，因此使用基于文件的 IPC 进行通信。
@@ -136,6 +151,7 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 - `list_captures` - 列出目录中的 `.rdc` 文件
 - `get_capture_status` - 检查捕获加载状态
 - `get_frame_summary` - 获取整帧统计与顶层 marker 摘要
+- `summarize_capture` - get_frame_summary之上额外获取全帧 GPU 时间并进行排序去重, 获取当前捕获的高层概览，并给出建议的分析入口
 - `get_draw_calls` - 获取 draw call / action 层级并支持过滤
 - `search_draws` - 按 shader、texture、resource 统一搜索 draw call
 - `list_resources` - 用一个分页接口列出 texture 或 buffer
@@ -151,6 +167,11 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 - `get_buffer_contents` - 获取缓冲区内容（Base64）
 - `get_mesh_summary` - 获取网格拓扑、数量、属性和包围盒
 - `get_mesh_data` - 分页获取网格数据
+- `inspect_event` - 对单个 event 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要
+- `trace_resource_usage` - 追踪资源在匹配事件中的读取、写入与消费过程
+- `trace_event_dependencies` - 追踪单个 event 的直接资源依赖与候选 producer event
+- `diff_events` - 对比两个 event，突出关键状态差异
+- `analyze_pass` - 将一个 marker 子树或 pass 汇总为一个整体工作负载
 
 ### 上层工具能力
 

@@ -91,6 +91,31 @@ def get_frame_summary() -> dict:
 
 
 @mcp.tool
+def inspect_event(event_id: int) -> dict:
+    """
+    Inspect one event using a compact analysis-oriented bundle.
+
+    Args:
+        event_id: The event ID to inspect
+
+    Returns event details, timing, shader summaries, pipeline summaries,
+    and mesh summary when the event is a draw call.
+    """
+    return bridge.call("inspect_event", {"event_id": event_id})
+
+
+@mcp.tool
+def summarize_capture() -> dict:
+    """
+    Summarize the loaded capture at a high level.
+
+    Returns frame statistics, hot actions, major markers, and suggested
+    entry points for deeper investigation.
+    """
+    return bridge.call("summarize_capture")
+
+
+@mcp.tool
 def search_draws(
     by: Literal["shader", "texture", "resource"],
     query: str,
@@ -325,6 +350,87 @@ def get_pipeline_state(event_id: int) -> dict:
     - Viewports and input assembly state
     """
     return bridge.call("get_pipeline_state", {"event_id": event_id})
+
+
+@mcp.tool
+def trace_resource_usage(
+    resource_id: str,
+    marker_filter: str | None = None,
+    exclude_markers: list[str] | None = None,
+    event_id_range: dict[str, int] | None = None,
+    event_id_min: int | None = None,
+    event_id_max: int | None = None,
+    before_event_id: int | None = None,
+) -> dict:
+    """
+    Trace how a resource is read, written, and consumed across matching events.
+
+    Args:
+        resource_id: The resource to trace
+        marker_filter: Optional marker-path substring filter
+        exclude_markers: Optional marker substrings to exclude
+        event_id_range: Optional event range as {"min": ..., "max": ...}
+        event_id_min: Legacy lower event bound alias
+        event_id_max: Legacy upper event bound alias
+        before_event_id: Optional event ID used to compute the latest prior writer
+
+    Returns resource metadata, usage roles, read/write event lists, and writer summaries.
+    """
+    params: dict[str, object] = {"resource_id": resource_id}
+    _optional_param(params, "marker_filter", marker_filter)
+    _optional_param(params, "exclude_markers", exclude_markers)
+    if event_id_range is not None:
+        params["event_id_range"] = event_id_range
+    else:
+        _optional_param(params, "event_id_min", event_id_min)
+        _optional_param(params, "event_id_max", event_id_max)
+    _optional_param(params, "before_event_id", before_event_id)
+    return bridge.call("trace_resource_usage", params)
+
+
+@mcp.tool
+def trace_event_dependencies(event_id: int) -> dict:
+    """
+    Trace the immediate resource dependencies of one event.
+
+    Args:
+        event_id: The event to inspect
+
+    Returns stage-grouped input resources, input-assembly buffers, output resources,
+    and likely producer events for major inputs.
+    """
+    return bridge.call("trace_event_dependencies", {"event_id": event_id})
+
+
+@mcp.tool
+def diff_events(event_id_a: int, event_id_b: int) -> dict:
+    """
+    Compare two events and report material state differences.
+
+    Args:
+        event_id_a: The first event ID
+        event_id_b: The second event ID
+
+    Returns shader, resource binding, draw parameter, mesh, and timing differences.
+    """
+    return bridge.call("diff_events", {"event_id_a": event_id_a, "event_id_b": event_id_b})
+
+
+@mcp.tool
+def analyze_pass(marker_filter: str, exclude_markers: list[str] | None = None) -> dict:
+    """
+    Summarize a pass or marker subtree as one workload.
+
+    Args:
+        marker_filter: Marker-path substring selecting the pass subtree
+        exclude_markers: Optional marker substrings to exclude
+
+    Returns action counts, main shaders, representative resources, top timed actions,
+    and conservative workload warnings.
+    """
+    params: dict[str, object] = {"marker_filter": marker_filter}
+    _optional_param(params, "exclude_markers", exclude_markers)
+    return bridge.call("analyze_pass", params)
 
 
 @mcp.tool
