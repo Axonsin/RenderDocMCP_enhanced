@@ -61,6 +61,7 @@ RenderDocMCP/
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
 | `get_pipeline_state` | 管线状态整体 |
+| `get_event_textures` | 获取指定事件的输入/输出纹理列表 |
 | `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件 |
@@ -145,6 +146,30 @@ find_draws_by_texture(texture_name="CharacterSkin")
 # 按资源 ID 搜索（完全匹配）
 find_draws_by_resource(resource_id="ResourceId::12345")
 ```
+
+### 事件纹理输入/输出
+
+```python
+# 获取指定 draw call 的输入/输出纹理列表
+get_event_textures(event_id=150)
+# → {
+#     "event_id": 150,
+#     "input_textures": [
+#         {"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", "stage": "ShaderStage.Pixel", "slot": 0},
+#         ...
+#     ],
+#     "output_textures": [
+#         {"resource_id": "ResourceId::3001", "name": "Backbuffer Color", "type": "render_target", "index": 0},
+#         {"resource_id": "ResourceId::2949", "name": "DepthBuffer", "type": "depth_target"},
+#     ],
+#     "input_count": 3,
+#     "output_count": 2
+# }
+```
+
+**说明**：
+- `input_textures`: 通过 SRV 绑定到 shader 的纹理（只读输入），去重后按 stage 列出
+- `output_textures`: Render target（`type: "render_target"`）和 Depth target（`type: "depth_target"`）
 
 ### GPU 时间获取
 

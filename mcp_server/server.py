@@ -377,6 +377,27 @@ def get_pipeline_state(event_id: int) -> dict:
 
 
 @mcp.tool
+def get_event_textures(event_id: int) -> dict:
+    """
+    Get input and output textures for a specific draw call event.
+
+    A concise summary of which textures a draw call reads from (inputs via SRVs)
+    and writes to (outputs via render targets and depth target).
+
+    Args:
+        event_id: The event ID of the draw call
+
+    Returns:
+    - input_textures: List of textures bound as shader resources (SRVs)
+      [{resource_id, name, stage, slot}]
+    - output_textures: List of render targets and depth target
+      [{resource_id, name, type: "render_target"|"depth_target", index?}]
+    - input_count / output_count: Totals
+    """
+    return bridge.call("get_event_textures", {"event_id": event_id})
+
+
+@mcp.tool
 def list_captures(directory: str) -> dict:
     """
     List all RenderDoc capture files (.rdc) in the specified directory.

@@ -341,6 +341,102 @@ class PipelineService:
 
         return cbuffers
 
+    def get_event_textures(self, event_id):
+        """Get input and output textures for a draw call event."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        result = {"data": None, "error": None}
+
+        def callback(controller):
+            controller.SetFrameEvent(event_id, True)
+            pipe = controller.GetPipelineState()
+
+            # Collect texture resource IDs from all GetTextures() for type lookup
+            tex_ids = set()
+            for tex in controller.GetTextures():
+                tex_ids.add(tex.resourceId)
+
+            # --- Input textures (SRVs across all shader stages) ---
+            input_textures = []
+            seen_inputs = set()
+            for stage in Helpers.get_all_shader_stages():
+                try:
+                    srvs = pipe.GetReadOnlyResources(stage, False)
+                except Exception:
+                    continue
+                for srv in srvs:
+                    rid = srv.descriptor.resource
+                    if rid == rd.ResourceId.Null():
+                        continue
+                    if rid not in tex_ids:
+                        continue
+                    if rid in seen_inputs:
+                        continue
+                    seen_inputs.add(rid)
+                    name = ""
+                    try:
+                        name = self.ctx.GetResourceName(rid)
+                    except Exception:
+                        pass
+                    input_textures.append({
+                        "resource_id": str(rid),
+                        "name": name,
+                        "stage": str(stage),
+                        "slot": srv.access.index,
+                    })
+
+            # --- Output textures (render targets + depth target) ---
+            output_textures = []
+
+            try:
+                for i, rt in enumerate(pipe.GetOutputTargets()):
+                    if rt.resource == rd.ResourceId.Null():
+                        continue
+                    name = ""
+                    try:
+                        name = self.ctx.GetResourceName(rt.resource)
+                    except Exception:
+                        pass
+                    output_textures.append({
+                        "resource_id": str(rt.resource),
+                        "name": name,
+                        "type": "render_target",
+                        "index": i,
+                    })
+            except Exception:
+                pass
+
+            try:
+                depth = pipe.GetDepthTarget()
+                if depth.resource != rd.ResourceId.Null():
+                    name = ""
+                    try:
+                        name = self.ctx.GetResourceName(depth.resource)
+                    except Exception:
+                        pass
+                    output_textures.append({
+                        "resource_id": str(depth.resource),
+                        "name": name,
+                        "type": "depth_target",
+                    })
+            except Exception:
+                pass
+
+            result["data"] = {
+                "event_id": event_id,
+                "input_textures": input_textures,
+                "output_textures": output_textures,
+                "input_count": len(input_textures),
+                "output_count": len(output_textures),
+            }
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["data"]
+
     def _get_resource_details(self, controller, resource_id):
         """Get details about a resource (texture or buffer)"""
         details = {}

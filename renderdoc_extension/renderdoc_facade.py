@@ -166,6 +166,10 @@ class RenderDocFacade:
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
 
+    def get_event_textures(self, event_id):
+        """Get input and output textures for a draw call event."""
+        return self._pipeline.get_event_textures(event_id)
+
     # ==================== Mesh Operations ====================
 
     def get_mesh_summary(self, event_id):
