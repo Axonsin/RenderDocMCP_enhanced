@@ -85,21 +85,62 @@ Add to `.mcp.json`:
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `get_capture_status` | Check capture loading status |
-| `get_draw_calls` | Get draw call list with hierarchical structure |
-| `get_draw_call_details` | Get details of a specific draw call |
-| `get_shader_info` | Get shader source code and constant buffer values |
-| `get_buffer_contents` | Get buffer contents (Base64) |
-| `get_texture_info` | Get texture metadata |
-| `get_texture_data` | Get texture pixel data (Base64) |
-| `save_texture` | Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
-| `get_pipeline_state` | Get pipeline state |
+### Core inspection
+
+- `get_capture_status` - Check capture loading status
+- `get_draw_calls` - Get draw call/action hierarchy with filters
+- `get_frame_summary` - Get frame-wide statistics and top-level markers
+- `get_draw_call_details` - Get details of a specific draw call
+- `get_action_timings` - Get GPU timings for actions
+- `get_shader_info` - Get shader disassembly, constant buffers, and bindings
+- `get_pipeline_state` - Get detailed pipeline state plus concise input/output texture summaries
+- `get_mesh_summary` - Get mesh topology, counts, attributes, and bounds
+- `get_mesh_data` - Get paginated mesh data
+
+### Canonical search and resource tools
+
+- `search_draws` - Search draw calls by shader, texture, or resource usage
+- `list_resources` - List textures or buffers with one paginated interface
+- `get_texture_info` - Get texture metadata
+- `get_texture_data` - Get texture pixel data (Base64)
+- `get_buffer_contents` - Get buffer contents (Base64)
+- `save_texture` - Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
+
+### Workflow and advanced tools
+
+- `open_capture` - Open a capture file from the MCP client
+- `list_captures` - List `.rdc` files in a directory
+- `export_mesh_csv` - Export mesh data for downstream workflows
+
+### Compatibility aliases
+
+These legacy tools still work during migration, but new prompts and examples should prefer the canonical tools above:
+
+- `find_draws_by_shader`
+- `find_draws_by_texture`
+- `find_draws_by_resource`
+- `list_textures`
+- `list_buffers`
+- `get_event_textures`
 
 ## Examples
 
-### Get Draw Calls
+### Search draw calls by shader/texture/resource
+
+```
+search_draws(by="shader", query="Toon", stage="pixel")
+search_draws(by="texture", query="CharacterSkin")
+search_draws(by="resource", query="ResourceId::12345")
+```
+
+### List textures or buffers
+
+```
+list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
+list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
+```
+
+### Get draw calls
 
 ```
 get_draw_calls(include_children=true)
@@ -111,56 +152,50 @@ get_draw_calls(include_children=true)
 get_shader_info(event_id=123, stage="pixel")
 ```
 
-### Get Pipeline State
+### Get pipeline state
 
 ```
 get_pipeline_state(event_id=123)
 ```
 
-### Get Texture Data
+The response now includes concise `input_textures` and `output_textures` summaries, so most prompts no longer need to call `get_event_textures`.
+
+### Get mesh data with canonical paging
 
 ```
-# Get mip 0 of a 2D texture
+get_mesh_data(event_id=1234, offset=0, limit=100)
+get_mesh_data(event_id=1234, offset=100, limit=100)
+```
+
+### Get texture data
+
+```
 get_texture_data(resource_id="ResourceId::123")
-
-# Get a specific mip level
 get_texture_data(resource_id="ResourceId::123", mip=2)
-
-# Get a specific face of a cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
 get_texture_data(resource_id="ResourceId::456", slice=3)
-
-# Get a specific depth slice of a 3D texture
 get_texture_data(resource_id="ResourceId::789", depth_slice=5)
 ```
 
-### Partial Buffer Data Retrieval
+### Partial buffer data retrieval
 
 ```
-# Get entire buffer
 get_buffer_contents(resource_id="ResourceId::123")
-
-# Get 512 bytes from offset 256
 get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 ```
 
-### Save Texture to File
+### Save texture to file
 
 ```
-# Save texture as PNG
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
-
-# Save as JPG format
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
-
-# Save specific mip level
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
-
-# Save specific face of cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
-
-# Discard alpha channel
-save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
+
+## Migration notes
+
+- Prefer `search_draws(...)` over `find_draws_by_*`.
+- Prefer `list_resources(...)` over `list_textures(...)` and `list_buffers(...)`.
+- Prefer `offset` / `limit` for mesh pagination; `start_offset` / `max_vertices` remain accepted for compatibility.
+- Prefer `get_pipeline_state(...)` when you need concise read/write texture summaries.
 
 ## Requirements
 

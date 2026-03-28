@@ -22,9 +22,9 @@ class SearchService:
             matcher_fn: Function(pipe, controller, action, ctx) -> match_reason or None
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"matches": [], "scanned_draws": 0}
+        result = {"matches": [], "scanned_count": 0}
 
         def callback(controller):
             root_actions = controller.GetRootActions()
@@ -36,7 +36,7 @@ class SearchService:
                 a for a in all_actions
                 if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch)
             ]
-            result["scanned_draws"] = len(draw_actions)
+            result["scanned_count"] = len(draw_actions)
 
             for action in draw_actions:
                 controller.SetFrameEvent(action.eventId, False)
@@ -53,6 +53,16 @@ class SearchService:
         self._invoke(callback)
         result["total_matches"] = len(result["matches"])
         return result
+
+    def search_draws(self, by, query, stage=None):
+        """Search draw calls by shader, texture, or resource usage."""
+        if by == "shader":
+            return self.find_draws_by_shader(query, stage)
+        if by == "texture":
+            return self.find_draws_by_texture(query)
+        if by == "resource":
+            return self.find_draws_by_resource(query)
+        raise ValueError("INVALID_SEARCH_TYPE: by must be one of shader, texture, resource")
 
     def find_draws_by_shader(self, shader_name, stage=None):
         """Find all draw calls using a shader with the given name (partial match)."""
@@ -78,9 +88,9 @@ class SearchService:
                         pass
 
                     if shader_name.lower() in entry_point.lower():
-                        return "%s entry_point: '%s'" % (str(s), entry_point)
+                        return "%s entry_point: '%s'" % (Parsers.stage_name(s), entry_point)
                     elif shader_debug_name and shader_name.lower() in shader_debug_name.lower():
-                        return "%s name: '%s'" % (str(s), shader_debug_name)
+                        return "%s name: '%s'" % (Parsers.stage_name(s), shader_debug_name)
             return None
 
         return self._search_draws(matcher)
@@ -103,7 +113,7 @@ class SearchService:
                         except Exception:
                             pass
                         if res_name and texture_name.lower() in res_name.lower():
-                            return "%s SRV: '%s'" % (str(stage), res_name)
+                            return "%s srv: '%s'" % (Parsers.stage_name(stage), res_name)
                 except Exception:
                     pass
 
@@ -119,7 +129,7 @@ class SearchService:
                         except Exception:
                             pass
                         if res_name and texture_name.lower() in res_name.lower():
-                            return "%s UAV: '%s'" % (str(stage), res_name)
+                            return "%s uav: '%s'" % (Parsers.stage_name(stage), res_name)
                 except Exception:
                     pass
 
@@ -134,7 +144,7 @@ class SearchService:
                     except Exception:
                         pass
                     if res_name and texture_name.lower() in res_name.lower():
-                        return "RenderTarget[%d]: '%s'" % (i, res_name)
+                        return "render_target[%d]: '%s'" % (i, res_name)
             except Exception:
                 pass
 
@@ -152,7 +162,7 @@ class SearchService:
             for stage in stages_to_check:
                 shader = pipe.GetShader(stage)
                 if shader == target_rid:
-                    return "%s shader" % str(stage)
+                    return "%s shader" % Parsers.stage_name(stage)
 
             # Check SRVs and UAVs
             for stage in stages_to_check:
@@ -160,7 +170,7 @@ class SearchService:
                     srvs = pipe.GetReadOnlyResources(stage, False)
                     for srv in srvs:
                         if srv.descriptor.resource == target_rid:
-                            return "%s SRV slot %d" % (str(stage), srv.access.index)
+                            return "%s srv slot %d" % (Parsers.stage_name(stage), srv.access.index)
                 except Exception:
                     pass
 
@@ -168,7 +178,7 @@ class SearchService:
                     uavs = pipe.GetReadWriteResources(stage, False)
                     for uav in uavs:
                         if uav.descriptor.resource == target_rid:
-                            return "%s UAV slot %d" % (str(stage), uav.access.index)
+                            return "%s uav slot %d" % (Parsers.stage_name(stage), uav.access.index)
                 except Exception:
                     pass
 
@@ -176,13 +186,13 @@ class SearchService:
             try:
                 for i, rt in enumerate(pipe.GetOutputTargets()):
                     if rt.resource == target_rid:
-                        return "RenderTarget[%d]" % i
+                        return "render_target[%d]" % i
             except Exception:
                 pass
 
             try:
                 if pipe.GetDepthTarget().resource == target_rid:
-                    return "DepthTarget"
+                    return "depth_target"
             except Exception:
                 pass
 

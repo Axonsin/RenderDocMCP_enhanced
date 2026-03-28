@@ -28,14 +28,14 @@ class ActionService:
         Get all draw calls/actions in the capture with optional filtering.
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"actions": []}
+        result = {"items": []}
 
         def callback(controller):
             root_actions = controller.GetRootActions()
             structured_file = controller.GetStructuredFile()
-            result["actions"] = Serializers.serialize_actions(
+            result["items"] = Serializers.serialize_actions(
                 root_actions,
                 structured_file,
                 include_children,
@@ -47,15 +47,25 @@ class ActionService:
                 flags_filter=flags_filter,
             )
 
+        def count_items(items):
+            total = 0
+            for item in items:
+                total += 1
+                total += count_items(item.get("children", []))
+            return total
+
         self._invoke(callback)
-        return result
+        return {
+            "items": result["items"],
+            "total_count": count_items(result["items"]),
+        }
 
     def get_frame_summary(self):
         """
         Get a summary of the current capture frame.
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"summary": None}
 
@@ -130,7 +140,7 @@ class ActionService:
     def get_draw_call_details(self, event_id):
         """Get detailed information about a specific draw call"""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"details": None, "error": None}
 
@@ -140,7 +150,7 @@ class ActionService:
 
             action = self.ctx.GetAction(event_id)
             if not action:
-                result["error"] = "No action at event %d" % event_id
+                result["error"] = "INVALID_EVENT_ID: no action at event %d" % event_id
                 return
 
             structured_file = controller.GetStructuredFile()
@@ -199,7 +209,7 @@ class ActionService:
             - total_duration_ms: Sum of all durations
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"data": None, "error": None}
 

@@ -115,6 +115,10 @@ class RenderDocFacade:
         """Find all draw calls using a specific resource ID (exact match)"""
         return self._search.find_draws_by_resource(resource_id)
 
+    def search_draws(self, by, query, stage=None):
+        """Search draw calls using a canonical search interface."""
+        return self._search.search_draws(by, query, stage)
+
     # ==================== Resource Operations ====================
 
     def list_textures(self, name_filter=None, offset=0, limit=50):
@@ -124,6 +128,10 @@ class RenderDocFacade:
     def list_buffers(self, name_filter=None, offset=0, limit=50):
         """List all buffers with optional name filtering and pagination."""
         return self._resource.list_buffers(name_filter, offset, limit)
+
+    def list_resources(self, resource_type, name_filter=None, offset=0, limit=50):
+        """List resources using a canonical resource-listing interface."""
+        return self._resource.list_resources(resource_type, name_filter, offset, limit)
 
     def get_buffer_contents(self, resource_id, offset=0, length=0):
         """Get buffer data"""
@@ -180,6 +188,8 @@ class RenderDocFacade:
         self,
         event_id,
         stage="VSIn",
+        offset=0,
+        limit=100,
         start_offset=0,
         max_vertices=100,
         attributes=None,
@@ -188,6 +198,8 @@ class RenderDocFacade:
         return self._mesh.get_mesh_data(
             event_id=event_id,
             stage=stage,
+            offset=offset,
+            limit=limit,
             start_offset=start_offset,
             max_vertices=max_vertices,
             attributes=attributes,

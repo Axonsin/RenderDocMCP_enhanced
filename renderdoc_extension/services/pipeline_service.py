@@ -17,7 +17,7 @@ class PipelineService:
     def get_shader_info(self, event_id, stage):
         """Get shader information for a specific stage"""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"shader": None, "error": None}
 
@@ -29,16 +29,16 @@ class PipelineService:
 
             shader = pipe.GetShader(stage_enum)
             if shader == rd.ResourceId.Null():
-                result["error"] = "No %s shader bound" % stage
+                result["error"] = "RESOURCE_NOT_FOUND: no %s shader bound" % stage
                 return
 
             entry = pipe.GetShaderEntryPoint(stage_enum)
             reflection = pipe.GetShaderReflection(stage_enum)
 
             shader_info = {
-                "resource_id": str(shader),
+                "resource_id": Parsers.canonical_resource_id(shader),
                 "entry_point": entry,
-                "stage": stage,
+                "stage": Parsers.parse_stage_name(stage),
             }
 
             # Get disassembly
@@ -75,7 +75,7 @@ class PipelineService:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"pipeline": None, "error": None}
 
@@ -97,8 +97,9 @@ class PipelineService:
                 shader = pipe.GetShader(stage)
                 if shader != rd.ResourceId.Null():
                     stage_info = {
-                        "resource_id": str(shader),
+                        "resource_id": Parsers.canonical_resource_id(shader),
                         "entry_point": pipe.GetShaderEntryPoint(stage),
+                        "stage": Parsers.stage_name(stage),
                     }
 
                     reflection = pipe.GetShaderReflection(stage)
@@ -116,7 +117,7 @@ class PipelineService:
                         controller, pipe, stage, reflection
                     )
 
-                    stages[str(stage)] = stage_info
+                    stages[Parsers.stage_name(stage)] = stage_info
 
             pipeline_info["shaders"] = stages
 
@@ -145,7 +146,7 @@ class PipelineService:
                 rts = []
                 for i, rt in enumerate(pipe.GetOutputTargets()):
                     if rt.resource != rd.ResourceId.Null():
-                        rts.append({"index": i, "resource_id": str(rt.resource)})
+                        rts.append({"index": i, "resource_id": Parsers.canonical_resource_id(rt.resource)})
                 pipeline_info["render_targets"] = rts
             except Exception:
                 pass
@@ -153,7 +154,7 @@ class PipelineService:
             try:
                 depth = pipe.GetDepthTarget()
                 if depth.resource != rd.ResourceId.Null():
-                    pipeline_info["depth_target"] = str(depth.resource)
+                    pipeline_info["depth_target"] = Parsers.canonical_resource_id(depth.resource)
             except Exception:
                 pass
 
@@ -164,6 +165,9 @@ class PipelineService:
                 }
             except Exception:
                 pass
+
+            texture_summary = self._collect_event_textures(controller, pipe)
+            pipeline_info.update(texture_summary)
 
             result["pipeline"] = pipeline_info
 
@@ -192,7 +196,7 @@ class PipelineService:
                 res_info = {
                     "slot": slot,
                     "name": name_map.get(slot, ""),
-                    "resource_id": str(srv.descriptor.resource),
+                    "resource_id": Parsers.canonical_resource_id(srv.descriptor.resource),
                 }
 
                 res_info.update(
@@ -229,7 +233,7 @@ class PipelineService:
                 uav_info = {
                     "slot": slot,
                     "name": name_map.get(slot, ""),
-                    "resource_id": str(uav.descriptor.resource),
+                    "resource_id": Parsers.canonical_resource_id(uav.descriptor.resource),
                 }
 
                 uav_info.update(
@@ -343,99 +347,76 @@ class PipelineService:
 
     def get_event_textures(self, event_id):
         """Get input and output textures for a draw call event."""
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+        pipeline_info = self.get_pipeline_state(event_id)
+        return {
+            "event_id": event_id,
+            "input_textures": pipeline_info.get("input_textures", []),
+            "output_textures": pipeline_info.get("output_textures", []),
+            "input_count": pipeline_info.get("input_count", 0),
+            "output_count": pipeline_info.get("output_count", 0),
+        }
 
-        result = {"data": None, "error": None}
+    def _collect_event_textures(self, controller, pipe):
+        """Collect concise input/output texture summaries for an event."""
+        tex_ids = {tex.resourceId for tex in controller.GetTextures()}
 
-        def callback(controller):
-            controller.SetFrameEvent(event_id, True)
-            pipe = controller.GetPipelineState()
-
-            # Collect texture resource IDs from all GetTextures() for type lookup
-            tex_ids = set()
-            for tex in controller.GetTextures():
-                tex_ids.add(tex.resourceId)
-
-            # --- Input textures (SRVs across all shader stages) ---
-            input_textures = []
-            seen_inputs = set()
-            for stage in Helpers.get_all_shader_stages():
-                try:
-                    srvs = pipe.GetReadOnlyResources(stage, False)
-                except Exception:
+        input_textures = []
+        seen_inputs = set()
+        for stage in Helpers.get_all_shader_stages():
+            try:
+                srvs = pipe.GetReadOnlyResources(stage, False)
+            except Exception:
+                continue
+            for srv in srvs:
+                rid = srv.descriptor.resource
+                if rid == rd.ResourceId.Null() or rid not in tex_ids or rid in seen_inputs:
                     continue
-                for srv in srvs:
-                    rid = srv.descriptor.resource
-                    if rid == rd.ResourceId.Null():
-                        continue
-                    if rid not in tex_ids:
-                        continue
-                    if rid in seen_inputs:
-                        continue
-                    seen_inputs.add(rid)
-                    name = ""
-                    try:
-                        name = self.ctx.GetResourceName(rid)
-                    except Exception:
-                        pass
-                    input_textures.append({
-                        "resource_id": str(rid),
-                        "name": name,
-                        "stage": str(stage),
-                        "slot": srv.access.index,
-                    })
+                seen_inputs.add(rid)
+                input_textures.append({
+                    "resource_id": Parsers.canonical_resource_id(rid),
+                    "name": self._get_resource_name(rid),
+                    "stage": Parsers.stage_name(stage),
+                    "slot": srv.access.index,
+                })
 
-            # --- Output textures (render targets + depth target) ---
-            output_textures = []
+        output_textures = []
+        try:
+            for i, rt in enumerate(pipe.GetOutputTargets()):
+                if rt.resource == rd.ResourceId.Null():
+                    continue
+                output_textures.append({
+                    "resource_id": Parsers.canonical_resource_id(rt.resource),
+                    "name": self._get_resource_name(rt.resource),
+                    "type": "render_target",
+                    "index": i,
+                })
+        except Exception:
+            pass
 
-            try:
-                for i, rt in enumerate(pipe.GetOutputTargets()):
-                    if rt.resource == rd.ResourceId.Null():
-                        continue
-                    name = ""
-                    try:
-                        name = self.ctx.GetResourceName(rt.resource)
-                    except Exception:
-                        pass
-                    output_textures.append({
-                        "resource_id": str(rt.resource),
-                        "name": name,
-                        "type": "render_target",
-                        "index": i,
-                    })
-            except Exception:
-                pass
+        try:
+            depth = pipe.GetDepthTarget()
+            if depth.resource != rd.ResourceId.Null():
+                output_textures.append({
+                    "resource_id": Parsers.canonical_resource_id(depth.resource),
+                    "name": self._get_resource_name(depth.resource),
+                    "type": "depth_target",
+                })
+        except Exception:
+            pass
 
-            try:
-                depth = pipe.GetDepthTarget()
-                if depth.resource != rd.ResourceId.Null():
-                    name = ""
-                    try:
-                        name = self.ctx.GetResourceName(depth.resource)
-                    except Exception:
-                        pass
-                    output_textures.append({
-                        "resource_id": str(depth.resource),
-                        "name": name,
-                        "type": "depth_target",
-                    })
-            except Exception:
-                pass
+        return {
+            "input_textures": input_textures,
+            "output_textures": output_textures,
+            "input_count": len(input_textures),
+            "output_count": len(output_textures),
+        }
 
-            result["data"] = {
-                "event_id": event_id,
-                "input_textures": input_textures,
-                "output_textures": output_textures,
-                "input_count": len(input_textures),
-                "output_count": len(output_textures),
-            }
-
-        self._invoke(callback)
-
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["data"]
+    def _get_resource_name(self, resource_id):
+        """Get resource name with safe fallback."""
+        try:
+            return self.ctx.GetResourceName(resource_id) or ""
+        except Exception:
+            return ""
 
     def _get_resource_details(self, controller, resource_id):
         """Get details about a resource (texture or buffer)"""
@@ -444,7 +425,7 @@ class PipelineService:
         try:
             resource_name = self.ctx.GetResourceName(resource_id)
             if resource_name:
-                details["resource_name"] = resource_name
+                details["name"] = resource_name
         except Exception:
             pass
 
@@ -500,7 +481,7 @@ class PipelineService:
                         stage,
                         reflection.entryPoint,
                         i,
-                        rd.ResourceId(),  # 空 ResourceId
+                        rd.ResourceId.Null(),  # 空 ResourceId
                         0,
                         0
                     )

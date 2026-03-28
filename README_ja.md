@@ -84,19 +84,60 @@ uv tool update-shell  # PATHに追加
 
 ## MCPツール一覧
 
-| ツール | 説明 |
-|--------|------|
-| `get_capture_status` | キャプチャの読み込み状態を確認 |
-| `get_draw_calls` | ドローコール一覧を階層構造で取得 |
-| `get_draw_call_details` | 特定のドローコールの詳細情報を取得 |
-| `get_shader_info` | シェーダーのソースコード・定数バッファの値を取得 |
-| `get_buffer_contents` | バッファの内容を取得 (Base64) |
-| `get_texture_info` | テクスチャのメタデータを取得 |
-| `get_texture_data` | テクスチャのピクセルデータを取得 (Base64) |
-| `save_texture` | テクスチャを画像ファイルに保存 (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
-| `get_pipeline_state` | パイプライン状態を取得 |
+### コア解析ツール
+
+- `get_capture_status` - キャプチャの読み込み状態を確認
+- `get_draw_calls` - draw call / action の階層をフィルタ付きで取得
+- `get_frame_summary` - フレーム全体の統計とトップレベル marker を取得
+- `get_draw_call_details` - 特定 draw call の詳細情報を取得
+- `get_action_timings` - action の GPU 時間を取得
+- `get_shader_info` - shader 逆アセンブル、定数バッファ、バインディングを取得
+- `get_pipeline_state` - 完全なパイプライン状態と簡潔な入出力テクスチャ要約を取得
+- `get_mesh_summary` - メッシュのトポロジ、件数、属性、境界を取得
+- `get_mesh_data` - メッシュデータをページング取得
+
+### Canonical な検索・リソースツール
+
+- `search_draws` - shader / texture / resource で draw call を統一検索
+- `list_resources` - texture と buffer を 1 つのページング API で列挙
+- `get_texture_info` - テクスチャのメタデータを取得
+- `get_texture_data` - テクスチャのピクセルデータを取得 (Base64)
+- `get_buffer_contents` - バッファ内容を取得 (Base64)
+- `save_texture` - テクスチャを画像ファイルに保存 (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
+
+### ワークフロー / 高度なツール
+
+- `open_capture` - MCP クライアントからキャプチャを開く
+- `list_captures` - ディレクトリ内の `.rdc` ファイルを列挙
+- `export_mesh_csv` - 下流ワークフロー向けにメッシュ CSV を出力
+
+### 互換レイヤー
+
+以下の旧ツールは移行期間中も利用できますが、新しい prompt やサンプルでは上記の canonical ツールを優先してください。
+
+- `find_draws_by_shader`
+- `find_draws_by_texture`
+- `find_draws_by_resource`
+- `list_textures`
+- `list_buffers`
+- `get_event_textures`
 
 ## 使用例
+
+### draw call の統一検索
+
+```
+search_draws(by="shader", query="Toon", stage="pixel")
+search_draws(by="texture", query="CharacterSkin")
+search_draws(by="resource", query="ResourceId::12345")
+```
+
+### リソースの統一列挙
+
+```
+list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
+list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
+```
 
 ### ドローコール一覧の取得
 
@@ -114,6 +155,15 @@ get_shader_info(event_id=123, stage="pixel")
 
 ```
 get_pipeline_state(event_id=123)
+```
+
+`get_pipeline_state` の結果には簡潔な `input_textures` / `output_textures` 要約も含まれるため、多くのケースでは `get_event_textures` を追加で呼ぶ必要はありません。
+
+### canonical なページングでメッシュ取得
+
+```
+get_mesh_data(event_id=1234, offset=0, limit=100)
+get_mesh_data(event_id=1234, offset=100, limit=100)
 ```
 
 ### テクスチャデータの取得
@@ -145,21 +195,16 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 ### テクスチャをファイルに保存
 
 ```
-# PNG形式で保存
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
-
-# JPG形式で保存
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
-
-# 特定のmipレベルを保存
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
-
-# キューブマップの特定の面を保存 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
-
-# アルファチャンネルを破棄
-save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
+
+## 移行メモ
+
+- `find_draws_by_*` より `search_draws(...)` を優先してください。
+- `list_textures(...)` / `list_buffers(...)` より `list_resources(...)` を優先してください。
+- メッシュのページングは `offset` / `limit` を優先し、`start_offset` / `max_vertices` は互換用として残します。
+- イベントの入出力テクスチャ要約が必要な場合は、まず `get_pipeline_state(...)` を見てください。
 
 ## 要件
 

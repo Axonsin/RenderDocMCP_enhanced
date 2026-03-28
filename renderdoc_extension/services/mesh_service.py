@@ -246,7 +246,7 @@ class MeshService:
             Dict with topology, vertex/index counts, attributes, bounding box
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"summary": None, "error": None}
 
@@ -257,12 +257,12 @@ class MeshService:
             # Get action
             action = self.ctx.GetAction(event_id)
             if not action:
-                result["error"] = f"No action at event {event_id}"
+                result["error"] = f"INVALID_EVENT_ID: no action at event {event_id}"
                 return
 
             # Check if it's a draw call
             if not (action.flags & rd.ActionFlags.Drawcall):
-                result["error"] = f"Event {event_id} is not a draw call"
+                result["error"] = f"INVALID_EVENT_ID: event {event_id} is not a draw call"
                 return
 
             # Get mesh inputs
@@ -351,6 +351,8 @@ class MeshService:
         self,
         event_id: int,
         stage: str = "VSIn",
+        offset: int = 0,
+        limit: int = 100,
         start_offset: int = 0,
         max_vertices: int = 100,
         attributes: Optional[List[str]] = None,
@@ -361,18 +363,24 @@ class MeshService:
         Args:
             event_id: Event ID of the draw call
             stage: Mesh data stage - "VSIn", "VSOut", or "GSOut"
-            start_offset: Starting vertex offset for pagination (default: 0)
-            max_vertices: Maximum number of vertices to return (default: 100, recommended: 100-500)
+            offset: Canonical starting vertex offset for pagination (default: 0)
+            limit: Canonical maximum number of vertices to return (default: 100, recommended: 100-500)
+            start_offset: Legacy alias for offset
+            max_vertices: Legacy alias for limit
             attributes: Optional list of attribute names to include
 
         Returns:
             Dict with vertices, indices, topology, attribute info, total_count, has_more
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         if stage not in ["VSIn", "VSOut", "GSOut"]:
-            raise ValueError(f"Invalid stage: {stage}. Must be VSIn, VSOut, or GSOut")
+            raise ValueError(f"INVALID_STAGE: {stage}. Must be VSIn, VSOut, or GSOut")
+
+        if offset != 0 or limit != 100:
+            start_offset = offset
+            max_vertices = limit
 
         result = {"data": None, "error": None}
 
@@ -383,25 +391,25 @@ class MeshService:
             # Get action
             action = self.ctx.GetAction(event_id)
             if not action:
-                result["error"] = f"No action at event {event_id}"
+                result["error"] = f"INVALID_EVENT_ID: no action at event {event_id}"
                 return
 
             # Check if it's a draw call
             if not (action.flags & rd.ActionFlags.Drawcall):
-                result["error"] = f"Event {event_id} is not a draw call"
+                result["error"] = f"INVALID_EVENT_ID: event {event_id} is not a draw call"
                 return
 
             # Get mesh data based on stage
             if stage == "VSIn":
                 mesh_inputs = self._get_mesh_inputs(controller, action)
                 if not mesh_inputs:
-                    result["error"] = f"No mesh input data available for event {event_id}"
+                    result["error"] = f"RESOURCE_NOT_FOUND: no mesh input data available for event {event_id}"
                     return
             else:
                 # VSOut or GSOut
                 postvs_mesh = self._get_postvs_data(controller, action, stage)
                 if not postvs_mesh:
-                    result["error"] = f"No {stage} data available for event {event_id}"
+                    result["error"] = f"RESOURCE_NOT_FOUND: no {stage} data available for event {event_id}"
                     return
                 # For post-VS, we need to get attribute info from shader reflection
                 mesh_inputs = [postvs_mesh]
@@ -414,7 +422,7 @@ class MeshService:
                     if any(n in m.name.lower() for n in attr_names_lower)
                 ]
                 if not mesh_inputs:
-                    result["error"] = f"No matching attributes found: {attributes}"
+                    result["error"] = f"RESOURCE_NOT_FOUND: no matching attributes found: {attributes}"
                     return
 
             # Get indices
@@ -474,8 +482,11 @@ class MeshService:
                 "event_id": event_id,
                 "stage": stage,
                 "topology": topology,
+                "items": vertices,
+                "offset": start_offset,
+                "limit": max_vertices,
+                "returned_count": len(vertices),
                 "total_count": total_count,
-                "start_offset": start_offset,
                 "num_vertices": len(vertices),
                 "num_indices": len(indices),
                 "has_more": has_more,
@@ -517,7 +528,7 @@ class MeshService:
             Dict with success status and export info
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         if stage not in ["VSIn", "VSOut", "GSOut"]:
             raise ValueError(f"Invalid stage: {stage}. Must be VSIn, VSOut, or GSOut")

@@ -85,19 +85,60 @@ uv tool update-shell  # 把renderdoc-mcp添加到 PATH
 
 ## MCP 工具列表
 
-| 工具 | 说明 |
-|------|------|
-| `get_capture_status` | 检查捕获加载状态 |
-| `get_draw_calls` | 获取分层结构的绘制调用列表 |
-| `get_draw_call_details` | 获取特定绘制调用的详细信息 |
-| `get_shader_info` | 获取着色器源代码和常量缓冲区值 |
-| `get_buffer_contents` | 获取缓冲区内容 (Base64) |
-| `get_texture_info` | 获取纹理元数据 |
-| `get_texture_data` | 获取纹理像素数据 (Base64) |
-| `save_texture` | 保存纹理到图片文件 (PNG/JPG/BMP/TGA/EXR/DDS/HDR) |
-| `get_pipeline_state` | 获取管线状态 |
+### 核心分析工具
+
+- `get_capture_status` - 检查捕获加载状态
+- `get_draw_calls` - 获取 draw call / action 层级并支持过滤
+- `get_frame_summary` - 获取整帧统计与顶层 marker 摘要
+- `get_draw_call_details` - 获取特定 draw call 的详细信息
+- `get_action_timings` - 获取 action 的 GPU 时间
+- `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
+- `get_pipeline_state` - 获取完整管线状态，并附带精简的输入/输出纹理摘要
+- `get_mesh_summary` - 获取网格拓扑、数量、属性和包围盒
+- `get_mesh_data` - 分页获取网格数据
+
+### Canonical 搜索与资源工具
+
+- `search_draws` - 按 shader、texture、resource 统一搜索 draw call
+- `list_resources` - 用一个分页接口列出 texture 或 buffer
+- `get_texture_info` - 获取纹理元数据
+- `get_texture_data` - 获取纹理像素数据 (Base64)
+- `get_buffer_contents` - 获取缓冲区内容 (Base64)
+- `save_texture` - 保存纹理到图片文件 (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
+
+### 工作流 / 高级工具
+
+- `open_capture` - 从 MCP 客户端直接打开捕获文件
+- `list_captures` - 列出目录中的 `.rdc` 文件
+- `export_mesh_csv` - 为下游工作流导出网格 CSV
+
+### 兼容层工具
+
+以下旧工具仍然可用，但新 prompt 与新文档应优先使用上面的 canonical 工具：
+
+- `find_draws_by_shader`
+- `find_draws_by_texture`
+- `find_draws_by_resource`
+- `list_textures`
+- `list_buffers`
+- `get_event_textures`
 
 ## 使用示例
+
+### 统一搜索 draw call
+
+```
+search_draws(by="shader", query="Toon", stage="pixel")
+search_draws(by="texture", query="CharacterSkin")
+search_draws(by="resource", query="ResourceId::12345")
+```
+
+### 统一列出资源
+
+```
+list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
+list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
+```
 
 ### 获取绘制调用列表
 
@@ -115,6 +156,15 @@ get_shader_info(event_id=123, stage="pixel")
 
 ```
 get_pipeline_state(event_id=123)
+```
+
+现在 `get_pipeline_state` 的返回中已经包含精简版的 `input_textures` / `output_textures` 摘要，因此大多数场景不再需要额外调用 `get_event_textures`。
+
+### 按 canonical 分页获取网格数据
+
+```
+get_mesh_data(event_id=1234, offset=0, limit=100)
+get_mesh_data(event_id=1234, offset=100, limit=100)
 ```
 
 ### 获取纹理数据
@@ -146,21 +196,16 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 ### 保存纹理到文件
 
 ```
-# 保存纹理为 PNG
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
-
-# 保存为 JPG 格式
 save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
-
-# 保存特定 mip 级别
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture_mip2.png", mip=2)
-
-# 保存立方体贴图的特定面 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-save_texture(resource_id="ResourceId::456", output_path="D:/output/cube_face.png", slice_index=3)
-
-# 丢弃 alpha 通道
-save_texture(resource_id="ResourceId::123", output_path="D:/output/no_alpha.png", alpha_mode="discard")
 ```
+
+## 迁移说明
+
+- 优先使用 `search_draws(...)`，不要再优先写 `find_draws_by_*`。
+- 优先使用 `list_resources(...)`，不要再优先写 `list_textures(...)` / `list_buffers(...)`。
+- 网格分页参数优先使用 `offset` / `limit`；`start_offset` / `max_vertices` 仍保留兼容。
+- 如果你需要事件的输入/输出纹理摘要，优先读取 `get_pipeline_state(...)` 的结果。
 
 ## 系统要求
 

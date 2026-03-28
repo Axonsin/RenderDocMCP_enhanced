@@ -35,103 +35,115 @@ class ResourceService:
             flag_names.append("None")
         return flag_names
 
-    def list_textures(self, name_filter=None, offset=0, limit=50):
-        """List all textures in the capture with optional name filtering and pagination."""
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+    @staticmethod
+    def _build_paginated_result(items, offset, limit):
+        """Build a canonical paginated result payload."""
+        total_count = len(items)
+        paginated = items[offset:offset + limit]
+        return {
+            "items": paginated,
+            "total_count": total_count,
+            "offset": offset,
+            "limit": limit,
+            "returned_count": len(paginated),
+            "has_more": offset + len(paginated) < total_count,
+        }
 
-        result = {"textures": None, "error": None}
+    def _serialize_texture_item(self, tex):
+        """Serialize texture descriptor to a canonical resource item."""
+        name = ""
+        try:
+            name = self.ctx.GetResourceName(tex.resourceId)
+        except Exception:
+            pass
+
+        return {
+            "resource_type": "texture",
+            "resource_id": Parsers.canonical_resource_id(tex.resourceId),
+            "name": name,
+            "width": tex.width,
+            "height": tex.height,
+            "depth": tex.depth,
+            "format": str(tex.format.Name()),
+            "mip_levels": tex.mips,
+            "array_size": tex.arraysize,
+            "byte_size": tex.byteSize,
+            "dimension": str(tex.type),
+            "cubemap": tex.cubemap,
+            "msaa_samples": tex.msSamp,
+        }
+
+    def _serialize_buffer_item(self, buf):
+        """Serialize buffer descriptor to a canonical resource item."""
+        name = ""
+        try:
+            name = self.ctx.GetResourceName(buf.resourceId)
+        except Exception:
+            pass
+
+        return {
+            "resource_type": "buffer",
+            "resource_id": Parsers.canonical_resource_id(buf.resourceId),
+            "name": name,
+            "byte_size": buf.length,
+            "creation_flags": self._parse_buffer_flags(buf.creationFlags),
+        }
+
+    def list_resources(self, resource_type, name_filter=None, offset=0, limit=50):
+        """List capture resources using a canonical resource-list interface."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
+
+        if resource_type not in ("texture", "buffer"):
+            raise ValueError("INVALID_RESOURCE_TYPE: resource_type must be texture or buffer")
+
+        result = {"data": None}
 
         def callback(controller):
-            all_textures = controller.GetTextures()
+            if resource_type == "texture":
+                items = [
+                    self._serialize_texture_item(tex)
+                    for tex in controller.GetTextures()
+                ]
+            else:
+                items = [
+                    self._serialize_buffer_item(buf)
+                    for buf in controller.GetBuffers()
+                ]
 
-            items = []
-            for tex in all_textures:
-                name = ""
-                try:
-                    name = self.ctx.GetResourceName(tex.resourceId)
-                except Exception:
-                    pass
+            if name_filter is not None:
+                items = [
+                    item for item in items
+                    if name_filter.lower() in item["name"].lower()
+                ]
 
-                if name_filter is not None and name_filter.lower() not in name.lower():
-                    continue
-
-                items.append({
-                    "resource_id": str(tex.resourceId),
-                    "name": name,
-                    "width": tex.width,
-                    "height": tex.height,
-                    "depth": tex.depth,
-                    "format": str(tex.format.Name()),
-                    "mip_levels": tex.mips,
-                    "array_size": tex.arraysize,
-                    "byte_size": tex.byteSize,
-                    "dimension": str(tex.type),
-                    "cubemap": tex.cubemap,
-                    "msaa_samples": tex.msSamp,
-                })
-
-            total_count = len(items)
-            paginated = items[offset:offset + limit]
-
-            result["textures"] = {
-                "textures": paginated,
-                "total_count": total_count,
-                "offset": offset,
-                "limit": limit,
-                "returned_count": len(paginated),
-            }
+            result["data"] = self._build_paginated_result(items, offset, limit)
+            result["data"]["resource_type"] = resource_type
 
         self._invoke(callback)
+        return result["data"]
 
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["textures"]
+    def list_textures(self, name_filter=None, offset=0, limit=50):
+        """List all textures in the capture with optional name filtering and pagination."""
+        canonical = self.list_resources("texture", name_filter=name_filter, offset=offset, limit=limit)
+        return {
+            "textures": canonical["items"],
+            "total_count": canonical["total_count"],
+            "offset": canonical["offset"],
+            "limit": canonical["limit"],
+            "returned_count": canonical["returned_count"],
+        }
 
     def list_buffers(self, name_filter=None, offset=0, limit=50):
         """List all buffers in the capture with optional name filtering and pagination."""
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
-
-        result = {"buffers": None, "error": None}
-
-        def callback(controller):
-            all_buffers = controller.GetBuffers()
-
-            items = []
-            for buf in all_buffers:
-                name = ""
-                try:
-                    name = self.ctx.GetResourceName(buf.resourceId)
-                except Exception:
-                    pass
-
-                if name_filter is not None and name_filter.lower() not in name.lower():
-                    continue
-
-                items.append({
-                    "resource_id": str(buf.resourceId),
-                    "name": name,
-                    "byte_size": buf.length,
-                    "creation_flags": self._parse_buffer_flags(buf.creationFlags),
-                })
-
-            total_count = len(items)
-            paginated = items[offset:offset + limit]
-
-            result["buffers"] = {
-                "buffers": paginated,
-                "total_count": total_count,
-                "offset": offset,
-                "limit": limit,
-                "returned_count": len(paginated),
-            }
-
-        self._invoke(callback)
-
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["buffers"]
+        canonical = self.list_resources("buffer", name_filter=name_filter, offset=offset, limit=limit)
+        return {
+            "buffers": canonical["items"],
+            "total_count": canonical["total_count"],
+            "offset": canonical["offset"],
+            "limit": canonical["limit"],
+            "returned_count": canonical["returned_count"],
+        }
 
     def _find_texture_by_id(self, controller, resource_id):
         """Find texture by resource ID"""
@@ -167,7 +179,7 @@ class ResourceService:
             dict with success status and texture info
         """
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"success": False, "error": None}
 
@@ -175,7 +187,7 @@ class ResourceService:
             # Find texture
             tex_desc = self._find_texture_by_id(controller, resource_id)
             if not tex_desc:
-                result["error"] = "Texture not found: %s" % resource_id
+                result["error"] = "TEXTURE_NOT_FOUND: %s" % resource_id
                 return
 
             # Create TextureSave configuration
@@ -215,7 +227,7 @@ class ResourceService:
 
             result["success"] = True
             result["output_path"] = output_path
-            result["resource_id"] = resource_id
+            result["resource_id"] = Parsers.canonical_resource_id(resource_id)
             result["format"] = format_type.upper()
             result["width"] = tex_desc.width
             result["height"] = tex_desc.height
@@ -231,7 +243,7 @@ class ResourceService:
     def get_buffer_contents(self, resource_id, offset=0, length=0):
         """Get buffer data"""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"data": None, "error": None}
 
@@ -240,7 +252,7 @@ class ResourceService:
             try:
                 rid = Parsers.parse_resource_id(resource_id)
             except Exception:
-                result["error"] = "Invalid resource ID: %s" % resource_id
+                result["error"] = "INVALID_RESOURCE_ID: %s" % resource_id
                 return
 
             # Find buffer
@@ -251,7 +263,7 @@ class ResourceService:
                     break
 
             if not buf_desc:
-                result["error"] = "Buffer not found: %s" % resource_id
+                result["error"] = "BUFFER_NOT_FOUND: %s" % resource_id
                 return
 
             # Get data
@@ -259,7 +271,7 @@ class ResourceService:
             data = controller.GetBufferData(rid, offset, actual_length)
 
             result["data"] = {
-                "resource_id": resource_id,
+                "resource_id": Parsers.canonical_resource_id(rid),
                 "length": len(data),
                 "total_size": buf_desc.length,
                 "offset": offset,
@@ -275,7 +287,7 @@ class ResourceService:
     def get_texture_info(self, resource_id):
         """Get texture metadata"""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"texture": None, "error": None}
 
@@ -284,11 +296,11 @@ class ResourceService:
                 tex_desc = self._find_texture_by_id(controller, resource_id)
 
                 if not tex_desc:
-                    result["error"] = "Texture not found: %s" % resource_id
+                    result["error"] = "TEXTURE_NOT_FOUND: %s" % resource_id
                     return
 
                 result["texture"] = {
-                    "resource_id": resource_id,
+                    "resource_id": Parsers.canonical_resource_id(tex_desc.resourceId),
                     "width": tex_desc.width,
                     "height": tex_desc.height,
                     "depth": tex_desc.depth,
@@ -301,7 +313,7 @@ class ResourceService:
                 }
             except Exception as e:
                 import traceback
-                result["error"] = "Error: %s\n%s" % (str(e), traceback.format_exc())
+                result["error"] = "RESOURCE_QUERY_FAILED: %s\n%s" % (str(e), traceback.format_exc())
 
         self._invoke(callback)
 
@@ -312,7 +324,7 @@ class ResourceService:
     def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None):
         """Get texture pixel data."""
         if not self.ctx.IsCaptureLoaded():
-            raise ValueError("No capture loaded")
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"data": None, "error": None}
 
@@ -320,12 +332,12 @@ class ResourceService:
             tex_desc = self._find_texture_by_id(controller, resource_id)
 
             if not tex_desc:
-                result["error"] = "Texture not found: %s" % resource_id
+                result["error"] = "TEXTURE_NOT_FOUND: %s" % resource_id
                 return
 
             # Validate mip level
             if mip < 0 or mip >= tex_desc.mips:
-                result["error"] = "Invalid mip level %d (texture has %d mips)" % (
+                result["error"] = "INVALID_MIP_LEVEL: %d (texture has %d mips)" % (
                     mip,
                     tex_desc.mips,
                 )
@@ -336,7 +348,7 @@ class ResourceService:
             if tex_desc.cubemap:
                 max_slices = tex_desc.arraysize * 6
             if slice < 0 or (max_slices > 1 and slice >= max_slices):
-                result["error"] = "Invalid slice %d (texture has %d slices)" % (
+                result["error"] = "INVALID_SLICE: %d (texture has %d slices)" % (
                     slice,
                     max_slices,
                 )
@@ -344,7 +356,7 @@ class ResourceService:
 
             # Validate sample for MSAA
             if sample < 0 or (tex_desc.msSamp > 1 and sample >= tex_desc.msSamp):
-                result["error"] = "Invalid sample %d (texture has %d samples)" % (
+                result["error"] = "INVALID_SAMPLE: %d (texture has %d samples)" % (
                     sample,
                     tex_desc.msSamp,
                 )
@@ -359,10 +371,10 @@ class ResourceService:
             is_3d = tex_desc.depth > 1
             if depth_slice is not None:
                 if not is_3d:
-                    result["error"] = "depth_slice can only be used with 3D textures"
+                    result["error"] = "INVALID_DEPTH_SLICE: depth_slice can only be used with 3D textures"
                     return
                 if depth_slice < 0 or depth_slice >= mip_depth:
-                    result["error"] = "Invalid depth_slice %d (texture has %d depth at mip %d)" % (
+                    result["error"] = "INVALID_DEPTH_SLICE: %d (texture has %d depth at mip %d)" % (
                         depth_slice,
                         mip_depth,
                         mip,
@@ -379,7 +391,7 @@ class ResourceService:
             try:
                 data = controller.GetTextureData(tex_desc.resourceId, sub)
             except Exception as e:
-                result["error"] = "Failed to get texture data: %s" % str(e)
+                result["error"] = "RESOURCE_QUERY_FAILED: failed to get texture data: %s" % str(e)
                 return
 
             # Extract depth slice for 3D textures if requested
@@ -393,7 +405,7 @@ class ResourceService:
                 output_depth = 1
 
             result["data"] = {
-                "resource_id": resource_id,
+                "resource_id": Parsers.canonical_resource_id(tex_desc.resourceId),
                 "width": mip_width,
                 "height": mip_height,
                 "depth": output_depth,

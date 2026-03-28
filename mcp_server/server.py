@@ -19,6 +19,12 @@ mcp = FastMCP(
 bridge = RenderDocBridge(host=settings.renderdoc_host, port=settings.renderdoc_port)
 
 
+def _optional_param(params: dict[str, object], name: str, value: object | None) -> None:
+    """Add an optional bridge parameter when present."""
+    if value is not None:
+        params[name] = value
+
+
 @mcp.tool
 def get_capture_status() -> dict:
     """
@@ -33,6 +39,7 @@ def get_draw_calls(
     include_children: bool = True,
     marker_filter: str | None = None,
     exclude_markers: list[str] | None = None,
+    event_id_range: dict[str, int] | None = None,
     event_id_min: int | None = None,
     event_id_max: int | None = None,
     only_actions: bool = False,
@@ -45,8 +52,9 @@ def get_draw_calls(
         include_children: Include child actions in the hierarchy (default: True)
         marker_filter: Only include actions under markers containing this string (partial match)
         exclude_markers: Exclude actions under markers containing these strings (list of partial matches)
-        event_id_min: Only include actions with event_id >= this value
-        event_id_max: Only include actions with event_id <= this value
+        event_id_range: Optional event_id range as {"min": ..., "max": ...}
+        event_id_min: Legacy lower bound alias for event_id range
+        event_id_max: Legacy upper bound alias for event_id range
         only_actions: If True, exclude marker actions (PushMarker/PopMarker/SetMarker)
         flags_filter: Only include actions with these flags (list of flag names, e.g. ["Drawcall", "Dispatch"])
 
@@ -54,18 +62,16 @@ def get_draw_calls(
     dispatches, and other GPU events.
     """
     params: dict[str, object] = {"include_children": include_children}
-    if marker_filter is not None:
-        params["marker_filter"] = marker_filter
-    if exclude_markers is not None:
-        params["exclude_markers"] = exclude_markers
-    if event_id_min is not None:
-        params["event_id_min"] = event_id_min
-    if event_id_max is not None:
-        params["event_id_max"] = event_id_max
+    _optional_param(params, "marker_filter", marker_filter)
+    _optional_param(params, "exclude_markers", exclude_markers)
+    if event_id_range is not None:
+        params["event_id_range"] = event_id_range
+    else:
+        _optional_param(params, "event_id_min", event_id_min)
+        _optional_param(params, "event_id_max", event_id_max)
     if only_actions:
         params["only_actions"] = only_actions
-    if flags_filter is not None:
-        params["flags_filter"] = flags_filter
+    _optional_param(params, "flags_filter", flags_filter)
     return bridge.call("get_draw_calls", params)
 
 
@@ -85,6 +91,27 @@ def get_frame_summary() -> dict:
 
 
 @mcp.tool
+def search_draws(
+    by: Literal["shader", "texture", "resource"],
+    query: str,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"] | None = None,
+) -> dict:
+    """
+    Search draw calls using a canonical search interface.
+
+    Args:
+        by: Search mode - shader, texture, or resource
+        query: Shader name, texture name, or resource ID query
+        stage: Optional shader stage filter for shader searches
+
+    Returns a search result with matches, total_matches, and scanned_count.
+    """
+    params: dict[str, object] = {"by": by, "query": query}
+    _optional_param(params, "stage", stage)
+    return bridge.call("search_draws", params)
+
+
+@mcp.tool
 def find_draws_by_shader(
     shader_name: str,
     stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"] | None = None,
@@ -98,10 +125,7 @@ def find_draws_by_shader(
 
     Returns a list of matching draw calls with event IDs and match reasons.
     """
-    params: dict[str, object] = {"shader_name": shader_name}
-    if stage is not None:
-        params["stage"] = stage
-    return bridge.call("find_draws_by_shader", params)
+    return search_draws(by="shader", query=shader_name, stage=stage)
 
 
 @mcp.tool
@@ -115,7 +139,7 @@ def find_draws_by_texture(texture_name: str) -> dict:
     Returns a list of matching draw calls with event IDs and match reasons.
     Searches SRVs, UAVs, and render targets.
     """
-    return bridge.call("find_draws_by_texture", {"texture_name": texture_name})
+    return search_draws(by="texture", query=texture_name)
 
 
 @mcp.tool
@@ -129,7 +153,7 @@ def find_draws_by_resource(resource_id: str) -> dict:
     Returns a list of matching draw calls with event IDs and match reasons.
     Searches shaders, SRVs, UAVs, render targets, and depth targets.
     """
-    return bridge.call("find_draws_by_resource", {"resource_id": resource_id})
+    return search_draws(by="resource", query=resource_id)
 
 
 @mcp.tool
@@ -219,6 +243,33 @@ def get_buffer_contents(
 
 
 @mcp.tool
+def list_resources(
+    resource_type: Literal["texture", "buffer"],
+    name_filter: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """
+    List resources using a canonical resource-listing interface.
+
+    Args:
+        resource_type: The resource family to list - texture or buffer
+        name_filter: Optional partial name match (case-insensitive)
+        offset: Starting index for pagination (default: 0)
+        limit: Maximum number of resources to return (default: 50)
+
+    Returns a paginated result with items, total_count, returned_count, and has_more.
+    """
+    params: dict[str, object] = {
+        "resource_type": resource_type,
+        "offset": offset,
+        "limit": limit,
+    }
+    _optional_param(params, "name_filter", name_filter)
+    return bridge.call("list_resources", params)
+
+
+@mcp.tool
 def list_textures(
     name_filter: str | None = None,
     offset: int = 0,
@@ -240,10 +291,10 @@ def list_textures(
     - offset/limit: Current pagination state
     - returned_count: Number of textures in this response
     """
-    params: dict[str, object] = {"offset": offset, "limit": limit}
-    if name_filter is not None:
-        params["name_filter"] = name_filter
-    return bridge.call("list_textures", params)
+    return bridge.call(
+        "list_textures",
+        {"name_filter": name_filter, "offset": offset, "limit": limit},
+    )
 
 
 @mcp.tool
@@ -268,10 +319,10 @@ def list_buffers(
     - offset/limit: Current pagination state
     - returned_count: Number of buffers in this response
     """
-    params: dict[str, object] = {"offset": offset, "limit": limit}
-    if name_filter is not None:
-        params["name_filter"] = name_filter
-    return bridge.call("list_buffers", params)
+    return bridge.call(
+        "list_buffers",
+        {"name_filter": name_filter, "offset": offset, "limit": limit},
+    )
 
 
 @mcp.tool
@@ -371,6 +422,7 @@ def get_pipeline_state(event_id: int) -> dict:
     - Samplers: addressing modes, filter settings, LOD parameters
     - Constant buffers: slot, size, variable count
     - Render targets and depth target
+    - Concise input/output texture summaries for the event
     - Viewports and input assembly state
     """
     return bridge.call("get_pipeline_state", {"event_id": event_id})
@@ -393,6 +445,9 @@ def get_event_textures(event_id: int) -> dict:
     - output_textures: List of render targets and depth target
       [{resource_id, name, type: "render_target"|"depth_target", index?}]
     - input_count / output_count: Totals
+
+    Compatibility note:
+        Prefer `get_pipeline_state`, which now includes the same concise texture summary.
     """
     return bridge.call("get_event_textures", {"event_id": event_id})
 
@@ -451,6 +506,8 @@ def get_mesh_summary(event_id: int) -> dict:
 def get_mesh_data(
     event_id: int,
     stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
+    offset: int = 0,
+    limit: int = 100,
     start_offset: int = 0,
     max_vertices: int = 100,
     attributes: list[str] | None = None,
@@ -459,13 +516,15 @@ def get_mesh_data(
     Get mesh vertex and index data for a specific draw call (with pagination).
 
     IMPORTANT: For large meshes, use pagination instead of requesting all data at once.
-    Recommended: Request 100-500 vertices per call, use start_offset for pagination.
+    Recommended: Request 100-500 vertices per call, use offset/limit for pagination.
 
     Args:
         event_id: The event ID of the draw call to inspect
         stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
-        start_offset: Starting vertex offset for pagination (default: 0)
-        max_vertices: Maximum number of vertices to return (default: 100, max recommended: 500)
+        offset: Canonical starting vertex offset for pagination (default: 0)
+        limit: Canonical maximum number of vertices to return (default: 100, max recommended: 500)
+        start_offset: Legacy alias for offset
+        max_vertices: Legacy alias for limit
         attributes: Optional list of attribute names to include (e.g., ["POSITION", "NORMAL", "TEXCOORD"])
                    If None, all attributes are included.
 
@@ -484,14 +543,20 @@ def get_mesh_data(
         # Next page
         result = get_mesh_data(event_id=123, start_offset=100, max_vertices=100)
     """
+    if offset == 0 and start_offset != 0:
+        offset = start_offset
+    if limit == 100 and max_vertices != 100:
+        limit = max_vertices
+
     params: dict[str, object] = {
         "event_id": event_id,
         "stage": stage,
-        "start_offset": start_offset,
-        "max_vertices": max_vertices,
+        "offset": offset,
+        "limit": limit,
+        "start_offset": offset,
+        "max_vertices": limit,
     }
-    if attributes is not None:
-        params["attributes"] = attributes
+    _optional_param(params, "attributes", attributes)
     return bridge.call("get_mesh_data", params)
 
 
