@@ -155,26 +155,50 @@ The entire MCP toolset is organized into three capability tiers:
 
 ### Global Operations
 
+#### Capture Management
+
 - `open_capture` - Open a capture file directly from the MCP client
 - `list_captures` - List `.rdc` files in a directory
 - `get_capture_status` - Check capture loading status
+
+#### Frame Overview
+
 - `get_frame_summary` - Get frame-wide statistics and top-level marker summaries
 - `summarize_capture` - Builds on `get_frame_summary` with additional full-frame GPU timing, sorting, and deduplication; returns a high-level overview with suggested investigation entry points
+
+#### Action Navigation
+
 - `get_draw_calls` - Get draw call / action hierarchy with filtering
 - `search_draws` - Unified search for draw calls by shader, texture, or resource
+
+#### Resource Space Browsing
+
 - `list_resources` - List textures or buffers with one paginated interface
 
 ### Local Data Analysis
 
-- `get_draw_call_details` - Get detailed information about a specific draw call
-- `get_action_timings` - Get GPU timings for actions
-- `get_shader_info` - Get shader disassembly, constant buffers, and bindings
+#### Pipeline State
+
 - `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
+- `get_shader_info` - Get shader disassembly, constant buffers, and bindings
+
+#### Resource Data Access
+
 - `get_texture_info` - Get texture metadata
 - `get_texture_data` - Get texture pixel data (Base64)
 - `get_buffer_contents` - Get buffer contents (Base64)
 - `get_mesh_summary` - Get mesh topology, counts, attributes, and bounds
 - `get_mesh_data` - Get paginated mesh data
+
+#### Action Metadata
+
+- `get_draw_call_details` - Get detailed information about a specific draw call
+- `get_action_timings` - Get GPU timings for actions
+
+#### Composite Analysis
+
+Cross-dimensional queries that orchestrate multiple services on top of atomic tools, providing a quick global view.
+
 - `inspect_event` - Inspect one event with compact details, timing, shader summaries, pipeline summaries, and mesh summary
 - `trace_resource_usage` - Trace where a resource is read, written, and consumed across matching events
 - `trace_event_dependencies` - Trace the immediate resource dependencies and likely producer events of one event
@@ -183,91 +207,14 @@ The entire MCP toolset is organized into three capability tiers:
 
 ### Upper-level Tools
 
+#### Resource Export
+
 - `save_texture` - Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
 - `export_mesh_csv` - Export mesh CSV for downstream workflows
 
 ## Examples
 
-### Recommended Workflow
-
-A typical analysis workflow is usually:
-
-`get_capture_status` / `get_frame_summary` → `get_draw_calls` / `search_draws` → `get_pipeline_state` / `get_shader_info` / `get_mesh_data`
-
-### Search draw calls globally
-
-```
-search_draws(by="shader", query="Toon", stage="pixel")
-search_draws(by="texture", query="CharacterSkin")
-search_draws(by="resource", query="ResourceId::12345")
-```
-
-### List resources uniformly
-
-```
-list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
-list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
-```
-
-### Get draw calls
-
-```
-get_draw_calls(include_children=true)
-```
-
-### Get shader info
-
-```
-get_shader_info(event_id=123, stage="pixel")
-```
-
-### Get pipeline state
-
-```
-get_pipeline_state(event_id=123)
-```
-
-The response includes concise `input_textures` / `output_textures` summaries.
-
-### Get mesh data with canonical paging
-
-```
-get_mesh_data(event_id=1234, offset=0, limit=100)
-get_mesh_data(event_id=1234, offset=100, limit=100)
-```
-
-### Get texture data
-
-```
-# Get mip 0 of a 2D texture
-get_texture_data(resource_id="ResourceId::123")
-
-# Get a specific mip level
-get_texture_data(resource_id="ResourceId::123", mip=2)
-
-# Get a specific face of a cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(resource_id="ResourceId::456", slice=3)
-
-# Get a specific depth slice of a 3D texture
-get_texture_data(resource_id="ResourceId::789", depth_slice=5)
-```
-
-### Partial buffer data retrieval
-
-```
-# Get entire buffer
-get_buffer_contents(resource_id="ResourceId::123")
-
-# Get 512 bytes from offset 256
-get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
-```
-
-### Save texture to file
-
-```
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
-```
+For detailed usage examples, see [MCP Tools Reference](docs/tools.md).
 
 ## TODO
 

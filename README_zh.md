@@ -147,26 +147,50 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 ### 全局操作能力
 
+#### 捕获管理
+
 - `open_capture` - 从 MCP 客户端直接打开捕获文件
 - `list_captures` - 列出目录中的 `.rdc` 文件
 - `get_capture_status` - 检查捕获加载状态
+
+#### 帧概览
+
 - `get_frame_summary` - 获取整帧统计与顶层 marker 摘要
-- `summarize_capture` - get_frame_summary之上额外获取全帧 GPU 时间并进行排序去重, 获取当前捕获的高层概览，并给出建议的分析入口
+- `summarize_capture` - 在 `get_frame_summary` 之上额外获取全帧 GPU 时间并进行排序去重，返回高层概览与建议的分析入口
+
+#### Action 导航
+
 - `get_draw_calls` - 获取 draw call / action 层级并支持过滤
 - `search_draws` - 按 shader、texture、resource 统一搜索 draw call
+
+#### 资源空间浏览
+
 - `list_resources` - 用一个分页接口列出 texture 或 buffer
 
 ### 局部数据分析能力
 
-- `get_draw_call_details` - 获取特定 draw call 的详细信息
-- `get_action_timings` - 获取 action 的 GPU 时间
-- `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
+#### Pipeline 状态
+
 - `get_pipeline_state` - 获取完整管线状态，并附带精简的输入/输出纹理摘要
+- `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
+
+#### 资源数据读取
+
 - `get_texture_info` - 获取纹理元数据
 - `get_texture_data` - 获取纹理像素数据（Base64）
 - `get_buffer_contents` - 获取缓冲区内容（Base64）
 - `get_mesh_summary` - 获取网格拓扑、数量、属性和包围盒
 - `get_mesh_data` - 分页获取网格数据
+
+#### Action 元信息
+
+- `get_draw_call_details` - 获取特定 draw call 的详细信息
+- `get_action_timings` - 获取 action 的 GPU 时间
+
+#### 组合分析
+
+跨维度的复合查询，在原子工具之上编排多个服务，帮助快速获得全局视图。
+
 - `inspect_event` - 对单个 event 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要
 - `trace_resource_usage` - 追踪资源在匹配事件中的读取、写入与消费过程
 - `trace_event_dependencies` - 追踪单个 event 的直接资源依赖与候选 producer event
@@ -175,92 +199,14 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 ### 上层工具能力
 
+#### 资源导出
+
 - `save_texture` - 保存纹理到图片文件（PNG/JPG/BMP/TGA/EXR/DDS/HDR）
 - `export_mesh_csv` - 为下游工作流导出网格 CSV
 
-## 使用以及方法调用示例
+## 使用示例
 
-### 推荐流程
-
-一个典型的分析流程通常是：
-
-`get_capture_status` / `get_frame_summary` → `get_draw_calls` / `search_draws` → `get_pipeline_state` / `get_shader_info` / `get_mesh_data`
-
-### 全局搜索 draw call
-
-```
-search_draws(by="shader", query="Toon", stage="pixel")
-search_draws(by="texture", query="CharacterSkin")
-search_draws(by="resource", query="ResourceId::12345")
-```
-
-### 统一列出资源
-
-```
-list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
-list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
-```
-
-### 获取绘制调用列表
-
-```
-get_draw_calls(include_children=true)
-```
-
-### 获取着色器信息
-
-```
-get_shader_info(event_id=123, stage="pixel")
-```
-
-### 获取管线状态
-
-```
-get_pipeline_state(event_id=123)
-```
-
-`get_pipeline_state` 的返回中也包含精简的 `input_textures` / `output_textures` 摘要。
-
-### 使用 Canonical 分页获取网格数据
-
-```
-get_mesh_data(event_id=1234, offset=0, limit=100)
-get_mesh_data(event_id=1234, offset=100, limit=100)
-```
-
-### 获取纹理数据
-
-```
-# 获取 2D 纹理的 mip 0
-get_texture_data(resource_id="ResourceId::123")
-
-# 获取特定的 mip 级别
-get_texture_data(resource_id="ResourceId::123", mip=2)
-
-# 获取立方体贴图的特定面 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(resource_id="ResourceId::456", slice=3)
-
-# 获取 3D 纹理的特定深度切片
-get_texture_data(resource_id="ResourceId::789", depth_slice=5)
-```
-
-### 部分缓冲区数据获取
-
-```
-# 获取整个缓冲区
-get_buffer_contents(resource_id="ResourceId::123")
-
-# 从偏移量 256 获取 512 字节
-get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
-```
-
-### 保存纹理到文件
-
-```
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG")
-```
-
+详细的工具调用示例请参见 [MCP 工具参考](docs/tools_zh.md)。
 
 ## TODO
 
