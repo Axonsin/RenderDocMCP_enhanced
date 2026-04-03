@@ -10,6 +10,14 @@ from ..utils import Parsers, Serializers, Helpers
 class PipelineService:
     """Pipeline state service"""
 
+    _TEXT_SHADER_ENCODINGS = {
+        "GLSL",
+        "HLSL",
+        "Slang",
+        "SPIRVAsm",
+        "OpenGLSPIRVAsm",
+    }
+
     def __init__(self, ctx, invoke_fn):
         self.ctx = ctx
         self._invoke = invoke_fn
@@ -22,23 +30,19 @@ class PipelineService:
         result = {"shader": None, "error": None}
 
         def callback(controller):
-            controller.SetFrameEvent(event_id, True)
-
-            pipe = controller.GetPipelineState()
-            stage_enum = Parsers.parse_stage(stage)
-
-            shader = pipe.GetShader(stage_enum)
-            if shader == rd.ResourceId.Null():
-                result["error"] = "RESOURCE_NOT_FOUND: no %s shader bound" % stage
+            shader_ctx = self._resolve_shader_context(controller, event_id, stage)
+            if shader_ctx["error"]:
+                result["error"] = shader_ctx["error"]
                 return
 
-            entry = pipe.GetShaderEntryPoint(stage_enum)
-            reflection = pipe.GetShaderReflection(stage_enum)
+            pipe = shader_ctx["pipe"]
+            stage_enum = shader_ctx["stage_enum"]
+            reflection = shader_ctx["reflection"]
 
             shader_info = {
-                "resource_id": Parsers.canonical_resource_id(shader),
-                "entry_point": entry,
-                "stage": Parsers.parse_stage_name(stage),
+                "resource_id": shader_ctx["resource_id"],
+                "entry_point": shader_ctx["entry_point"],
+                "stage": shader_ctx["stage_name"],
             }
 
             # Get disassembly
@@ -71,6 +75,68 @@ class PipelineService:
         if result["error"]:
             raise ValueError(result["error"])
         return result["shader"]
+
+    def get_shader_source(self, event_id, stage):
+        """Get original shader source text when the capture preserves it."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
+
+        result = {"shader_source": None, "error": None}
+
+        def callback(controller):
+            shader_ctx = self._resolve_shader_context(controller, event_id, stage)
+            if shader_ctx["error"]:
+                result["error"] = shader_ctx["error"]
+                return
+
+            reflection = shader_ctx["reflection"]
+            shader_source = {
+                "resource_id": shader_ctx["resource_id"],
+                "entry_point": shader_ctx["entry_point"],
+                "stage": shader_ctx["stage_name"],
+                "encoding": "Unknown",
+                "source_available": False,
+            }
+
+            if not reflection:
+                shader_source["reason"] = "Shader reflection/source bytes unavailable"
+                result["shader_source"] = shader_source
+                return
+
+            encoding_name = self._get_shader_encoding_name(reflection.encoding)
+            shader_source["encoding"] = encoding_name
+
+            raw_bytes = reflection.rawBytes
+            shader_source["byte_length"] = len(raw_bytes) if raw_bytes is not None else 0
+
+            if not raw_bytes:
+                shader_source["reason"] = "Shader source payload is empty"
+                result["shader_source"] = shader_source
+                return
+
+            if encoding_name in self._TEXT_SHADER_ENCODINGS:
+                try:
+                    shader_source["source_text"] = raw_bytes.decode("utf-8-sig")
+                    shader_source["source_available"] = True
+                except UnicodeDecodeError as exc:
+                    shader_source["reason"] = (
+                        "Failed to decode %s shader source as UTF-8: %s"
+                        % (encoding_name, exc)
+                    )
+                result["shader_source"] = shader_source
+                return
+
+            shader_source["reason"] = (
+                "Original source text is not available for %s shaders"
+                % encoding_name
+            )
+            result["shader_source"] = shader_source
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["shader_source"]
 
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
@@ -406,6 +472,37 @@ class PipelineService:
             return self.ctx.GetResourceName(resource_id) or ""
         except Exception:
             return ""
+
+    def _resolve_shader_context(self, controller, event_id, stage):
+        """Resolve the currently bound shader and reflection for one event/stage."""
+        controller.SetFrameEvent(event_id, True)
+
+        pipe = controller.GetPipelineState()
+        stage_enum = Parsers.parse_stage(stage)
+        shader = pipe.GetShader(stage_enum)
+
+        if shader == rd.ResourceId.Null():
+            return {
+                "error": "RESOURCE_NOT_FOUND: no %s shader bound" % stage,
+            }
+
+        return {
+            "error": None,
+            "pipe": pipe,
+            "stage_enum": stage_enum,
+            "stage_name": Parsers.parse_stage_name(stage),
+            "shader": shader,
+            "resource_id": Parsers.canonical_resource_id(shader),
+            "entry_point": pipe.GetShaderEntryPoint(stage_enum),
+            "reflection": pipe.GetShaderReflection(stage_enum),
+        }
+
+    @staticmethod
+    def _get_shader_encoding_name(encoding):
+        """Convert RenderDoc shader encoding enums to stable response strings."""
+        if encoding is None:
+            return "Unknown"
+        return getattr(encoding, "name", str(encoding))
 
     def _get_resource_details(self, controller, resource_id):
         """Get details about a resource (texture or buffer)"""

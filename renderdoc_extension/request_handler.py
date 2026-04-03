@@ -22,6 +22,7 @@ class RequestHandler:
             "get_draw_call_details": self._handle_get_draw_call_details,
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
+            "get_shader_source": self._handle_get_shader_source,
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "list_resources": self._handle_list_resources,
@@ -183,6 +184,12 @@ class RequestHandler:
         event_id = self._require_param(params, "event_id")
         stage = self._require_param(params, "stage")
         return self.facade.get_shader_info(int(event_id), stage)
+
+    def _handle_get_shader_source(self, params):
+        """Handle get_shader_source request"""
+        event_id = self._require_param(params, "event_id")
+        stage = self._require_param(params, "stage")
+        return self.facade.get_shader_source(int(event_id), stage)
 
     def _handle_get_buffer_contents(self, params):
         """Handle get_buffer_contents request"""

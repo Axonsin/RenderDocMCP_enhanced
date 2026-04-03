@@ -8,7 +8,7 @@
 
 一个典型的分析流程通常遵循以下模式：
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_mesh_data`
 
 ---
 
@@ -228,6 +228,25 @@ get_pipeline_state(event_id=123)
 **示例：**
 ```
 get_shader_info(event_id=123, stage="pixel")
+```
+
+---
+
+#### `get_shader_source`
+
+获取指定 event 处特定阶段的原始 shader 源码；仅当捕获中保留了文本型源码时返回 `source_text`。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `event_id` | `int` | 是 | event ID |
+| `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
+
+**返回值：** shader resource ID、入口点、阶段、编码类型、`source_available`，以及文本编码下的 `source_text`。对于 DXBC / DXIL / 二进制 SPIR-V 等格式，返回元数据和说明原始源码不可直接获得的 `reason`。
+
+**示例：**
+```
+get_shader_source(event_id=123, stage="pixel")
+# → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
 ```
 
 ---

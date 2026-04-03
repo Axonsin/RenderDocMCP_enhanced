@@ -173,6 +173,7 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 - `get_pipeline_state` - 获取完整管线状态，并附带精简的输入/输出纹理摘要
 - `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
+- `get_shader_source` - 在 RenderDoc 保留文本源码时获取原始 shader 源码
 
 #### 资源数据读取
 

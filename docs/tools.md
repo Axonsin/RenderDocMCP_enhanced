@@ -8,7 +8,7 @@ Detailed reference for all RenderDoc MCP tools, including parameters, return val
 
 A typical analysis workflow follows this pattern:
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_mesh_data`
 
 ---
 
@@ -228,6 +228,25 @@ Get shader information for a specific stage at a given event. Includes disassemb
 **Example:**
 ```
 get_shader_info(event_id=123, stage="pixel")
+```
+
+---
+
+#### `get_shader_source`
+
+Get original shader source text for a specific stage at a given event when the capture preserves text-backed source.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `event_id` | `int` | Yes | The event ID |
+| `stage` | `str` | Yes | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
+
+**Returns:** Shader resource ID, entry point, stage, encoding, `source_available`, and `source_text` for text-backed encodings. For binary encodings such as DXBC/DXIL/SPIR-V, returns metadata plus a `reason` explaining why original source text is unavailable.
+
+**Example:**
+```
+get_shader_source(event_id=123, stage="pixel")
+# → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
 ```
 
 ---

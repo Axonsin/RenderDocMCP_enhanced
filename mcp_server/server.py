@@ -201,6 +201,24 @@ def get_shader_info(
 
 
 @mcp.tool
+def get_shader_source(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+) -> dict:
+    """
+    Get original shader source text for a specific stage at a given event.
+
+    Args:
+        event_id: The event ID to inspect the shader at
+        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
+
+    Returns source_text for text-backed shader encodings and metadata-only
+    responses when the capture only contains binary shader payloads.
+    """
+    return bridge.call("get_shader_source", {"event_id": event_id, "stage": stage})
+
+
+@mcp.tool
 def get_buffer_contents(
     resource_id: str,
     offset: int = 0,

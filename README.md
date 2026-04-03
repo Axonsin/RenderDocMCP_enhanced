@@ -181,6 +181,7 @@ The entire MCP toolset is organized into three capability tiers:
 
 - `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
 - `get_shader_info` - Get shader disassembly, constant buffers, and bindings
+- `get_shader_source` - Get original shader source text when RenderDoc preserves text-backed source
 
 #### Resource Data Access
 
