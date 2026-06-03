@@ -9,7 +9,7 @@ RenderDoc MCP Enhanced 允许 AI 助手基于 RenderDoc 捕获数据进行更高
 
 ## 架构
 
-本项目采用基于 FastMCP 2.0 的进程分离架构。
+本项目采用基于 FastMCP 3.x 的进程分离架构。
 
 `uv` 负责注册全局命令 `renderdoc-mcp`，AI 客户端（如 Claude）在检测到该 MCP 命令后将会启动 MCP Server。
 

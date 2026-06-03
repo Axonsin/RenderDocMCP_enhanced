@@ -10,7 +10,7 @@
 Claude/AI Client (stdio)
         │
         ▼
-MCP Server Process (标准 Python + FastMCP 2.0)
+MCP Server Process (标准 Python + FastMCP 3.x)
         │ File-based IPC (%TEMP%/renderdoc_mcp/)
         ▼
 RenderDoc Process (Extension + File Polling)
@@ -115,6 +115,6 @@ renderdoc-mcp
 
 ## 参考链接
 
-- [FastMCP](https://github.com/jlowin/fastmcp)
+- [FastMCP](https://github.com/PrefectHQ/fastmcp)
 - [RenderDoc Python API](https://renderdoc.org/docs/python_api/index.html)
 - [RenderDoc Extension Registration](https://renderdoc.org/docs/how/how_python_extension.html)

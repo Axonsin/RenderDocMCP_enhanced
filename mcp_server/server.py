@@ -1,6 +1,6 @@
 """
 RenderDoc MCP Server
-FastMCP 2.0 server providing access to RenderDoc capture data.
+FastMCP server providing access to RenderDoc capture data.
 """
 
 from typing import Literal

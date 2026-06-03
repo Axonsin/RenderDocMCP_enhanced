@@ -10,7 +10,7 @@ RenderDoc MCP Enhanced により、AI アシスタントは RenderDoc キャプ�
 
 ## アーキテクチャ
 
-本プロジェクトは FastMCP 2.0 ベースのプロセス分離アーキテクチャを採用しています。
+本プロジェクトは FastMCP 3.x ベースのプロセス分離アーキテクチャを採用しています。
 
 `uv` がグローバルコマンド `renderdoc-mcp` を登録します。AI クライアント（Claude など）がこの MCP コマンドを検出すると、MCP Server を起動します。
 

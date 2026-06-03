@@ -10,7 +10,7 @@ RenderDoc MCP Enhanced enables AI assistants to perform more efficient graphics 
 
 ## Architecture
 
-This project uses a process-separation architecture based on FastMCP 2.0.
+This project uses a process-separation architecture based on FastMCP 3.x.
 
 `uv` registers the global command `renderdoc-mcp`. When AI clients (like Claude) detect this MCP command, they will start the MCP Server.
 
