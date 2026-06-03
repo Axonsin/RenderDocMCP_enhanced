@@ -219,6 +219,134 @@ def get_shader_source(
 
 
 @mcp.tool
+def get_shader_edit_context(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    materialize: bool = True,
+    max_inline_chars: int = 2000,
+) -> dict:
+    """
+    Create a file-first shader editing context for a specific event/stage.
+
+    Args:
+        event_id: The event ID to inspect
+        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
+        materialize: Write original/working/disassembly/context files under the temp shader workspace
+        max_inline_chars: Maximum source/disassembly preview characters returned inline
+
+    Returns paths and metadata for editing a shader without returning large full source blobs.
+    """
+    return bridge.call(
+        "get_shader_edit_context",
+        {
+            "event_id": event_id,
+            "stage": stage,
+            "materialize": materialize,
+            "max_inline_chars": max_inline_chars,
+        },
+    )
+
+
+@mcp.tool
+def build_shader_replacement(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    source_path: str | None = None,
+    source_text: str | None = None,
+    encoding: str | None = None,
+    entry_point: str | None = None,
+) -> dict:
+    """
+    Compile a replacement shader without applying it.
+
+    Args:
+        event_id: The event ID whose bound shader is being replaced
+        stage: The shader stage to replace
+        source_path: Preferred path to edited shader source
+        source_text: Inline shader source fallback for small experiments
+        encoding: Optional RenderDoc ShaderEncoding name (defaults to the original shader encoding)
+        entry_point: Optional entry point override (defaults to the original shader entry point)
+
+    Returns success status, compiler output, original shader ID, and replacement shader ID when built.
+    """
+    params: dict[str, object] = {
+        "event_id": event_id,
+        "stage": stage,
+    }
+    _optional_param(params, "source_path", source_path)
+    _optional_param(params, "source_text", source_text)
+    _optional_param(params, "encoding", encoding)
+    _optional_param(params, "entry_point", entry_point)
+    return bridge.call("build_shader_replacement", params)
+
+
+@mcp.tool
+def apply_shader_replacement(
+    original_resource_id: str,
+    replacement_resource_id: str,
+) -> dict:
+    """
+    Apply a compiled shader replacement to the current replay.
+
+    Args:
+        original_resource_id: The original shader resource ID
+        replacement_resource_id: The replacement shader resource ID returned by build_shader_replacement
+
+    Returns replacement status after RenderDoc UI/replay refresh.
+    """
+    return bridge.call(
+        "apply_shader_replacement",
+        {
+            "original_resource_id": original_resource_id,
+            "replacement_resource_id": replacement_resource_id,
+        },
+    )
+
+
+@mcp.tool
+def remove_shader_replacement(resource_id: str) -> dict:
+    """
+    Remove a replay-time shader replacement.
+
+    Args:
+        resource_id: The original shader resource ID whose replacement should be removed
+
+    Returns replacement status after RenderDoc UI/replay refresh.
+    """
+    return bridge.call(
+        "remove_shader_replacement",
+        {"resource_id": resource_id},
+    )
+
+
+@mcp.tool
+def preview_event_output(
+    event_id: int,
+    output_path: str | None = None,
+    output_index: int = 0,
+    format_type: Literal["PNG", "JPG", "BMP", "TGA", "EXR", "DDS", "HDR"] = "PNG",
+) -> dict:
+    """
+    Save one output texture at an event as a preview image.
+
+    Args:
+        event_id: The event ID to replay before saving output
+        output_path: Optional output path; defaults to the temp shader preview directory
+        output_index: Index into the event output texture list
+        format_type: Output format - PNG (default), JPG, BMP, TGA, EXR, DDS, HDR
+
+    Returns output path, dimensions, selected resource ID, and output binding metadata.
+    """
+    params: dict[str, object] = {
+        "event_id": event_id,
+        "output_index": output_index,
+        "format_type": format_type,
+    }
+    _optional_param(params, "output_path", output_path)
+    return bridge.call("preview_event_output", params)
+
+
+@mcp.tool
 def get_buffer_contents(
     resource_id: str,
     offset: int = 0,

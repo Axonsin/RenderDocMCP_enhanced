@@ -182,6 +182,7 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 - `get_pipeline_state` - 完全なパイプライン状態と簡潔な入出力テクスチャサマリーを取得
 - `get_shader_info` - shader 逆アセンブル、定数バッファ、バインディングを取得
 - `get_shader_source` - RenderDoc がテキストの元ソースを保持している場合に shader ソースを取得
+- `get_shader_edit_context` - shader ソース/逆アセンブルを一時編集ワークスペースに保存
 
 #### リソースデータ読み取り
 
@@ -212,6 +213,13 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 - `save_texture` - テクスチャを画像ファイルに保存 (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
 - `export_mesh_csv` - ダウンストリームワークフロー向けにメッシュ CSV をエクスポート
+
+#### Shader 編集/置換
+
+- `build_shader_replacement` - 編集済み shader を replay-time replacement としてコンパイル
+- `apply_shader_replacement` - コンパイル済み shader replacement を適用して RenderDoc を更新
+- `remove_shader_replacement` - replay-time shader replacement を解除
+- `preview_event_output` - replay/replacement 後の event 出力テクスチャを保存
 
 ## 使用例
 

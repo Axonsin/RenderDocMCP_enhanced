@@ -174,6 +174,7 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 - `get_pipeline_state` - 获取完整管线状态，并附带精简的输入/输出纹理摘要
 - `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
 - `get_shader_source` - 在 RenderDoc 保留文本源码时获取原始 shader 源码
+- `get_shader_edit_context` - 将 shader 源码/反汇编落盘到临时编辑工作区
 
 #### 资源数据读取
 
@@ -204,6 +205,13 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 - `save_texture` - 保存纹理到图片文件（PNG/JPG/BMP/TGA/EXR/DDS/HDR）
 - `export_mesh_csv` - 为下游工作流导出网格 CSV
+
+#### Shader 编辑/替换
+
+- `build_shader_replacement` - 将编辑后的 shader 编译为 replay-time replacement
+- `apply_shader_replacement` - 应用编译后的 shader replacement 并刷新 RenderDoc
+- `remove_shader_replacement` - 撤销 replay-time shader replacement
+- `preview_event_output` - replay/replacement 后保存 event 输出纹理预览
 
 ## 使用示例
 

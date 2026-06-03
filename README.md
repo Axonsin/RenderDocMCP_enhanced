@@ -182,6 +182,7 @@ The entire MCP toolset is organized into three capability tiers:
 - `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
 - `get_shader_info` - Get shader disassembly, constant buffers, and bindings
 - `get_shader_source` - Get original shader source text when RenderDoc preserves text-backed source
+- `get_shader_edit_context` - Materialize shader source/disassembly into a temp edit workspace
 
 #### Resource Data Access
 
@@ -212,6 +213,13 @@ Cross-dimensional queries that orchestrate multiple services on top of atomic to
 
 - `save_texture` - Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
 - `export_mesh_csv` - Export mesh CSV for downstream workflows
+
+#### Shader Edit/Replace
+
+- `build_shader_replacement` - Compile an edited shader into a replay-time replacement
+- `apply_shader_replacement` - Apply a compiled shader replacement and refresh RenderDoc
+- `remove_shader_replacement` - Revert a replay-time shader replacement
+- `preview_event_output` - Save an event output texture preview after replay/replacement
 
 ## Examples
 

@@ -3,6 +3,8 @@ RenderDoc MCP Bridge Extension
 Provides socket server for external MCP server communication.
 """
 
+import importlib
+
 from . import socket_server
 from . import request_handler
 from . import renderdoc_facade
@@ -11,6 +13,25 @@ from . import renderdoc_facade
 _context = None
 _server = None
 _version = ""
+
+_RELOAD_MODULES = [
+    ".utils.parsers",
+    ".utils.serializers",
+    ".utils.helpers",
+    ".utils",
+    ".services.capture_manager",
+    ".services.action_service",
+    ".services.search_service",
+    ".services.resource_service",
+    ".services.pipeline_service",
+    ".services.mesh_service",
+    ".services.shader_edit_service",
+    ".services.analysis_service",
+    ".services",
+    ".renderdoc_facade",
+    ".request_handler",
+    ".socket_server",
+]
 
 # Try to import qrenderdoc for UI integration (only available in RenderDoc)
 try:
@@ -32,6 +53,7 @@ def register(version, ctx):
     global _context, _server, _version
     _version = version
     _context = ctx
+    _reload_child_modules()
 
     # Create facade and handler
     facade = renderdoc_facade.RenderDocFacade(ctx)
@@ -73,3 +95,23 @@ def _show_status(ctx, data):
         )
     else:
         ctx.Extensions().ErrorDialog("MCP Bridge is not running", "MCP Bridge Status")
+
+
+def _reload_child_modules():
+    """Refresh package submodules when RenderDoc's Extension Manager reloads us."""
+    global socket_server, request_handler, renderdoc_facade
+    package = __name__
+    for module_name in _RELOAD_MODULES:
+        try:
+            module = importlib.import_module(module_name, package)
+            importlib.reload(module)
+        except Exception as exc:
+            print("[MCP Bridge] Could not reload %s: %s" % (module_name, str(exc)))
+
+    from . import socket_server as reloaded_socket_server
+    from . import request_handler as reloaded_request_handler
+    from . import renderdoc_facade as reloaded_renderdoc_facade
+
+    socket_server = reloaded_socket_server
+    request_handler = reloaded_request_handler
+    renderdoc_facade = reloaded_renderdoc_facade

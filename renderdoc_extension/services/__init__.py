@@ -7,6 +7,7 @@ from .action_service import ActionService
 from .search_service import SearchService
 from .resource_service import ResourceService
 from .pipeline_service import PipelineService
+from .shader_edit_service import ShaderEditService
 from .mesh_service import MeshService
 from .analysis_service import AnalysisService
 
@@ -16,6 +17,7 @@ __all__ = [
     "SearchService",
     "ResourceService",
     "PipelineService",
+    "ShaderEditService",
     "MeshService",
     "AnalysisService",
 ]

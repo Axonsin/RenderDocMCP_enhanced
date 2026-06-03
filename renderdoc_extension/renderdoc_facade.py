@@ -10,6 +10,7 @@ from .services import (
     SearchService,
     ResourceService,
     PipelineService,
+    ShaderEditService,
     MeshService,
     AnalysisService,
 )
@@ -43,6 +44,7 @@ class RenderDocFacade:
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke)
+        self._shader_edit = ShaderEditService(ctx, self._invoke)
         self._mesh = MeshService(ctx, self._invoke)
         self._analysis = AnalysisService(
             ctx,
@@ -174,6 +176,66 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
+
+    def get_shader_edit_context(
+        self,
+        event_id,
+        stage,
+        materialize=True,
+        max_inline_chars=2000,
+    ):
+        """Create a file-first shader editing context."""
+        return self._shader_edit.get_shader_edit_context(
+            event_id=event_id,
+            stage=stage,
+            materialize=materialize,
+            max_inline_chars=max_inline_chars,
+        )
+
+    def build_shader_replacement(
+        self,
+        event_id,
+        stage,
+        source_path=None,
+        source_text=None,
+        encoding=None,
+        entry_point=None,
+    ):
+        """Build a replacement shader without applying it."""
+        return self._shader_edit.build_shader_replacement(
+            event_id=event_id,
+            stage=stage,
+            source_path=source_path,
+            source_text=source_text,
+            encoding=encoding,
+            entry_point=entry_point,
+        )
+
+    def apply_shader_replacement(self, original_resource_id, replacement_resource_id):
+        """Apply a compiled shader replacement."""
+        return self._shader_edit.apply_shader_replacement(
+            original_resource_id,
+            replacement_resource_id,
+        )
+
+    def remove_shader_replacement(self, resource_id):
+        """Remove a shader replacement."""
+        return self._shader_edit.remove_shader_replacement(resource_id)
+
+    def preview_event_output(
+        self,
+        event_id,
+        output_path=None,
+        output_index=0,
+        format_type="PNG",
+    ):
+        """Save an output texture preview for an event."""
+        return self._shader_edit.preview_event_output(
+            event_id=event_id,
+            output_path=output_path,
+            output_index=output_index,
+            format_type=format_type,
+        )
 
     def trace_resource_usage(
         self,

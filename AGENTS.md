@@ -52,6 +52,12 @@ RenderDocMCP/
 | `get_draw_call_details` | 特定 draw call 的详情 |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
 | `get_shader_info` | 着色器源码/常量缓冲区 |
+| `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
+| `get_shader_edit_context` | 将 shader 源码/反汇编落盘到临时编辑工作区 |
+| `build_shader_replacement` | 编译编辑后的 shader replacement（不立即应用） |
+| `apply_shader_replacement` | 应用 shader replacement 并刷新 RenderDoc |
+| `remove_shader_replacement` | 移除 shader replacement |
+| `preview_event_output` | 保存 event 输出纹理预览 |
 | `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
 | `list_resources` | 资源枚举（texture/buffer，支持名称过滤和分页） |
 | `get_texture_info` | 纹理元数据 |

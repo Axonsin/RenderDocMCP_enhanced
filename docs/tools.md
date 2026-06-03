@@ -8,7 +8,7 @@ Detailed reference for all RenderDoc MCP tools, including parameters, return val
 
 A typical analysis workflow follows this pattern:
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
 
 ---
 
@@ -247,6 +247,25 @@ Get original shader source text for a specific stage at a given event when the c
 ```
 get_shader_source(event_id=123, stage="pixel")
 # → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
+```
+
+---
+
+#### `get_shader_edit_context`
+
+Create a file-first shader editing context. Text source and disassembly are written under `%TEMP%/renderdoc_mcp/shaders/...`; the response returns paths, hashes, counts, previews, output texture summaries, and editability metadata.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `event_id` | `int` | Yes | | The event ID |
+| `stage` | `str` | Yes | | Shader stage |
+| `materialize` | `bool` | No | `true` | Write `original.*`, `working.*`, `disassembly.txt`, and `context.json` |
+| `max_inline_chars` | `int` | No | `2000` | Maximum preview characters returned inline |
+
+**Example:**
+```
+ctx = get_shader_edit_context(event_id=123, stage="pixel")
+# Edit ctx["source"]["working_path"], then build/apply a replacement.
 ```
 
 ---
@@ -521,6 +540,62 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 ---
 
 ## Upper-level Tools
+
+### Shader Edit/Replace
+
+#### `build_shader_replacement`
+
+Compile an edited shader into a replay-time replacement. `source_path` is preferred; `source_text` is available for small inline experiments.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `event_id` | `int` | Yes | Event whose bound shader is being replaced |
+| `stage` | `str` | Yes | Shader stage |
+| `source_path` | `str` | No | Path to edited source, typically `working.*` |
+| `source_text` | `str` | No | Inline source fallback |
+| `encoding` | `str` | No | ShaderEncoding override; defaults to original encoding |
+| `entry_point` | `str` | No | Entry point override; defaults to original entry point |
+
+**Example:**
+```
+build_shader_replacement(event_id=123, stage="pixel", source_path=".../working.frag")
+```
+
+---
+
+#### `apply_shader_replacement`
+
+Apply a compiled replacement and refresh RenderDoc replay/UI state.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `original_resource_id` | `str` | Yes | Original shader resource ID |
+| `replacement_resource_id` | `str` | Yes | Replacement shader resource ID |
+
+---
+
+#### `remove_shader_replacement`
+
+Remove a replay-time shader replacement and refresh RenderDoc.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource_id` | `str` | Yes | Original shader resource ID |
+
+---
+
+#### `preview_event_output`
+
+Save one output texture at an event, useful after applying a shader replacement.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `event_id` | `int` | Yes | | Event to replay before saving |
+| `output_path` | `str` | No | temp preview path | Output file path |
+| `output_index` | `int` | No | `0` | Index into the event output texture list |
+| `format_type` | `str` | No | `PNG` | PNG/JPG/BMP/TGA/EXR/DDS/HDR |
+
+---
 
 ### Resource Export
 

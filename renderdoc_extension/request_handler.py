@@ -23,6 +23,11 @@ class RequestHandler:
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
             "get_shader_source": self._handle_get_shader_source,
+            "get_shader_edit_context": self._handle_get_shader_edit_context,
+            "build_shader_replacement": self._handle_build_shader_replacement,
+            "apply_shader_replacement": self._handle_apply_shader_replacement,
+            "remove_shader_replacement": self._handle_remove_shader_replacement,
+            "preview_event_output": self._handle_preview_event_output,
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "list_resources": self._handle_list_resources,
@@ -85,6 +90,9 @@ class RequestHandler:
             "INVALID_SLICE",
             "INVALID_SAMPLE",
             "INVALID_DEPTH_SLICE",
+            "INVALID_SHADER_SOURCE",
+            "INVALID_ENCODING",
+            "INVALID_OUTPUT_INDEX",
         }
         runtime_prefixes = {
             "CAPTURE_NOT_LOADED",
@@ -190,6 +198,56 @@ class RequestHandler:
         event_id = self._require_param(params, "event_id")
         stage = self._require_param(params, "stage")
         return self.facade.get_shader_source(int(event_id), stage)
+
+    def _handle_get_shader_edit_context(self, params):
+        """Handle get_shader_edit_context request."""
+        event_id = self._require_param(params, "event_id")
+        stage = self._require_param(params, "stage")
+        materialize = params.get("materialize", True)
+        max_inline_chars = params.get("max_inline_chars", 2000)
+        return self.facade.get_shader_edit_context(
+            event_id=int(event_id),
+            stage=stage,
+            materialize=materialize,
+            max_inline_chars=int(max_inline_chars),
+        )
+
+    def _handle_build_shader_replacement(self, params):
+        """Handle build_shader_replacement request."""
+        event_id = self._require_param(params, "event_id")
+        stage = self._require_param(params, "stage")
+        return self.facade.build_shader_replacement(
+            event_id=int(event_id),
+            stage=stage,
+            source_path=params.get("source_path"),
+            source_text=params.get("source_text"),
+            encoding=params.get("encoding"),
+            entry_point=params.get("entry_point"),
+        )
+
+    def _handle_apply_shader_replacement(self, params):
+        """Handle apply_shader_replacement request."""
+        original_resource_id = self._require_param(params, "original_resource_id")
+        replacement_resource_id = self._require_param(params, "replacement_resource_id")
+        return self.facade.apply_shader_replacement(
+            original_resource_id,
+            replacement_resource_id,
+        )
+
+    def _handle_remove_shader_replacement(self, params):
+        """Handle remove_shader_replacement request."""
+        resource_id = self._require_param(params, "resource_id")
+        return self.facade.remove_shader_replacement(resource_id)
+
+    def _handle_preview_event_output(self, params):
+        """Handle preview_event_output request."""
+        event_id = self._require_param(params, "event_id")
+        return self.facade.preview_event_output(
+            event_id=int(event_id),
+            output_path=params.get("output_path"),
+            output_index=int(params.get("output_index", 0)),
+            format_type=params.get("format_type", "PNG"),
+        )
 
     def _handle_get_buffer_contents(self, params):
         """Handle get_buffer_contents request"""

@@ -8,7 +8,7 @@
 
 一个典型的分析流程通常遵循以下模式：
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
 
 ---
 
@@ -247,6 +247,25 @@ get_shader_info(event_id=123, stage="pixel")
 ```
 get_shader_source(event_id=123, stage="pixel")
 # → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
+```
+
+---
+
+#### `get_shader_edit_context`
+
+创建文件优先的 shader 编辑上下文。文本源码和反汇编会写入 `%TEMP%/renderdoc_mcp/shaders/...`；响应只返回路径、hash、行数、预览片段、输出纹理摘要和是否可编辑等元数据。
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `event_id` | `int` | 是 | | event ID |
+| `stage` | `str` | 是 | | shader 阶段 |
+| `materialize` | `bool` | 否 | `true` | 写出 `original.*`、`working.*`、`disassembly.txt`、`context.json` |
+| `max_inline_chars` | `int` | 否 | `2000` | 响应中返回的最大预览字符数 |
+
+**示例：**
+```
+ctx = get_shader_edit_context(event_id=123, stage="pixel")
+# 修改 ctx["source"]["working_path"]，再 build/apply replacement。
 ```
 
 ---
@@ -521,6 +540,62 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 ---
 
 ## 上层工具能力
+
+### Shader 编辑/替换
+
+#### `build_shader_replacement`
+
+将编辑后的 shader 编译为 replay-time replacement。优先使用 `source_path`；`source_text` 仅用于小型内联实验。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `event_id` | `int` | 是 | 要替换 shader 的 event |
+| `stage` | `str` | 是 | shader 阶段 |
+| `source_path` | `str` | 否 | 编辑后源码路径，通常是 `working.*` |
+| `source_text` | `str` | 否 | 内联源码 |
+| `encoding` | `str` | 否 | ShaderEncoding 覆盖；默认使用原 shader 编码 |
+| `entry_point` | `str` | 否 | 入口点覆盖；默认使用原入口点 |
+
+**示例：**
+```
+build_shader_replacement(event_id=123, stage="pixel", source_path=".../working.frag")
+```
+
+---
+
+#### `apply_shader_replacement`
+
+应用编译后的 replacement，并刷新 RenderDoc replay/UI 状态。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `original_resource_id` | `str` | 是 | 原 shader resource ID |
+| `replacement_resource_id` | `str` | 是 | replacement shader resource ID |
+
+---
+
+#### `remove_shader_replacement`
+
+移除 replay-time shader replacement，并刷新 RenderDoc。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `resource_id` | `str` | 是 | 原 shader resource ID |
+
+---
+
+#### `preview_event_output`
+
+保存某个 event 的输出纹理，通常用于应用 shader replacement 后预览结果。
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `event_id` | `int` | 是 | | 保存前 replay 的 event |
+| `output_path` | `str` | 否 | 临时预览路径 | 输出文件路径 |
+| `output_index` | `int` | 否 | `0` | event 输出纹理列表中的索引 |
+| `format_type` | `str` | 否 | `PNG` | PNG/JPG/BMP/TGA/EXR/DDS/HDR |
+
+---
 
 ### 资源导出
 
