@@ -327,19 +327,20 @@ get_shader_source(event_id=123, stage="pixel")
 
 #### `get_shader_edit_context`
 
-Create a file-first shader editing context. Text source and disassembly are written under `%TEMP%/renderdoc_mcp/shaders/...`; the response returns paths, hashes, counts, previews, output texture summaries, and editability metadata.
+Prepare editable GLSL/SPIR-V text and its compilation path for an event/stage. See [Session-scoped Shader Editing](#session-scoped-shader-editing) for the full edit/replace workflow.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `event_id` | `int` | Yes | | The event ID |
-| `stage` | `str` | Yes | | Shader stage |
-| `materialize` | `bool` | No | `true` | Write `original.*`, `working.*`, `disassembly.txt`, and `context.json` |
-| `max_inline_chars` | `int` | No | `2000` | Maximum preview characters returned inline |
+| `stage` | `str` | Yes | | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
+| `mode` | `str` | No | `"auto"` | Representation to prepare: `auto / original / glsl / spirv_asm` |
+
+**Returns:** `edit_id`, `source_text`, `applied_source_text`, entry points, encodings, compiler, `revision`, `applied`, `last_attempt_status`, and `log`. Reuse `edit_id` with `replace_shader` / `revert_shader` / `export_shader_source`.
 
 **Example:**
 ```
-ctx = get_shader_edit_context(event_id=123, stage="pixel")
-# Edit ctx["source"]["working_path"], then build/apply a replacement.
+edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+# → {"edit_id": "...", "source_text": "...", "compiler": "...", "applied": false, ...}
 ```
 
 ---

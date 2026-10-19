@@ -40,17 +40,18 @@ class RenderDocBridge:
         self.edit_timeout = 120.0
 
     @contextmanager
-    def _transaction(self, timeout):
+    def _transaction(self, deadline):
         """OS lock serializes clients, including separate MCP server processes.
 
         Unlike an exclusive-create sentinel, the lock is released if a client dies.
         This is separate from the legacy short-lived request publication lock.
+        `deadline` covers both lock acquisition and response wait so the whole
+        call stays within the client-side tool timeout.
         """
         with open(CALL_LOCK_FILE, "a+b") as handle:
             if os.fstat(handle.fileno()).st_size == 0:
                 handle.write(b"\0")
                 handle.flush()
-            deadline = time.monotonic() + timeout
             locked = False
             while not locked:
                 handle.seek(0)
@@ -96,9 +97,9 @@ class RenderDocBridge:
         timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout
         response_file = os.path.join(IPC_DIR, "response_%s.json" % request["id"])
         temporary = os.path.join(IPC_DIR, "request_%s.tmp" % request["id"])
+        deadline = time.monotonic() + timeout
         try:
-            with self._transaction(timeout):
-                deadline = time.monotonic() + timeout
+            with self._transaction(deadline):
                 # Never overwrite a request left pending by a timed-out client.
                 while os.path.exists(REQUEST_FILE) or os.path.exists(LOCK_FILE):
                     if time.monotonic() >= deadline:

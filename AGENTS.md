@@ -51,6 +51,12 @@ RenderDocMCP/
 | `search_draws` | 按 shader/texture/resource 搜索 draw call |
 | `get_draw_call_details` | 特定 draw call 的详情 |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
+| `inspect_event` | 单个 event 的紧凑详情（时间、shader、管线、网格摘要） |
+| `summarize_capture` | 捕获整体摘要 |
+| `trace_resource_usage` | 追踪资源在各 event 中的读取/写入/消费 |
+| `trace_event_dependencies` | 追踪单个 event 的直接资源依赖与生产者 |
+| `diff_events` | 比较两个 event 的状态差异 |
+| `analyze_pass` | 将一个 marker 子树/pass 汇总为整体工作负载 |
 | `get_shader_info` | 着色器源码/常量缓冲区 |
 | `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
 | `get_shader_edit_context` | 获取 GLSL/SPIR-V 的可编辑文本及编译路径 |

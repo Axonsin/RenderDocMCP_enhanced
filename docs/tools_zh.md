@@ -320,19 +320,20 @@ get_shader_source(event_id=123, stage="pixel")
 
 #### `get_shader_edit_context`
 
-创建文件优先的 shader 编辑上下文。文本源码和反汇编会写入 `%TEMP%/renderdoc_mcp/shaders/...`；响应只返回路径、hash、行数、预览片段、输出纹理摘要和是否可编辑等元数据。
+为指定 event/阶段准备可编辑的 GLSL/SPIR-V 文本及其编译路径。完整的编辑/替换流程见 [Shader 会话编辑](#shader-会话编辑)。
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `event_id` | `int` | 是 | | event ID |
-| `stage` | `str` | 是 | | shader 阶段 |
-| `materialize` | `bool` | 否 | `true` | 写出 `original.*`、`working.*`、`disassembly.txt`、`context.json` |
-| `max_inline_chars` | `int` | 否 | `2000` | 响应中返回的最大预览字符数 |
+| `stage` | `str` | 是 | | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
+| `mode` | `str` | 否 | `"auto"` | 要准备的表示形式：`auto / original / glsl / spirv_asm` |
+
+**返回值：** `edit_id`、`source_text`、`applied_source_text`、入口点、编码、编译器、`revision`、`applied`、`last_attempt_status` 和 `log`。将 `edit_id` 配合 `replace_shader` / `revert_shader` / `export_shader_source` 使用。
 
 **示例：**
 ```
-ctx = get_shader_edit_context(event_id=123, stage="pixel")
-# 修改 ctx["source"]["working_path"]，再 build/apply replacement。
+edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+# → {"edit_id": "...", "source_text": "...", "compiler": "...", "applied": false, ...}
 ```
 
 ---

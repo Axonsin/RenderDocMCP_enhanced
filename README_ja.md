@@ -182,7 +182,7 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 - `get_pipeline_state` - 完全なパイプライン状態と簡潔な入出力テクスチャサマリーを取得
 - `get_shader_info` - shader 逆アセンブル、定数バッファ、バインディングを取得
 - `get_shader_source` - RenderDoc がテキストの元ソースを保持している場合に shader ソースを取得
-- `get_shader_edit_context` - shader ソース/逆アセンブルを一時編集ワークスペースに保存
+- `get_shader_edit_context` - GLSL/SPIR-V の編集可能テキストとコンパイルパスを取得
 
 #### リソースデータ読み取り
 
