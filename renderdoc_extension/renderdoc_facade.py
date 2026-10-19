@@ -12,6 +12,7 @@ from .services import (
     PipelineService,
     MeshService,
     AnalysisService,
+    ShaderEditService,
 )
 
 
@@ -43,6 +44,7 @@ class RenderDocFacade:
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke)
+        self._shader_edit = ShaderEditService(ctx, self._invoke)
         self._mesh = MeshService(ctx, self._invoke)
         self._analysis = AnalysisService(
             ctx,
@@ -56,6 +58,10 @@ class RenderDocFacade:
     def _invoke(self, callback):
         """Invoke callback on replay thread via BlockInvoke"""
         self.ctx.Replay().BlockInvoke(callback)
+
+    def dispose(self):
+        """Revert owned shader edits before the extension unloads."""
+        self._shader_edit.dispose()
 
     # ==================== Capture Management ====================
 
@@ -170,6 +176,21 @@ class RenderDocFacade:
     def get_shader_source(self, event_id, stage):
         """Get original shader source text for a specific stage when available."""
         return self._pipeline.get_shader_source(event_id, stage)
+
+    def get_shader_edit_context(self, event_id, stage, mode="auto"):
+        return self._shader_edit.get_shader_edit_context(event_id, stage, mode)
+
+    def replace_shader(self, edit_id, source_text):
+        return self._shader_edit.replace_shader(edit_id, source_text)
+
+    def revert_shader(self, edit_id):
+        return self._shader_edit.revert_shader(edit_id)
+
+    def list_shader_replacements(self):
+        return self._shader_edit.list_shader_replacements()
+
+    def export_shader_source(self, edit_id, output_path):
+        return self._shader_edit.export_shader_source(edit_id, output_path)
 
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""

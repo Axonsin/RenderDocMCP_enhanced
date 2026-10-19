@@ -174,6 +174,13 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 - `get_pipeline_state` - 获取完整管线状态，并附带精简的输入/输出纹理摘要
 - `get_shader_info` - 获取 shader 反汇编、常量缓冲区和绑定信息
 - `get_shader_source` - 在 RenderDoc 保留文本源码时获取原始 shader 源码
+- `get_shader_edit_context` - 获取 GLSL/SPIR-V 的可编辑文本及编译路径
+- `replace_shader` / `revert_shader` - 在当前捕获会话中编译替换或还原 shader
+- `list_shader_replacements` / `export_shader_source` - 查询替换状态或导出 UTF-8 源码
+
+Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持原始 GLSL、SPIRV-Cross
+反编译 GLSL 和 spirv-dis 汇编；HLSL / DXBC / DXIL 编辑为 TODO。
+操作与错误处理见 [Shader 会话编辑](docs/tools_zh.md#shader-会话编辑)。
 
 #### 资源数据读取
 

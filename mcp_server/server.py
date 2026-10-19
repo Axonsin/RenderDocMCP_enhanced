@@ -219,6 +219,65 @@ def get_shader_source(
 
 
 @mcp.tool
+def get_shader_edit_context(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    mode: Literal["auto", "original", "glsl", "spirv_asm"] = "auto",
+) -> dict:
+    """Prepare editable GLSL/SPIR-V text and its compilation path for an event/stage.
+
+    Auto prefers original GLSL, otherwise decompiled GLSL with an assembly fallback.
+    Returns edit_id, source_text, compiler, entry points, logs and replacement state.
+    Reuse edit_id for replace/revert/export. IDs expire when the capture closes.
+    A replacement affects ALL draws using the original shader resource.
+    HLSL/DXBC/DXIL editing is TODO. No capture file is modified.
+    """
+    return bridge.call("get_shader_edit_context", {"event_id": event_id, "stage": stage, "mode": mode})
+
+
+@mcp.tool
+def replace_shader(edit_id: str, source_text: str) -> dict:
+    """Compile text and replace a shader in the current capture session.
+
+    Check last_attempt_status='applied' and the compiler log; compilation failures
+    keep the last successful replacement. Inspect/save output textures to verify
+    the visual result. A timeout is an UNKNOWN result: query
+    list_shader_replacements/get_shader_edit_context before deciding what to do;
+    never automatically retry a timed-out replacement.
+    """
+    return bridge.call("replace_shader", {"edit_id": edit_id, "source_text": source_text})
+
+
+@mcp.tool
+def revert_shader(edit_id: str) -> dict:
+    """Restore the original shader, release the replacement and refresh the UI.
+
+    Reverting twice is safe. Does not overwrite changes owned by other editors.
+    """
+    return bridge.call("revert_shader", {"edit_id": edit_id})
+
+
+@mcp.tool
+def list_shader_replacements() -> dict:
+    """List active MCP shader replacements and all edit-session attempt states.
+
+    items contains active replacements; sessions also contains prepared, failed,
+    reverted or conflicting edits. Use this to resolve a timed-out operation.
+    """
+    return bridge.call("list_shader_replacements")
+
+
+@mcp.tool
+def export_shader_source(edit_id: str, output_path: str) -> dict:
+    """Export latest submitted text (or initial text) as UTF-8 to an absolute path.
+
+    Refuses existing files. Failed submissions can be exported; check
+    last_attempt_status and matches_applied_source in the result.
+    """
+    return bridge.call("export_shader_source", {"edit_id": edit_id, "output_path": output_path})
+
+
+@mcp.tool
 def get_buffer_contents(
     resource_id: str,
     offset: int = 0,

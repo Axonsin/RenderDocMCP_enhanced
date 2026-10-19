@@ -23,6 +23,11 @@ class RequestHandler:
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
             "get_shader_source": self._handle_get_shader_source,
+            "get_shader_edit_context": self._handle_get_shader_edit_context,
+            "replace_shader": self._handle_replace_shader,
+            "revert_shader": self._handle_revert_shader,
+            "list_shader_replacements": self._handle_list_shader_replacements,
+            "export_shader_source": self._handle_export_shader_source,
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "list_resources": self._handle_list_resources,
@@ -85,6 +90,10 @@ class RequestHandler:
             "INVALID_SLICE",
             "INVALID_SAMPLE",
             "INVALID_DEPTH_SLICE",
+            "INVALID_EDIT_ID",
+            "INVALID_EDIT_MODE",
+            "INVALID_SHADER_SOURCE",
+            "INVALID_OUTPUT_PATH",
         }
         runtime_prefixes = {
             "CAPTURE_NOT_LOADED",
@@ -190,6 +199,25 @@ class RequestHandler:
         event_id = self._require_param(params, "event_id")
         stage = self._require_param(params, "stage")
         return self.facade.get_shader_source(int(event_id), stage)
+
+    def _handle_get_shader_edit_context(self, params):
+        return self.facade.get_shader_edit_context(
+            self._require_param(params, "event_id"), self._require_param(params, "stage"),
+            params.get("mode", "auto"))
+
+    def _handle_replace_shader(self, params):
+        return self.facade.replace_shader(self._require_param(params, "edit_id"),
+                                          self._require_param(params, "source_text"))
+
+    def _handle_revert_shader(self, params):
+        return self.facade.revert_shader(self._require_param(params, "edit_id"))
+
+    def _handle_list_shader_replacements(self, params):
+        return self.facade.list_shader_replacements()
+
+    def _handle_export_shader_source(self, params):
+        return self.facade.export_shader_source(self._require_param(params, "edit_id"),
+                                                self._require_param(params, "output_path"))
 
     def _handle_get_buffer_contents(self, params):
         """Handle get_buffer_contents request"""

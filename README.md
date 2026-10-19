@@ -182,6 +182,13 @@ The entire MCP toolset is organized into three capability tiers:
 - `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
 - `get_shader_info` - Get shader disassembly, constant buffers, and bindings
 - `get_shader_source` - Get original shader source text when RenderDoc preserves text-backed source
+- `get_shader_edit_context` - Prepare editable GLSL/SPIR-V text and its compilation path
+- `replace_shader` / `revert_shader` - Compile/apply or restore a shader in the current capture session
+- `list_shader_replacements` / `export_shader_source` - Query replacement state or export UTF-8 source
+
+Shader replacement affects every draw using the original resource and does not write the `.rdc` file.
+Original GLSL, SPIRV-Cross GLSL and spirv-dis assembly are supported; HLSL / DXBC / DXIL editing
+is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader-editing).
 
 #### Resource Data Access
 
