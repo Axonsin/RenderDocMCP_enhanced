@@ -216,10 +216,9 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 #### Shader 編集/置換
 
-- `build_shader_replacement` - 編集済み shader を replay-time replacement としてコンパイル
-- `apply_shader_replacement` - コンパイル済み shader replacement を適用して RenderDoc を更新
-- `remove_shader_replacement` - replay-time shader replacement を解除
-- `preview_event_output` - replay/replacement 後の event 出力テクスチャを保存
+- `get_shader_edit_context` - GLSL/SPIR-V の編集可能テキストとコンパイルパスを取得
+- `replace_shader` / `revert_shader` - 現在のキャプチャセッションで shader をコンパイル置換または復元
+- `list_shader_replacements` / `export_shader_source` - 置換状態の照会、UTF-8 ソースのエクスポート
 
 ## 使用例
 

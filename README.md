@@ -182,7 +182,13 @@ The entire MCP toolset is organized into three capability tiers:
 - `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
 - `get_shader_info` - Get shader disassembly, constant buffers, and bindings
 - `get_shader_source` - Get original shader source text when RenderDoc preserves text-backed source
-- `get_shader_edit_context` - Materialize shader source/disassembly into a temp edit workspace
+- `get_shader_edit_context` - Prepare editable GLSL/SPIR-V text and its compilation path
+- `replace_shader` / `revert_shader` - Compile/apply or restore a shader in the current capture session
+- `list_shader_replacements` / `export_shader_source` - Query replacement state or export UTF-8 source
+
+Shader replacement affects every draw using the original resource and does not write the `.rdc` file.
+Original GLSL, SPIRV-Cross GLSL and spirv-dis assembly are supported; HLSL / DXBC / DXIL editing
+is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader-editing).
 
 #### Resource Data Access
 
@@ -216,10 +222,9 @@ Cross-dimensional queries that orchestrate multiple services on top of atomic to
 
 #### Shader Edit/Replace
 
-- `build_shader_replacement` - Compile an edited shader into a replay-time replacement
-- `apply_shader_replacement` - Apply a compiled shader replacement and refresh RenderDoc
-- `remove_shader_replacement` - Revert a replay-time shader replacement
-- `preview_event_output` - Save an event output texture preview after replay/replacement
+- `get_shader_edit_context` - Prepare editable GLSL/SPIR-V text and its compilation path
+- `replace_shader` / `revert_shader` - Compile/apply or restore a shader in the current capture session
+- `list_shader_replacements` / `export_shader_source` - Query replacement state or export UTF-8 source
 
 ## Examples
 

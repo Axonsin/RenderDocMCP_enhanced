@@ -39,7 +39,8 @@ class SearchService:
             result["scanned_count"] = len(draw_actions)
 
             for action in draw_actions:
-                controller.SetFrameEvent(action.eventId, False)
+                # Fetch fresh pipeline snapshots for each event, including remote replay.
+                controller.SetFrameEvent(action.eventId, True)
                 pipe = controller.GetPipelineState()
 
                 match_reason = matcher_fn(pipe, controller, action, self.ctx)

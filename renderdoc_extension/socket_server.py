@@ -7,6 +7,7 @@ import json
 import os
 import traceback
 import tempfile
+import uuid
 
 from PySide2.QtCore import QObject, QTimer
 
@@ -26,6 +27,7 @@ class MCPBridgeServer(QObject):
         self.handler = handler
         self._timer = None
         self._running = False
+        self._busy = False
 
         # Create IPC directory
         if not os.path.exists(IPC_DIR):
@@ -71,7 +73,7 @@ class MCPBridgeServer(QObject):
 
     def _poll_request(self):
         """Check for incoming request"""
-        if not self._running:
+        if not self._running or self._busy:
             return
 
         # Check if request file exists
@@ -82,6 +84,8 @@ class MCPBridgeServer(QObject):
         if os.path.exists(LOCK_FILE):
             return
 
+        self._busy = True  # ShaderProcessingTool progress dialogs run a nested Qt event loop.
+        temporary = None
         try:
             # Read request
             with open(REQUEST_FILE, "r", encoding="utf-8") as f:
@@ -100,10 +104,19 @@ class MCPBridgeServer(QObject):
                     "error": {"code": -32603, "message": str(e)}
                 }
 
-            # Write response
-            with open(RESPONSE_FILE, "w", encoding="utf-8") as f:
+            response_path = RESPONSE_FILE
+            if request.get("ipc_version") == 2:
+                request_id = str(uuid.UUID(request["id"]))
+                response_path = os.path.join(IPC_DIR, "response_%s.json" % request_id)
+            temporary = response_path + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as f:
                 json.dump(response, f)
+            os.replace(temporary, response_path)
 
         except Exception as e:
             print("[MCP Bridge] Error processing request: %s" % str(e))
             traceback.print_exc()
+        finally:
+            self._busy = False
+            if temporary and os.path.exists(temporary):
+                os.remove(temporary)

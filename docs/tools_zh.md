@@ -192,6 +192,73 @@ list_resources(resource_type="texture", offset=50, limit=50)
 
 ## 局部数据分析能力
 
+### Shader 会话编辑
+
+支持 GLSL、Vulkan SPIR-V、OpenGL SPIR-V。替换影响所有引用原始 shader 资源的 draw，
+仅在当前捕获会话生效，不写入 `.rdc`。HLSL / DXBC / DXIL 编辑为 TODO。
+
+| 工具 | 参数 | 作用 |
+|------|------|------|
+| `get_shader_edit_context` | `event_id: int, stage: str, mode: str = "auto"` | 获取编辑 ID、可编辑代码、编译路径与状态 |
+| `replace_shader` | `edit_id: str, source_text: str` | 编译并应用；失败保留上一次成功替换 |
+| `revert_shader` | `edit_id: str` | 还原原始 shader；允许重复调用 |
+| `list_shader_replacements` | 无 | `items` 列出生效的替换，`sessions` 同时包含准备、失败和冲突的会话 |
+| `export_shader_source` | `edit_id: str, output_path: str` | 以 UTF-8 导出最近提交的文本，已有文件不覆盖 |
+
+`stage` 沿用 `vertex / hull / domain / geometry / pixel / compute`。
+`mode` 支持 `auto / original / glsl / spirv_asm`：原始 GLSL 直接编辑；SPIR-V 自动优先使用
+SPIRV-Cross → GLSL → 编译器，缺少完整路径时回退到 spirv-dis → 汇编 → spirv-as。
+显式选择模式时不回退。`original` 仅支持捕获中的文本 GLSL；伪代码不是可编译源码。
+已有编辑会话时 `auto` 复用该会话及当前表示，以便查询提交结果；还原后可显式选择另一种模式。
+不管理工程 include，提交内容必须是单份可编译文本。工具与路径来自 RenderDoc 的
+Settings → Shader Processing 配置，不硬编码。一个资源的多入口编辑暂不支持。
+
+```python
+edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+# 根据 edit["source_text"] 修改代码，保留资源绑定与输入输出接口。
+result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
+# 应检查 last_attempt_status == "applied"，并读取 log 中的警告/错误。
+get_pipeline_state(event_id=123)
+# 使用已有 get_texture_data / save_texture 对比相同输出纹理的修改前后结果。
+export_shader_source(edit_id=edit["edit_id"], output_path="D:/captures/edited_shader.glsl")
+revert_shader(edit_id=edit["edit_id"])
+```
+
+上下文同时返回 `source_text`（最近提交或初始文本）和 `applied_source_text`（当前成功应用的文本），
+以及入口、编码、编译器、`revision`、`applied`、`last_attempt_status` 和 `log`。
+编译失败返回 `last_attempt_status="compile_failed"`，不等于 IPC 调用失败；`applied=true` 也可能
+代表上一版仍在生效。导出返回 `matches_applied_source`，失败草稿仍可导出。
+
+编辑 ID 在关闭捕获、重新打开同一路径或卸载扩展后失效。检测到人工编辑器/其他来源的替换时
+报 `SHADER_EDIT_CONFLICT`，应先在原编辑器还原。切换表示方式前也须还原。
+
+编辑调用超时为 120 秒。`RESULT_PENDING` 表示请求已提交但结果未知，**禁止自动重试替换**；
+先调用 `list_shader_replacements()`，或以原 event/stage 获取上下文确认状态。
+`SHADER_TOOL_MISSING` 指明缺少的转换路径；`INVALID_EDIT_ID` 表示会话已失效；
+`OUTPUT_FILE_EXISTS` 表示导出目标已存在。
+
+安装更新：`uv tool install . --editable`，执行 `python scripts/install_extension.py`，再在
+RenderDoc 的扩展管理器重新加载 Bridge（或重启 RenderDoc），并重新连接 MCP 客户端。
+
+自动化验证：`python -m unittest discover -s tests -v`。真实验收应分别覆盖 OpenGL GLSL、
+Vulkan SPIR-V 和 OpenGL SPIR-V，检查无修改往返、颜色修改、失败保留、连续替换、还原和共享资源。
+
+移动端捕获须先在 RenderDoc 底部选择对应设备的 **Replay Context** 并打开捕获；
+`get_capture_status()` 和 shader 编辑上下文的 `remote_replay=true` 才证明操作走远端回放。
+例如 hkrpg 的捕获必须在已通过 ADB 连接的移动设备上验收。
+反编译/编译工具运行在主机，生成的 shader 通过远端 replay controller 在移动 GPU 上替换和回放。
+可对已打开的移动端捕获执行：
+
+```bash
+python scripts/validate_shader_edit_remote.py --event-id 2069 --output-dir build/shader-edit-validation/mobile-run
+# 可选：指定候选 draw 验证共享 shader 的影响，脚本先核对实际绑定。
+python scripts/validate_shader_edit_remote.py --event-id 2808 --shared-event-ids 2799 2792 --output-dir build/shader-edit-validation/shared-run
+```
+
+按实际捕获选择 event，输出目录必须尚不存在。脚本验证原始往返、颜色修改、失败保留、连续替换、
+汇编往返、源码导出及图像/像素哈希，结束时还原，不关闭当前捕获。`scripts/validate_shader_edit.py`
+是单独实例的本地回放辅助脚本，禁止用它本地加载 hkrpg 捕获。
+
 ### Pipeline 状态
 
 #### `get_pipeline_state`
@@ -540,62 +607,6 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 ---
 
 ## 上层工具能力
-
-### Shader 编辑/替换
-
-#### `build_shader_replacement`
-
-将编辑后的 shader 编译为 replay-time replacement。优先使用 `source_path`；`source_text` 仅用于小型内联实验。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `event_id` | `int` | 是 | 要替换 shader 的 event |
-| `stage` | `str` | 是 | shader 阶段 |
-| `source_path` | `str` | 否 | 编辑后源码路径，通常是 `working.*` |
-| `source_text` | `str` | 否 | 内联源码 |
-| `encoding` | `str` | 否 | ShaderEncoding 覆盖；默认使用原 shader 编码 |
-| `entry_point` | `str` | 否 | 入口点覆盖；默认使用原入口点 |
-
-**示例：**
-```
-build_shader_replacement(event_id=123, stage="pixel", source_path=".../working.frag")
-```
-
----
-
-#### `apply_shader_replacement`
-
-应用编译后的 replacement，并刷新 RenderDoc replay/UI 状态。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `original_resource_id` | `str` | 是 | 原 shader resource ID |
-| `replacement_resource_id` | `str` | 是 | replacement shader resource ID |
-
----
-
-#### `remove_shader_replacement`
-
-移除 replay-time shader replacement，并刷新 RenderDoc。
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `resource_id` | `str` | 是 | 原 shader resource ID |
-
----
-
-#### `preview_event_output`
-
-保存某个 event 的输出纹理，通常用于应用 shader replacement 后预览结果。
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `event_id` | `int` | 是 | | 保存前 replay 的 event |
-| `output_path` | `str` | 否 | 临时预览路径 | 输出文件路径 |
-| `output_index` | `int` | 否 | `0` | event 输出纹理列表中的索引 |
-| `format_type` | `str` | 否 | `PNG` | PNG/JPG/BMP/TGA/EXR/DDS/HDR |
-
----
 
 ### 资源导出
 

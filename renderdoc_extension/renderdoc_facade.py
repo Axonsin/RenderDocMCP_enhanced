@@ -59,6 +59,10 @@ class RenderDocFacade:
         """Invoke callback on replay thread via BlockInvoke"""
         self.ctx.Replay().BlockInvoke(callback)
 
+    def dispose(self):
+        """Revert owned shader edits before the extension unloads."""
+        self._shader_edit.dispose()
+
     # ==================== Capture Management ====================
 
     def get_capture_status(self):
@@ -173,69 +177,24 @@ class RenderDocFacade:
         """Get original shader source text for a specific stage when available."""
         return self._pipeline.get_shader_source(event_id, stage)
 
+    def get_shader_edit_context(self, event_id, stage, mode="auto"):
+        return self._shader_edit.get_shader_edit_context(event_id, stage, mode)
+
+    def replace_shader(self, edit_id, source_text):
+        return self._shader_edit.replace_shader(edit_id, source_text)
+
+    def revert_shader(self, edit_id):
+        return self._shader_edit.revert_shader(edit_id)
+
+    def list_shader_replacements(self):
+        return self._shader_edit.list_shader_replacements()
+
+    def export_shader_source(self, edit_id, output_path):
+        return self._shader_edit.export_shader_source(edit_id, output_path)
+
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
-
-    def get_shader_edit_context(
-        self,
-        event_id,
-        stage,
-        materialize=True,
-        max_inline_chars=2000,
-    ):
-        """Create a file-first shader editing context."""
-        return self._shader_edit.get_shader_edit_context(
-            event_id=event_id,
-            stage=stage,
-            materialize=materialize,
-            max_inline_chars=max_inline_chars,
-        )
-
-    def build_shader_replacement(
-        self,
-        event_id,
-        stage,
-        source_path=None,
-        source_text=None,
-        encoding=None,
-        entry_point=None,
-    ):
-        """Build a replacement shader without applying it."""
-        return self._shader_edit.build_shader_replacement(
-            event_id=event_id,
-            stage=stage,
-            source_path=source_path,
-            source_text=source_text,
-            encoding=encoding,
-            entry_point=entry_point,
-        )
-
-    def apply_shader_replacement(self, original_resource_id, replacement_resource_id):
-        """Apply a compiled shader replacement."""
-        return self._shader_edit.apply_shader_replacement(
-            original_resource_id,
-            replacement_resource_id,
-        )
-
-    def remove_shader_replacement(self, resource_id):
-        """Remove a shader replacement."""
-        return self._shader_edit.remove_shader_replacement(resource_id)
-
-    def preview_event_output(
-        self,
-        event_id,
-        output_path=None,
-        output_index=0,
-        format_type="PNG",
-    ):
-        """Save an output texture preview for an event."""
-        return self._shader_edit.preview_event_output(
-            event_id=event_id,
-            output_path=output_path,
-            output_index=output_index,
-            format_type=format_type,
-        )
 
     def trace_resource_usage(
         self,

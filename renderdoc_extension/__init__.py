@@ -12,6 +12,7 @@ from . import renderdoc_facade
 # Global state
 _context = None
 _server = None
+_facade = None
 _version = ""
 
 _RELOAD_MODULES = [
@@ -50,13 +51,14 @@ def register(version, ctx):
         version: RenderDoc version string (e.g., "1.20")
         ctx: CaptureContext handle
     """
-    global _context, _server, _version
+    global _context, _server, _version, _facade
     _version = version
     _context = ctx
     _reload_child_modules()
 
     # Create facade and handler
     facade = renderdoc_facade.RenderDocFacade(ctx)
+    _facade = facade
     handler = request_handler.RequestHandler(facade)
 
     # Start socket server
@@ -80,10 +82,14 @@ def register(version, ctx):
 
 def unregister():
     """Called when extension is unloaded"""
-    global _server
+    global _server, _facade, _context
     if _server:
         _server.stop()
         _server = None
+    if _facade:
+        _facade.dispose()
+        _facade = None
+    _context = None
     print("[MCP Bridge] Extension unloaded")
 
 

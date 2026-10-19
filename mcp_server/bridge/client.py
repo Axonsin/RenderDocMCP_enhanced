@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -16,6 +17,10 @@ IPC_DIR = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
 REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
 RESPONSE_FILE = os.path.join(IPC_DIR, "response.json")
 LOCK_FILE = os.path.join(IPC_DIR, "lock")
+CALL_LOCK_FILE = os.path.join(IPC_DIR, "call.lock")
+
+EDIT_METHODS = {"get_shader_edit_context", "replace_shader", "revert_shader",
+                "list_shader_replacements", "export_shader_source"}
 
 
 class RenderDocBridgeError(Exception):
@@ -32,6 +37,46 @@ class RenderDocBridge:
         self.host = host
         self.port = port
         self.timeout = 30.0  # seconds
+        self.edit_timeout = 120.0
+
+    @contextmanager
+    def _transaction(self, timeout):
+        """OS lock serializes clients, including separate MCP server processes.
+
+        Unlike an exclusive-create sentinel, the lock is released if a client dies.
+        This is separate from the legacy short-lived request publication lock.
+        """
+        with open(CALL_LOCK_FILE, "a+b") as handle:
+            if os.fstat(handle.fileno()).st_size == 0:
+                handle.write(b"\0")
+                handle.flush()
+            deadline = time.monotonic() + timeout
+            locked = False
+            while not locked:
+                handle.seek(0)
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise RenderDocBridgeError("IPC_BUSY: timed out waiting for another client; "
+                                                  "request was not submitted")
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Call a method on the RenderDoc extension"""
@@ -46,52 +91,50 @@ class RenderDocBridge:
             "id": str(uuid.uuid4()),
             "method": method,
             "params": params or {},
+            "ipc_version": 2,
         }
-
+        timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout
+        response_file = os.path.join(IPC_DIR, "response_%s.json" % request["id"])
+        temporary = os.path.join(IPC_DIR, "request_%s.tmp" % request["id"])
         try:
-            # Clean up any stale response file
-            if os.path.exists(RESPONSE_FILE):
-                os.remove(RESPONSE_FILE)
-
-            # Create lock file to signal we're writing
-            with open(LOCK_FILE, "w") as f:
-                f.write("lock")
-
-            # Write request
-            with open(REQUEST_FILE, "w", encoding="utf-8") as f:
-                json.dump(request, f)
-
-            # Remove lock file to signal write complete
-            os.remove(LOCK_FILE)
-
-            # Wait for response
-            start_time = time.time()
-            while True:
-                if os.path.exists(RESPONSE_FILE):
-                    # Small delay to ensure file is fully written
-                    time.sleep(0.01)
-
-                    # Read response
-                    with open(RESPONSE_FILE, "r", encoding="utf-8") as f:
-                        response = json.load(f)
-
-                    # Clean up response file
-                    os.remove(RESPONSE_FILE)
-
-                    if "error" in response:
-                        error = response["error"]
-                        raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
-
-                    return response.get("result")
-
-                # Check timeout
-                if time.time() - start_time > self.timeout:
-                    raise RenderDocBridgeError("Request timed out")
-
-                # Poll interval
-                time.sleep(0.05)
-
+            with self._transaction(timeout):
+                deadline = time.monotonic() + timeout
+                # Never overwrite a request left pending by a timed-out client.
+                while os.path.exists(REQUEST_FILE) or os.path.exists(LOCK_FILE):
+                    if time.monotonic() >= deadline:
+                        raise RenderDocBridgeError("IPC_BUSY: previous request is still pending; "
+                                                  "request was not submitted")
+                    time.sleep(0.05)
+                with open(temporary, "x", encoding="utf-8") as handle:
+                    json.dump(request, handle)
+                os.replace(temporary, REQUEST_FILE)
+                while True:
+                    # Per-request replies prevent a late response overwriting the next reply.
+                    for candidate in (response_file, RESPONSE_FILE):
+                        if not os.path.exists(candidate):
+                            continue
+                        try:
+                            with open(candidate, "r", encoding="utf-8") as handle:
+                                response = json.load(handle)
+                        except json.JSONDecodeError:
+                            continue  # Compatibility with the old non-atomic response writer.
+                        os.remove(candidate)
+                        if response.get("id") != request["id"]:
+                            continue
+                        if "error" in response:
+                            error = response["error"]
+                            raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
+                        return response.get("result")
+                    if time.monotonic() >= deadline:
+                        raise RenderDocBridgeError(
+                            "RESULT_PENDING: request %s timed out after submission; result is unknown. "
+                            "Do not automatically retry. Query list_shader_replacements or "
+                            "get_shader_edit_context to confirm shader state." % request["id"])
+                    time.sleep(0.05)
         except RenderDocBridgeError:
             raise
         except Exception as e:
             raise RenderDocBridgeError(f"Communication error: {e}")
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)

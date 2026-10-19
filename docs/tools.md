@@ -192,6 +192,80 @@ list_resources(resource_type="texture", offset=50, limit=50)
 
 ## Local Data Analysis
 
+### Session-scoped Shader Editing
+
+Supports GLSL, Vulkan SPIR-V and OpenGL SPIR-V. Replacement affects every draw referencing
+the original shader resource, lasts only for the open capture session, and does not write
+the `.rdc` file. HLSL / DXBC / DXIL editing is TODO.
+
+| Tool | Parameters | Behavior |
+|------|------------|----------|
+| `get_shader_edit_context` | `event_id: int, stage: str, mode: str = "auto"` | Prepare editable text, edit ID, compiler path and status |
+| `replace_shader` | `edit_id: str, source_text: str` | Compile and apply; compilation failure preserves the previous successful replacement |
+| `revert_shader` | `edit_id: str` | Restore the original shader; repeat calls are safe |
+| `list_shader_replacements` | None | Active replacements in `items`; all prepared/failed/conflicting edits in `sessions` |
+| `export_shader_source` | `edit_id: str, output_path: str` | Export latest submitted text as UTF-8; refuse existing files |
+
+Stages use the existing `vertex / hull / domain / geometry / pixel / compute` names.
+Modes: `auto / original / glsl / spirv_asm`. Auto uses original GLSL, or prefers a complete
+SPIRV-Cross → GLSL → compiler path, falling back to spirv-dis → assembly → spirv-as when
+that path is unavailable. Explicit modes never fall back. `original` requires captured
+GLSL text; pseudocode is not compilable source.
+Auto reuses an existing edit and its current representation when querying submitted results;
+after reverting, an explicit mode can prepare a different representation.
+Submit one self-contained source text; project include management and editing multiple
+entry points of one resource are not supported.
+Tools are selected from RenderDoc's Settings → Shader Processing configuration.
+
+```python
+edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+# Modify edit["source_text"], preserving bindings and stage interfaces.
+result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
+# Check last_attempt_status == "applied" and inspect warnings/errors in log.
+get_pipeline_state(event_id=123)
+# Compare the same output texture using get_texture_data / save_texture.
+export_shader_source(edit_id=edit["edit_id"], output_path="D:/captures/edited_shader.glsl")
+revert_shader(edit_id=edit["edit_id"])
+```
+
+The context contains `source_text` (latest submission or initial text), `applied_source_text`
+(the successfully applied text), entry points, encodings, compiler, `revision`, `applied`,
+`last_attempt_status`, and `log`. Compilation failure returns `compile_failed` as an ordinary
+result; `applied=true` can mean the previous version is still active. Export reports
+`matches_applied_source`; failed drafts remain exportable.
+
+IDs expire on capture close, reopening the same path, or extension unload. External editor
+replacements produce `SHADER_EDIT_CONFLICT`; revert in their owning editor first. Revert
+before switching editing representations. Missing conversion tools produce `SHADER_TOOL_MISSING`;
+expired IDs produce `INVALID_EDIT_ID`; export collisions produce `OUTPUT_FILE_EXISTS`.
+
+Editing calls time out after 120 seconds. `RESULT_PENDING` means the request was submitted
+but its result is unknown: **never automatically retry a replacement**. Query
+`list_shader_replacements()` or get the context for the same event/stage to confirm state.
+
+Update with `uv tool install . --editable` and `python scripts/install_extension.py`, reload
+the Bridge in RenderDoc's extension manager (or restart RenderDoc), then reconnect the MCP client.
+Run automated checks with `python -m unittest discover -s tests -v`. Validate unchanged
+roundtrips, color changes, failed compilation, repeated replacement, restoration and shared
+shader effects separately on real OpenGL GLSL, Vulkan SPIR-V and OpenGL SPIR-V captures.
+
+For mobile captures, select the device's **Replay Context** in RenderDoc before opening
+the capture. Both `get_capture_status()` and the edit context report `remote_replay=true`
+when replay runs remotely. hkrpg captures must be validated on the connected mobile device.
+Decompiler/compiler tools run on the host; replacement and replay run on the mobile GPU.
+Validate an already-open mobile capture with:
+
+```bash
+python scripts/validate_shader_edit_remote.py --event-id 2069 --output-dir build/shader-edit-validation/mobile-run
+# Optional shared-shader candidates; actual bindings are verified first.
+python scripts/validate_shader_edit_remote.py --event-id 2808 --shared-event-ids 2799 2792 --output-dir build/shader-edit-validation/shared-run
+```
+
+Choose an event appropriate for the capture and a new output directory. The script records
+roundtrip/color/failure/repeated-edit/assembly/export results and images/pixel hashes,
+and restores its replacement without closing the capture. `scripts/validate_shader_edit.py`
+is a separate-instance local replay helper and refuses to load hkrpg captures locally.
+
 ### Pipeline State
 
 #### `get_pipeline_state`
@@ -540,62 +614,6 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 ---
 
 ## Upper-level Tools
-
-### Shader Edit/Replace
-
-#### `build_shader_replacement`
-
-Compile an edited shader into a replay-time replacement. `source_path` is preferred; `source_text` is available for small inline experiments.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | Event whose bound shader is being replaced |
-| `stage` | `str` | Yes | Shader stage |
-| `source_path` | `str` | No | Path to edited source, typically `working.*` |
-| `source_text` | `str` | No | Inline source fallback |
-| `encoding` | `str` | No | ShaderEncoding override; defaults to original encoding |
-| `entry_point` | `str` | No | Entry point override; defaults to original entry point |
-
-**Example:**
-```
-build_shader_replacement(event_id=123, stage="pixel", source_path=".../working.frag")
-```
-
----
-
-#### `apply_shader_replacement`
-
-Apply a compiled replacement and refresh RenderDoc replay/UI state.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `original_resource_id` | `str` | Yes | Original shader resource ID |
-| `replacement_resource_id` | `str` | Yes | Replacement shader resource ID |
-
----
-
-#### `remove_shader_replacement`
-
-Remove a replay-time shader replacement and refresh RenderDoc.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `resource_id` | `str` | Yes | Original shader resource ID |
-
----
-
-#### `preview_event_output`
-
-Save one output texture at an event, useful after applying a shader replacement.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `event_id` | `int` | Yes | | Event to replay before saving |
-| `output_path` | `str` | No | temp preview path | Output file path |
-| `output_index` | `int` | No | `0` | Index into the event output texture list |
-| `format_type` | `str` | No | `PNG` | PNG/JPG/BMP/TGA/EXR/DDS/HDR |
-
----
 
 ### Resource Export
 

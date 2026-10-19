@@ -29,6 +29,7 @@ class CaptureManager:
             try:
                 props = controller.GetAPIProperties()
                 result["api"] = str(props.pipelineType)
+                result["remote_replay"] = bool(props.remoteReplay)
             except Exception:
                 pass
 

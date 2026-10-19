@@ -222,128 +222,59 @@ def get_shader_source(
 def get_shader_edit_context(
     event_id: int,
     stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
-    materialize: bool = True,
-    max_inline_chars: int = 2000,
+    mode: Literal["auto", "original", "glsl", "spirv_asm"] = "auto",
 ) -> dict:
-    """
-    Create a file-first shader editing context for a specific event/stage.
+    """Prepare editable GLSL/SPIR-V text and its compilation path for an event/stage.
 
-    Args:
-        event_id: The event ID to inspect
-        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
-        materialize: Write original/working/disassembly/context files under the temp shader workspace
-        max_inline_chars: Maximum source/disassembly preview characters returned inline
-
-    Returns paths and metadata for editing a shader without returning large full source blobs.
+    Auto prefers original GLSL, otherwise decompiled GLSL with an assembly fallback.
+    Returns edit_id, source_text, compiler, entry points, logs and replacement state.
+    Reuse edit_id for replace/revert/export. IDs expire when the capture closes.
+    A replacement affects ALL draws using the original shader resource.
+    HLSL/DXBC/DXIL editing is TODO. No capture file is modified.
     """
-    return bridge.call(
-        "get_shader_edit_context",
-        {
-            "event_id": event_id,
-            "stage": stage,
-            "materialize": materialize,
-            "max_inline_chars": max_inline_chars,
-        },
-    )
+    return bridge.call("get_shader_edit_context", {"event_id": event_id, "stage": stage, "mode": mode})
 
 
 @mcp.tool
-def build_shader_replacement(
-    event_id: int,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
-    source_path: str | None = None,
-    source_text: str | None = None,
-    encoding: str | None = None,
-    entry_point: str | None = None,
-) -> dict:
-    """
-    Compile a replacement shader without applying it.
+def replace_shader(edit_id: str, source_text: str) -> dict:
+    """Compile text and replace a shader in the current capture session.
 
-    Args:
-        event_id: The event ID whose bound shader is being replaced
-        stage: The shader stage to replace
-        source_path: Preferred path to edited shader source
-        source_text: Inline shader source fallback for small experiments
-        encoding: Optional RenderDoc ShaderEncoding name (defaults to the original shader encoding)
-        entry_point: Optional entry point override (defaults to the original shader entry point)
-
-    Returns success status, compiler output, original shader ID, and replacement shader ID when built.
+    Check last_attempt_status='applied' and the compiler log; compilation failures
+    keep the last successful replacement. Inspect/save output textures to verify
+    the visual result. A timeout is an UNKNOWN result: query
+    list_shader_replacements/get_shader_edit_context before deciding what to do;
+    never automatically retry a timed-out replacement.
     """
-    params: dict[str, object] = {
-        "event_id": event_id,
-        "stage": stage,
-    }
-    _optional_param(params, "source_path", source_path)
-    _optional_param(params, "source_text", source_text)
-    _optional_param(params, "encoding", encoding)
-    _optional_param(params, "entry_point", entry_point)
-    return bridge.call("build_shader_replacement", params)
+    return bridge.call("replace_shader", {"edit_id": edit_id, "source_text": source_text})
 
 
 @mcp.tool
-def apply_shader_replacement(
-    original_resource_id: str,
-    replacement_resource_id: str,
-) -> dict:
-    """
-    Apply a compiled shader replacement to the current replay.
+def revert_shader(edit_id: str) -> dict:
+    """Restore the original shader, release the replacement and refresh the UI.
 
-    Args:
-        original_resource_id: The original shader resource ID
-        replacement_resource_id: The replacement shader resource ID returned by build_shader_replacement
-
-    Returns replacement status after RenderDoc UI/replay refresh.
+    Reverting twice is safe. Does not overwrite changes owned by other editors.
     """
-    return bridge.call(
-        "apply_shader_replacement",
-        {
-            "original_resource_id": original_resource_id,
-            "replacement_resource_id": replacement_resource_id,
-        },
-    )
+    return bridge.call("revert_shader", {"edit_id": edit_id})
 
 
 @mcp.tool
-def remove_shader_replacement(resource_id: str) -> dict:
-    """
-    Remove a replay-time shader replacement.
+def list_shader_replacements() -> dict:
+    """List active MCP shader replacements and all edit-session attempt states.
 
-    Args:
-        resource_id: The original shader resource ID whose replacement should be removed
-
-    Returns replacement status after RenderDoc UI/replay refresh.
+    items contains active replacements; sessions also contains prepared, failed,
+    reverted or conflicting edits. Use this to resolve a timed-out operation.
     """
-    return bridge.call(
-        "remove_shader_replacement",
-        {"resource_id": resource_id},
-    )
+    return bridge.call("list_shader_replacements")
 
 
 @mcp.tool
-def preview_event_output(
-    event_id: int,
-    output_path: str | None = None,
-    output_index: int = 0,
-    format_type: Literal["PNG", "JPG", "BMP", "TGA", "EXR", "DDS", "HDR"] = "PNG",
-) -> dict:
-    """
-    Save one output texture at an event as a preview image.
+def export_shader_source(edit_id: str, output_path: str) -> dict:
+    """Export latest submitted text (or initial text) as UTF-8 to an absolute path.
 
-    Args:
-        event_id: The event ID to replay before saving output
-        output_path: Optional output path; defaults to the temp shader preview directory
-        output_index: Index into the event output texture list
-        format_type: Output format - PNG (default), JPG, BMP, TGA, EXR, DDS, HDR
-
-    Returns output path, dimensions, selected resource ID, and output binding metadata.
+    Refuses existing files. Failed submissions can be exported; check
+    last_attempt_status and matches_applied_source in the result.
     """
-    params: dict[str, object] = {
-        "event_id": event_id,
-        "output_index": output_index,
-        "format_type": format_type,
-    }
-    _optional_param(params, "output_path", output_path)
-    return bridge.call("preview_event_output", params)
+    return bridge.call("export_shader_source", {"edit_id": edit_id, "output_path": output_path})
 
 
 @mcp.tool

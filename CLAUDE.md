@@ -53,11 +53,11 @@ RenderDocMCP/
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
 | `get_shader_info` | 着色器反汇编/常量缓冲区/资源绑定 |
 | `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
-| `get_shader_edit_context` | 将 shader 源码/反汇编落盘到临时编辑工作区 |
-| `build_shader_replacement` | 编译编辑后的 shader replacement（不立即应用） |
-| `apply_shader_replacement` | 应用 shader replacement 并刷新 RenderDoc |
-| `remove_shader_replacement` | 移除 shader replacement |
-| `preview_event_output` | 保存 event 输出纹理预览 |
+| `get_shader_edit_context` | 获取 GLSL/SPIR-V 的可编辑文本及编译路径 |
+| `replace_shader` | 编译并应用 shader 替换（当前捕获会话内生效） |
+| `revert_shader` | 还原原始 shader 并刷新 RenderDoc |
+| `list_shader_replacements` | 查询生效替换与各编辑会话状态 |
+| `export_shader_source` | 导出编辑后的 shader 源码（UTF-8，不覆盖已有文件） |
 | `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
 | `list_resources` | 资源枚举（texture/buffer，支持名称过滤和分页） |
 | `get_texture_info` | 纹理元数据 |
