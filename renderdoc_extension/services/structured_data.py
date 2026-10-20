@@ -1,4 +1,4 @@
-"""Bounded, one-level serialization of RenderDoc structured initialization data."""
+"""Bounded, one-level serialization shared by API calls and initialization data."""
 
 import math
 

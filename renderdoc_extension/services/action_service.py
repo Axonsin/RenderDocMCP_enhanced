@@ -5,6 +5,8 @@ Draw call / action operations service for RenderDoc.
 import renderdoc as rd
 
 from ..utils import Serializers, Helpers
+from .resource_catalog import build_catalog, paginate, validate_page
+from .structured_data import read_node
 
 
 class ActionService:
@@ -185,6 +187,74 @@ class ActionService:
         if result["error"]:
             raise ValueError(result["error"])
         return result["details"]
+
+    def get_action_api_calls(self, action_event_id, api_event_id=None, child_path=None,
+                             offset=0, limit=50):
+        """Read the selected action's API events or expand one call's parameters."""
+        validate_page(offset, limit)
+        if type(action_event_id) is not int or action_event_id <= 0:
+            raise ValueError("INVALID_EVENT_ID: expected a positive action EID")
+        if api_event_id is not None and (type(api_event_id) is not int or api_event_id <= 0):
+            raise ValueError("INVALID_API_EVENT_ID: expected a positive API EID")
+        if child_path is not None and (
+                not isinstance(child_path, list) or
+                any(type(i) is not int or i < 0 for i in child_path)):
+            raise ValueError("INVALID_CHILD_PATH: expected non-negative child indices")
+        if api_event_id is None and child_path:
+            raise ValueError("INVALID_CHILD_PATH: api_event_id is required")
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
+        result = {}
+
+        def callback(controller):
+            try:
+                action = self.ctx.GetAction(action_event_id)
+                if action is None or action.eventId != action_event_id:
+                    raise ValueError("INVALID_EVENT_ID: no action at event %d" % action_event_id)
+                structured = controller.GetStructuredFile()
+                events = list(action.events)
+                context = {"action_event_id": int(action.eventId),
+                           "action_name": str(action.GetName(structured))}
+
+                def describe(event):
+                    index = int(event.chunkIndex)
+                    entry = {"api_event_id": int(event.eventId), "chunk_index": index}
+                    if index == getattr(event, "NoChunk", 0xFFFFFFFF):
+                        entry.update({"available": False, "reason": "no_chunk", "name": None})
+                    elif index < 0 or index >= len(structured.chunks):
+                        entry.update({"available": False, "reason": "invalid_chunk_index",
+                                      "name": None})
+                    else:
+                        chunk = structured.chunks[index]
+                        entry.update({"available": True, "name": str(chunk.name),
+                                      "child_count": chunk.NumChildren()})
+                    return entry
+
+                if api_event_id is None:
+                    page = paginate(events, offset, limit)
+                    page["items"] = [describe(event) for event in page["items"]]
+                    context.update(page)
+                else:
+                    event = next((e for e in events if e.eventId == api_event_id), None)
+                    if event is None:
+                        raise ValueError("INVALID_API_EVENT_ID: event %d does not belong to action %d"
+                                         % (api_event_id, action_event_id))
+                    entry = describe(event)
+                    context["api_call"] = entry
+                    if entry["available"]:
+                        context.update(read_node(
+                            structured.chunks[entry["chunk_index"]],
+                            [] if child_path is None else child_path, self.ctx,
+                            build_catalog(controller, descriptors=False), offset, limit))
+                result["data"] = context
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
+
+        self._invoke(callback)
+        if "error" in result:
+            raise result["error"]
+        return result["data"]
 
     def get_action_timings(
         self,

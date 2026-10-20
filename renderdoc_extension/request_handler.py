@@ -20,6 +20,7 @@ class RequestHandler:
             "summarize_capture": self._handle_summarize_capture,
             "search_draws": self._handle_search_draws,
             "get_draw_call_details": self._handle_get_draw_call_details,
+            "get_action_api_calls": self._handle_get_action_api_calls,
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
             "get_shader_source": self._handle_get_shader_source,
@@ -36,6 +37,9 @@ class RequestHandler:
             "get_texture_data": self._handle_get_texture_data,
             "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
+            "get_pipeline_stage": self._handle_get_pipeline_stage,
+            "inspect_pipeline_binding": self._handle_inspect_pipeline_binding,
+            "get_action_textures": self._handle_get_action_textures,
             "trace_resource_usage": self._handle_trace_resource_usage,
             "trace_event_dependencies": self._handle_trace_event_dependencies,
             "diff_events": self._handle_diff_events,
@@ -82,8 +86,15 @@ class RequestHandler:
             prefix = ""
 
         invalid_prefixes = {
+            "INVALID_USAGE_CATEGORIES",
             "INVALID_STAGE",
+            "INVALID_ACTION_EVENT_ID",
+            "INVALID_BINDING_ID",
+            "INVALID_SECTION",
+            "INVALID_DIRECTION",
+            "INVALID_FILTER",
             "INVALID_EVENT_ID",
+            "INVALID_API_EVENT_ID",
             "INVALID_RESOURCE_ID",
             "INVALID_RESOURCE_TYPE",
             "INVALID_PAGINATION",
@@ -246,6 +257,11 @@ class RequestHandler:
         return self.facade.list_resources(resource_type, name_filter, offset, limit,
                                           params.get("sort_by", "name"))
 
+    def _handle_get_action_api_calls(self, params):
+        return self.facade.get_action_api_calls(
+            self._require_param(params, "action_event_id"), params.get("api_event_id"),
+            params.get("child_path"), params.get("offset", 0), params.get("limit", 50))
+
     def _handle_inspect_resource(self, params):
         return self.facade.inspect_resource(
             self._require_param(params, "resource_id"),
@@ -263,7 +279,7 @@ class RequestHandler:
         slice_idx = params.get("slice", 0)
         sample = params.get("sample", 0)
         depth_slice = params.get("depth_slice")  # None = full volume
-        return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice)
+        return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice, params.get("action_event_id"))
 
     def _handle_save_texture(self, params):
         """Handle save_texture request"""
@@ -280,12 +296,29 @@ class RequestHandler:
             mip=mip,
             slice_index=slice_index,
             alpha_mode=alpha_mode,
+            action_event_id=params.get("action_event_id"),
         )
 
     def _handle_get_pipeline_state(self, params):
-        """Handle get_pipeline_state request"""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.get_pipeline_state(int(event_id))
+        return self.facade.get_pipeline_state(self._require_param(params, "action_event_id"))
+
+    def _handle_get_pipeline_stage(self, params):
+        return self.facade.get_pipeline_stage(
+            self._require_param(params, "action_event_id"), self._require_param(params, "stage"),
+            params.get("section", "overview"), params.get("show_unused", False),
+            params.get("show_empty", False), params.get("offset", 0), params.get("limit", 50))
+
+    def _handle_inspect_pipeline_binding(self, params):
+        return self.facade.inspect_pipeline_binding(
+            self._require_param(params, "action_event_id"), self._require_param(params, "binding_id"),
+            params.get("section", "details"), params.get("child_path"),
+            params.get("offset", 0), params.get("limit", 50))
+
+    def _handle_get_action_textures(self, params):
+        return self.facade.get_action_textures(
+            self._require_param(params, "action_event_id"), params.get("direction", "all"),
+            params.get("stage"), params.get("show_unused", False), params.get("show_empty", False),
+            params.get("offset", 0), params.get("limit", 50))
 
     def _handle_trace_resource_usage(self, params):
         """Handle trace_resource_usage request."""
@@ -309,6 +342,7 @@ class RequestHandler:
             before_event_id=int(before_event_id) if before_event_id is not None else None,
             offset=params.get("offset", 0),
             limit=params.get("limit", 100),
+            categories=params.get("categories"),
         )
 
     def _handle_trace_event_dependencies(self, params):

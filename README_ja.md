@@ -181,10 +181,15 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 #### Pipeline 状態
 
-- `get_pipeline_state` - 完全なパイプライン状態と簡潔な入出力テクスチャサマリーを取得
-- `get_shader_info` - shader 逆アセンブル、定数バッファ、バインディングを取得
+- `get_pipeline_state` - action のパイプライン概要、ステージ状態と診断を取得
+- `get_pipeline_stage` - ステージごとのリソースと固定機能状態を取得
+- `inspect_pipeline_binding` - バインディング範囲と定数変数をパスで展開
+- `get_action_textures` - action の入出力テクスチャ、ステージラベルとリソース ID を取得
+- `get_shader_info` - shader ID、エントリポイントと逆アセンブルを取得
 - `get_shader_source` - RenderDoc がテキストの元ソースを保持している場合に shader ソースを取得
 - `get_shader_edit_context` - GLSL/SPIR-V の編集可能テキストとコンパイルパスを取得
+
+破壊的変更: `get_pipeline_state` は `action_event_id` を使用します。バインディングはステージ／テクスチャツールから取得します。`get_texture_data` と `save_texture` は任意の `action_event_id` によって action 実行後の内容を取得できます。新しいクエリは UI の replay イベントを復元します。Vulkan は詳細なネイティブ情報にも対応します。
 
 #### リソースデータ読み取り
 
@@ -197,6 +202,7 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 #### Action メタ情報
 
 - `get_draw_call_details` - 特定の draw call の詳細情報を取得
+- `get_action_api_calls` - API Inspector に対応する呼び出し一覧とパラメータツリーを取得
 - `get_action_timings` - action の GPU タイミングを取得
 
 #### 組み合わせ分析
@@ -204,7 +210,7 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 原子ツールの上で複数サービスをオーケストレーションする多次元クエリで、素早く全体像を把握できます。
 
 - `inspect_event` - 単一 event を複合的に調査し、詳細、タイミング、shader サマリー、パイプラインサマリー、メッシュサマリーを返す
-- `trace_resource_usage` - リソースがどこで読み書き・消費されるかを一致する event 群で追跡する
+- `trace_resource_usage` - Timeline に対応した分類・件数と `categories` フィルター（元の usage を保持）
 - `trace_event_dependencies` - 単一 event の直接リソース依存関係と候補 producer event を追跡する
 - `diff_events` - 2 つの event を比較し、重要な状態差分を強調する
 - `analyze_pass` - 1 つの marker サブツリーまたは pass をまとまったワークロードとして要約する

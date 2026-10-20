@@ -223,7 +223,7 @@ get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, chi
 
 无效分页、排序、资源类型、chunk 归属及节点路径返回参数错误；资源不存在、未加载捕获和底层查询失败返回运行时错误。本版仅对纹理/缓冲区（含具有纹理描述符的交换链图像）查询 usage。初始化参数描述创建和设置过程，当前资源内容仍通过数据读取工具获取。
 
-**迁移说明：** `list_resources` 默认列举全部资源，返回紧凑身份；原先读取的尺寸、格式、大小改从 `inspect_resource(...)["metadata"]` 获取，也可继续使用 `get_texture_info`。`trace_resource_usage` 移除重复的 `reads`/`writes` 数组，统一读取分页 `events`，按 `access` 分类并通过 `has_more` 翻页；其 `resource` 同样改为紧凑身份。`event_count` 为去重 EID 数，`usage_count`/`total_count` 为使用记录数。
+**迁移说明：** `list_resources` 默认列举全部资源，返回紧凑身份；原先读取的尺寸、格式、大小改从 `inspect_resource(...)["metadata"]` 获取，也可继续使用 `get_texture_info`。`trace_resource_usage` 移除重复的 `reads`/`writes` 数组，统一读取分页 `events`，按 Timeline `category` 分类（通过 `categories` 筛选）并通过 `has_more` 翻页；其 `resource` 同样改为紧凑身份。`event_count` 为去重 EID 数，`usage_count`/`total_count` 为使用记录数。
 
 安装/重新加载新版扩展并重启 MCP 服务后，打开捕获，运行 `python scripts/validate_resources_live.py --resource-id ResourceId::86983`（替换为当前捕获中的 ID）。该只读脚本输出 JSON 报告，供对照 Resource Inspector 检查，不改变当前选择。自动化测试使用模拟绑定和真实文件 IPC，不能替代真实捕获验证。
 
@@ -257,7 +257,7 @@ edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
 # 根据 edit["source_text"] 修改代码，保留资源绑定与输入输出接口。
 result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
 # 应检查 last_attempt_status == "applied"，并读取 log 中的警告/错误。
-get_pipeline_state(event_id=123)
+get_pipeline_state(action_event_id=123)
 # 使用已有 get_texture_data / save_texture 对比相同输出纹理的修改前后结果。
 export_shader_source(edit_id=edit["edit_id"], output_path="D:/captures/edited_shader.glsl")
 revert_shader(edit_id=edit["edit_id"])
@@ -302,34 +302,113 @@ python scripts/validate_shader_edit_remote.py --event-id 2808 --shared-event-ids
 
 #### `get_pipeline_state`
 
-获取指定 event 处的完整图形管线状态。包含绑定的 shader、资源绑定、采样器、常量缓冲区、渲染目标、输入/输出纹理摘要、视口和输入装配状态。
+`get_pipeline_state(action_event_id)` 返回紧凑总览：API、pipeline 资源身份、阶段状态、
+可用栏目、绑定计数和问题摘要。参数必须是准确的 action EID。
+旧 `event_id` 参数和完整 `shaders`、`input_textures`、`output_textures` 聚合字段已移除。
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `event_id` | `int` | 是 | 要检查的 event ID |
+#### `get_pipeline_stage`
 
-**返回值：** 完整管线状态，含 `input_textures` / `output_textures` 摘要。
-
-**示例：**
+```python
+get_pipeline_state(action_event_id=343)
+get_pipeline_stage(action_event_id=343, stage="FS")
+get_pipeline_stage(action_event_id=343, stage="FS", section="constant_buffers", offset=0, limit=50)
 ```
-get_pipeline_state(event_id=123)
-# → { ..., "input_textures": [{"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", ...}],
-#        "output_textures": [{"resource_id": "ResourceId::3001", "type": "render_target", ...}],
-#        "input_count": 3, "output_count": 2 }
+
+参数：`action_event_id`、`stage`、`section="overview"`、`show_unused=False`、
+`show_empty=False`、`offset=0`、`limit=50`（1–500）。overview 列出可用栏目。
+统一阶段：`vertex_input`、`vertex`、`tess_control`、`tess_eval`、`geometry`、`task`、
+`mesh`、`rasterizer`、`fragment`、`framebuffer`、`compute`。
+支持 VS、HS/TCS、DS/TES、GS、AS/TS、MS、FS/PS、CS、FB/OM 别名；显示名称跟随 API。
+
+| 阶段 | 栏目 |
+|---|---|
+| Vertex Input | `assembly`、`attributes`、`buffers` |
+| Shader 阶段 | `shader`、`descriptors`、`resources`、`samplers`、`constant_buffers`、`push_constants` |
+| Rasterizer | `rasterizer`、`viewports`、`scissors`、`multisample` |
+| Framebuffer | `attachments`、`blend`、`depth_stencil` |
+| Compute | Shader 栏目和 `dispatch` |
+
+列表统一返回 `items`、`total_count`、`offset`、`limit`、`returned_count`、`has_more`。
+阶段区分 `enabled`、`disabled`、`not_applicable`、`unavailable`；栏目失败明确返回
+`available=false` 和原因，部分可用数据仍保留。Vulkan 补齐原生 descriptor set/layout、
+动态偏移、descriptor buffer、rasterizer、多重采样和 renderpass 信息；其他 API 提供通用
+绑定与状态，尚未支持的原生细节明确标记。
+默认过滤确定未使用的正常绑定及无关空槽，缺失必需绑定和范围异常仍可见。
+`possibly_used` 不代表 GPU 实际访问证明。总览计数包含过滤器隐藏的绑定。
+
+#### `inspect_pipeline_binding`
+
+```python
+rows = get_pipeline_stage(action_event_id=343, stage="FS", section="constant_buffers")
+binding_id = rows["items"][0]["binding_id"]
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id)
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id, section="variables")
+# 使用上一条响应中的 child_path 继续展开。
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id,
+                         section="variables", child_path=[0], offset=0, limit=50)
 ```
+
+参数：`action_event_id`、`binding_id`、`section="details"|"variables"`、
+`child_path=None`、`offset=0`、`limit=50`。details 默认不解码常量。
+每条绑定保留阶段、原生 set/space 与 binding、reflection 索引、数组元素、声明名称和资源身份。
+Buffer 范围是实际有效字节范围，Vulkan dynamic offset 已包含，不重复累加。
+`constant_buffer_range_too_small` 用 `required_bytes` 与 `provided_bytes` 表示
+例如“需要 720 字节，提供 512 字节”，不据此断言执行发生越界读取。
+直接常量不要求存在 buffer；`push_constants` 栏目承载非 buffer-backed 常量块，具体种类
+由 API 与反射名称表达。variables 返回一层布局和值、整数路径和分页，不展开整个大数组。
+任意 storage buffer 的字节读取继续使用已有 buffer 工具。
+
+`binding_id` 是工具返回的不透明标识，限定在当前捕获、action 和绑定内容中，重载同一捕获也会失效。
+`binding_key` 用于语义位置比较，不作为详情查询参数。
+用 `resource.resource_id` 继续调用 `inspect_resource`、`trace_resource_usage`、
+`get_resource_initialization`；全帧名称用于展示和搜索，不保证唯一。
+
+#### `get_action_textures`
+
+```python
+get_action_textures(action_event_id=343, direction="all", offset=0, limit=50)
+get_action_textures(action_event_id=343, direction="input", stage="FS")
+get_action_textures(action_event_id=343, direction="output")
+get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice=0)
+save_texture(action_event_id=343, resource_id="ResourceId::487",
+             output_path="D:/output/texture.png")
+```
+
+参数：`action_event_id`、`direction="all"|"input"|"output"`、可选 `stage`、
+`show_unused=False`、`show_empty=False`、`offset=0`、`limit=50`。
+返回一个分页绑定列表，含 FS/FB 等标签、shader 声明名、全帧资源身份、用途、尺寸、格式和 view 子资源范围。
+同一纹理的多个阶段、槽位或数组元素分别保留。Read-write image 同时匹配 input/output，
+在 all 中只出现一次。Framebuffer 表示输出绑定，不声称一定写入；depth/stencil 的写入状态
+和可获取的 attachment access 信息独立报告。
+Copy/resolve 使用 action 的显式 source/destination 与子资源；clear 返回已知目标，
+无法取得的子资源范围明确标记。非 shader action 不混入遗留的 shader 绑定。
+
+本工具不生成图片预览。`get_texture_data` 和 `save_texture` 增加可选 `action_event_id`：
+指定时读取该 action **执行后** 的纹理，省略时沿用 UI 当前事件；响应包含实际事件和
+`event_phase="after"`。即使纹理标记为 input，像素查询也不代表每次 shader 访问时的历史快照。
+查询成功或失败均恢复 UI 对应的 replay 事件，不改变 UI 选择。
+
+`inspect_event` 改为返回管线总览 `pipeline`、不分页的 `bindings` / `textures` 和
+`fixed_function`。`diff_events` 比较完整绑定位置及范围，包含 buffer/sampler 和固定功能状态，
+忽略 action 专属 token。`get_shader_info` 不再返回常量值和资源绑定集合。
+
+自动验证：`python -m unittest discover -s tests -v`。
+手动安装并重载更新后的扩展后，可运行
+`python scripts/validate_pipeline_live.py --action-event-id 343 --stage FS`
+与真实面板对照。脚本只读取已经打开的捕获，不导出图片或切换 UI 选择。
 
 ---
 
 #### `get_shader_info`
 
-获取指定 event 处特定阶段的 shader 信息。包含反汇编代码、常量缓冲区值和资源绑定。
+获取指定 event 处特定阶段的 shader 信息。包含 shader 身份、入口点和反汇编；绑定与常量通过管线工具查询。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `event_id` | `int` | 是 | event ID |
 | `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
 
-**返回值：** shader resource ID、入口点、阶段、反汇编、常量缓冲区、资源绑定。
+**返回值：** shader resource ID、入口点、阶段和反汇编。
 
 **示例：**
 ```
@@ -403,6 +482,7 @@ get_texture_info(resource_id="ResourceId::2495")
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `resource_id` | `str` | 是 | | 资源 ID |
+| `action_event_id` | `int` | 否 | UI 当前事件 | 读取指定 action 执行后的内容，随后恢复 replay |
 | `mip` | `int` | 否 | `0` | 要获取的 mip 级别 |
 | `slice` | `int` | 否 | `0` | 数组切片或立方体贴图面索引（0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-） |
 | `sample` | `int` | 否 | `0` | MSAA 采样索引 |
@@ -413,16 +493,16 @@ get_texture_info(resource_id="ResourceId::2495")
 **示例：**
 ```
 # 获取 2D 纹理的 mip 0
-get_texture_data(resource_id="ResourceId::123")
+get_texture_data(action_event_id=123, resource_id="ResourceId::123")
 
 # 获取特定的 mip 级别
-get_texture_data(resource_id="ResourceId::123", mip=2)
+get_texture_data(action_event_id=123, resource_id="ResourceId::123", mip=2)
 
 # 获取立方体贴图的特定面 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(resource_id="ResourceId::456", slice=3)
+get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice=3)
 
 # 获取 3D 纹理的特定深度切片
-get_texture_data(resource_id="ResourceId::789", depth_slice=5)
+get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
 ```
 
 ---
@@ -501,6 +581,32 @@ get_mesh_data(event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMA
 ---
 
 ### Action 元信息
+
+#### `get_action_api_calls`
+
+读取 draw/dispatch 对应的 API Inspector 数据，不改变当前选中的事件。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `action_event_id` | `int` | 必填 | 精确的 action EID，不是中间的状态设置 API 事件 |
+| `api_event_id` | `int` | `None` | 省略时列举调用；指定列表项的 `api_event_id` 后展开参数 |
+| `child_path` | `list[int]` | `[]` | 复用上次返回的原始子节点索引路径 |
+| `offset` | `int` | `0` | 调用列表或当前节点可见子节点的分页偏移 |
+| `limit` | `int` | `50` | 每页 1–500 项 |
+
+列表保留 `ActionDescription.events` 的顺序，通过分页可读取全部关联调用：即上一个 action 之后的事件，不代表所有历史状态设置调用。返回 `action_event_id`、`action_name` 和分页 `items`；每项包含 `api_event_id`、`name`、`chunk_index`、`available`，数据可用时包含原始 `child_count`。
+
+指定 `api_event_id` 后返回 `api_call`、`node` 和分页 `children`。参数展开复用资源初始化的序列化逻辑：每次一层，隐藏 Hidden 子节点、保留原始索引路径、展示资源 ID/名称，二进制省略内容，文本预览限制为 4096 字符。没有结构化 chunk 的调用仍保留在列表中，标记 `available: false` 和 `reason: "no_chunk"` 或 `"invalid_chunk_index"`；选中后只返回 `api_call`，不返回参数树。API EID 不属于指定 action 时返回 `INVALID_API_EVENT_ID`。
+
+```python
+get_action_api_calls(action_event_id=343)  # 例如关联 API EID 340–343
+get_action_api_calls(action_event_id=343, offset=50)  # has_more 为 true 时继续
+get_action_api_calls(action_event_id=343, api_event_id=343)  # vkCmdDrawIndexed 参数
+# 使用上一步返回的 child_path 展开具体参数：
+get_action_api_calls(action_event_id=343, api_event_id=341, child_path=[0])
+```
+
+---
 
 #### `get_draw_call_details`
 
@@ -581,14 +687,28 @@ inspect_event(event_id=1517)
 | `event_id_min` | `int` | 否 | | event 范围下界的旧版别名 |
 | `event_id_max` | `int` | 否 | | event 范围上界的旧版别名 |
 | `before_event_id` | `int` | 否 | | 计算此 event 之前的最近写入者 |
+| `categories` | `list[str]` | 否 | 全部 | Timeline 分类多选：`read`、`write`、`read_write`、`barrier`、`clear` |
 | `offset` | `int` | 否 | `0` | 过滤后的分页偏移 |
 | `limit` | `int` | 否 | `100` | 每页 1–500 项 |
 
 **返回值：** `available`、紧凑 `resource`、分页 `events`、分页字段、用途/读写统计及写入事件摘要。统计与写入摘要基于分页前全部匹配记录；`before_event_id` 只影响此前写入摘要。事件保留原始 `usage`、可选 `view_resource_id`、marker 和推导的 `access`（`access_source: "usage_classification"`）。缺失 action 的记录仍保留 EID/usage；指定 marker 条件时无法确认 marker 的记录不匹配。不适用与成功空结果分别表达。首版不合并 UI 的 EID 区间。
 
+每条事件新增 `category`，汇总的 `category_counts` 始终包含五类（含零计数），对应 Timeline 的 Reads / Writes / Read/Write / Barriers / Clears。
+
+- `GenMips`、`Copy`、`Resolve` 及各 shader 的 RWResource 属于 `read_write`。
+- `Clear` 和 `Discard` 属于 `clear`；`Barrier` 属于 `barrier`。
+- StreamOut、ColorTarget、DepthStencilTarget、CopyDst、ResolveDst、CPUWrite 属于 `write`；其余按 Timeline 默认分支归为 `read`。
+
+`categories` 内为 OR，与 marker/事件范围条件为 AND。省略表示全部，`[]` 表示不选任何分类，非法分类返回参数错误。所有计数、分页总数及写入摘要均基于**全部筛选后、分页前**的记录。分类计数是 usage 记录数，不是去重 EID 数或屏幕上可能合并的三角标记数；同一 EID 的多条 usage 保留。
+
+原始 `usage`、`usage_counts` 完整保留。已有 `access`、`read_count`、`write_count` 保持原先的读写语义，与 Timeline 分类独立，例如 Clear 仍计为写入，GenMips 的旧 access 仍为 write。对齐面板时使用 `category` 与 `category_counts`。
+
+分类依据：[RenderDoc TimelineBar.cpp](https://github.com/baldurk/renderdoc/blob/v1.x/qrenderdoc/Windows/TimelineBar.cpp)。
+
 **示例：**
 ```
 trace_resource_usage(resource_id="ResourceId::2495")
+trace_resource_usage(resource_id="ResourceId::2495", categories=["barrier", "clear"], limit=50)
 trace_resource_usage(resource_id="ResourceId::2495", marker_filter="Forward", before_event_id=1517)
 ```
 
@@ -659,6 +779,7 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `resource_id` | `str` | 是 | | 资源 ID（如 `"ResourceId::2495"`） |
+| `action_event_id` | `int` | 否 | UI 当前事件 | 读取指定 action 执行后的内容，随后恢复 replay |
 | `output_path` | `str` | 是 | | 输出文件路径（如 `"D:/output/texture.png"`） |
 | `format_type` | `str` | 否 | `"PNG"` | 输出格式：`"PNG"`、`"JPG"`、`"BMP"`、`"TGA"`、`"EXR"`、`"DDS"`、`"HDR"` |
 | `mip` | `int` | 否 | `0` | 要保存的 mip 级别（`-1` = 所有 mip） |
@@ -670,13 +791,13 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 **示例：**
 ```
 # 保存为 PNG
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
+save_texture(action_event_id=123, resource_id="ResourceId::123", output_path="D:/output/texture.png")
 
 # 保存为 JPG，alpha 混合到黑色背景
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG", alpha_mode="blend_to_black")
+save_texture(action_event_id=123, resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG", alpha_mode="blend_to_black")
 
 # 导出所有 mip 级别为 DDS
-save_texture(resource_id="ResourceId::2495", output_path="D:/output/texture.dds", format_type="DDS", mip=-1)
+save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D:/output/texture.dds", format_type="DDS", mip=-1)
 ```
 
 ---

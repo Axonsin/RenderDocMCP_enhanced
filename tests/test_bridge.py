@@ -104,6 +104,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.handler.calls), 3)
         self.assertEqual({key: value["marker"] for key, value in responses.items()}, {0: 0, 1: 1, 2: 2})
 
+    def test_empty_lock_file_excludes_second_client_without_initialization_write(self):
+        failures = []
+        acquired = []
+
+        def contender():
+            try:
+                with CLIENT.RenderDocBridge()._transaction(time.monotonic() + 0.05):
+                    acquired.append(True)
+            except CLIENT.RenderDocBridgeError as exc:
+                failures.append(str(exc))
+
+        with CLIENT.RenderDocBridge()._transaction(time.monotonic() + 1):
+            self.assertEqual(os.path.getsize(CLIENT.CALL_LOCK_FILE), 0)
+            thread = threading.Thread(target=contender)
+            thread.start()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertFalse(acquired)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("IPC_BUSY", failures[0])
+        with CLIENT.RenderDocBridge()._transaction(time.monotonic() + 1):
+            self.assertEqual(os.path.getsize(CLIENT.CALL_LOCK_FILE), 0)
+
     def test_timeout_late_reply_cannot_satisfy_following_call(self):
         self.start_server()
         client = CLIENT.RenderDocBridge()

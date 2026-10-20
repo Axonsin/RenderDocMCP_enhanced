@@ -6,10 +6,13 @@ import renderdoc as rd
 
 from ..utils import Helpers, Parsers, Serializers
 from .resource_catalog import build_catalog, identity, paginate, query_usage, resolve_resource, validate_page
+from .replay_query import at_event
 
 
 class AnalysisService:
     """High-level analysis-oriented operations built on top of canonical primitives."""
+
+    TIMELINE_CATEGORIES = ("read", "write", "read_write", "barrier", "clear")
 
     def __init__(
         self,
@@ -29,8 +32,17 @@ class AnalysisService:
 
     def inspect_event(self, event_id):
         """Build a compact analysis-oriented inspection bundle for an event."""
+        try:
+            return self._inspect_event(event_id)
+        finally:
+            # Legacy timing/mesh readers can move replay after the pipeline query.
+            if self.ctx.IsCaptureLoaded():
+                at_event(self.ctx, self._invoke, None, lambda controller, event: None)
+
+    def _inspect_event(self, event_id):
         details = self._action.get_draw_call_details(event_id)
-        pipeline = self._pipeline.get_pipeline_state(event_id)
+        snapshot = self._pipeline.analysis_snapshot(event_id)
+        pipeline = snapshot["overview"]
         timings = self._action.get_action_timings(event_ids=[event_id])
 
         timing_summary = {
@@ -54,30 +66,14 @@ class AnalysisService:
                 mesh_summary = None
 
         shader_summary = []
-        shader_map = pipeline.get("shaders", {})
-        for stage_name in sorted(shader_map.keys()):
-            stage_info = shader_map[stage_name]
-            shader_summary.append({
-                "stage": stage_name,
-                "resource_id": stage_info.get("resource_id"),
-                "entry_point": stage_info.get("entry_point", ""),
-                "read_only_resource_count": len(stage_info.get("resources", [])),
-                "read_write_resource_count": len(stage_info.get("uavs", [])),
-                "sampler_count": len(stage_info.get("samplers", [])),
-                "constant_buffer_count": len(stage_info.get("constant_buffers", [])),
-            })
-
-        pipeline_summary = {
-            "api": pipeline.get("api"),
-            "input_assembly": pipeline.get("input_assembly", {}),
-            "viewports": pipeline.get("viewports", []),
-            "render_targets": pipeline.get("render_targets", []),
-            "depth_target": pipeline.get("depth_target"),
-            "input_textures": pipeline.get("input_textures", []),
-            "output_textures": pipeline.get("output_textures", []),
-            "input_count": pipeline.get("input_count", 0),
-            "output_count": pipeline.get("output_count", 0),
-        }
+        for stage in pipeline["stages"]:
+            rows = [r for r in snapshot["bindings"] if r["stage"] == stage["stage"]]
+            shader = stage.get("shader", {}).get("resource")
+            if shader:
+                shader_summary.append({"stage": stage["stage"], "resource": shader,
+                                       "entry_point": stage["shader"]["entry_point"],
+                                       "binding_count": len(rows)})
+        pipeline_summary = pipeline
 
         return {
             "event_id": event_id,
@@ -88,6 +84,9 @@ class AnalysisService:
             "timing": timing_summary,
             "shaders": shader_summary,
             "pipeline": pipeline_summary,
+            "bindings": snapshot["bindings"],
+            "textures": snapshot["textures"],
+            "fixed_function": snapshot["fixed_function"],
             "mesh": mesh_summary,
         }
 
@@ -149,9 +148,15 @@ class AnalysisService:
         before_event_id=None,
         offset=0,
         limit=100,
+        categories=None,
     ):
         """Trace how a resource is used across matching events in the capture."""
         validate_page(offset, limit)
+        if categories is not None and (
+                not isinstance(categories, list) or
+                any(not isinstance(c, str) or c not in self.TIMELINE_CATEGORIES for c in categories)):
+            raise ValueError("INVALID_USAGE_CATEGORIES: expected a list of read, write, read_write, barrier, clear")
+        selected_categories = None if categories is None else set(categories)
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
@@ -168,6 +173,7 @@ class AnalysisService:
             )
             usage_entries = []
             usage_histogram = {}
+            category_counts = dict.fromkeys(self.TIMELINE_CATEGORIES, 0)
             roles = set()
 
             for usage in usages:
@@ -187,8 +193,12 @@ class AnalysisService:
                     continue
 
                 usage_name = self._enum_name(usage.usage)
+                category = self._classify_timeline_usage(usage_name)
+                if selected_categories is not None and category not in selected_categories:
+                    continue
                 access = self._classify_usage_access(usage_name)
                 usage_histogram[usage_name] = usage_histogram.get(usage_name, 0) + 1
+                category_counts[category] += 1
                 roles.update(self._usage_roles(usage_name))
 
                 entry = {
@@ -197,6 +207,7 @@ class AnalysisService:
                     "marker_path": action_info.get("marker_path", ""),
                     "flags": action_info.get("flags", []),
                     "usage": usage_name,
+                    "category": category,
                     "access": access,
                     "access_source": "usage_classification",
                 }
@@ -229,6 +240,7 @@ class AnalysisService:
                 "resource": resource_info,
                 "roles": sorted(roles),
                 "usage_counts": usage_histogram,
+                "category_counts": category_counts,
                 "usage_count": len(usage_entries),
                 "event_count": len({item["event_id"] for item in usage_entries}),
                 "read_count": len(reads),
@@ -415,23 +427,21 @@ class AnalysisService:
                     "event_b": right,
                 })
 
-        texture_inputs_a = self._index_bindings(
-            event_a.get("pipeline", {}).get("input_textures", []),
-            ("stage", "slot"),
-        )
-        texture_inputs_b = self._index_bindings(
-            event_b.get("pipeline", {}).get("input_textures", []),
-            ("stage", "slot"),
-        )
+        def bindings(event, role=None):
+            rows = event.get("textures" if role else "bindings", [])
+            # Tokens are action-scoped; compare semantic contents at binding positions.
+            return {r["binding_key"]: {k: v for k, v in r.items() if k != "binding_id"}
+                    for r in rows if role is None or role in r["roles"]}
 
-        output_textures_a = self._index_bindings(
-            event_a.get("pipeline", {}).get("output_textures", []),
-            ("type", "index"),
-        )
-        output_textures_b = self._index_bindings(
-            event_b.get("pipeline", {}).get("output_textures", []),
-            ("type", "index"),
-        )
+        texture_inputs_a, texture_inputs_b = bindings(event_a, "input"), bindings(event_b, "input")
+        output_textures_a, output_textures_b = bindings(event_a, "output"), bindings(event_b, "output")
+
+        def without_tokens(value):
+            if isinstance(value, dict):
+                return {k: without_tokens(v) for k, v in value.items() if k != "binding_id"}
+            if isinstance(value, list):
+                return [without_tokens(v) for v in value]
+            return value
 
         draw_parameter_differences = {}
         for key in (
@@ -483,6 +493,10 @@ class AnalysisService:
                 "output_texture_changes": self._diff_indexed_bindings(
                     output_textures_a, output_textures_b
                 ),
+                "binding_changes": self._diff_indexed_bindings(bindings(event_a), bindings(event_b)),
+                "fixed_function_changes": self._diff_indexed_bindings(
+                    without_tokens(event_a.get("fixed_function", {})),
+                    without_tokens(event_b.get("fixed_function", {}))),
                 "draw_parameter_changes": draw_parameter_differences,
                 "mesh_changes": mesh_differences,
                 "timing_delta_ms": timing_delta_ms,
@@ -924,6 +938,27 @@ class AnalysisService:
         if "." in text:
             return text.split(".")[-1]
         return text
+
+    @staticmethod
+    def _classify_timeline_usage(usage_name):
+        """Match TimelineBar::paintEvent's resource-usage legend, including its fallback.
+
+        Reference: qrenderdoc/Windows/TimelineBar.cpp in RenderDoc's v1.x branch.
+        This presentation category is separate from dependency/access semantics.
+        """
+        if usage_name in (
+                "VS_RWResource", "HS_RWResource", "DS_RWResource", "GS_RWResource",
+                "PS_RWResource", "CS_RWResource", "TS_RWResource", "MS_RWResource",
+                "All_RWResource", "GenMips", "Copy", "Resolve"):
+            return "read_write"
+        if usage_name in ("StreamOut", "ResolveDst", "ColorTarget", "DepthStencilTarget",
+                          "CopyDst", "CPUWrite"):
+            return "write"
+        if usage_name in ("Clear", "Discard"):
+            return "clear"
+        if usage_name == "Barrier":
+            return "barrier"
+        return "read"
 
     @staticmethod
     def _classify_usage_access(usage_name):

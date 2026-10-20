@@ -7,6 +7,8 @@ import base64
 
 import renderdoc as rd
 
+from .replay_query import at_event
+
 from ..utils import Parsers
 from .resource_catalog import (
     build_catalog, enum_name, identity, paginate, query_usage,
@@ -245,6 +247,7 @@ class ResourceService:
         mip=0,
         slice_index=0,
         alpha_mode="preserve",
+        action_event_id=None,
     ):
         """
         Save texture to file.
@@ -305,7 +308,9 @@ class ResourceService:
                 os.makedirs(output_dir, exist_ok=True)
 
             # Save texture
-            controller.SaveTexture(tex_save, output_path)
+            saved = controller.SaveTexture(tex_save, output_path)
+            if not saved.OK():
+                raise RuntimeError("TEXTURE_SAVE_FAILED: %s" % saved.Message())
 
             result["success"] = True
             result["output_path"] = output_path
@@ -316,7 +321,15 @@ class ResourceService:
             result["mip"] = mip
             result["slice"] = slice_index
 
-        self._invoke(callback)
+        def scoped(controller, event):
+            callback(controller)
+            if "data" in result and isinstance(result["data"], dict):
+                result["data"]["action_event_id"] = event
+                result["data"]["event_phase"] = "after"
+            else:
+                result["action_event_id"] = event
+                result["event_phase"] = "after"
+        at_event(self.ctx, self._invoke, action_event_id, scoped)
 
         if result["error"]:
             raise ValueError(result["error"])
@@ -403,7 +416,7 @@ class ResourceService:
             raise ValueError(result["error"])
         return result["texture"]
 
-    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None):
+    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None, action_event_id=None):
         """Get texture pixel data."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
@@ -429,7 +442,7 @@ class ResourceService:
             max_slices = tex_desc.arraysize
             if tex_desc.cubemap:
                 max_slices = tex_desc.arraysize * 6
-            if slice < 0 or (max_slices > 1 and slice >= max_slices):
+            if slice < 0 or slice >= max_slices:
                 result["error"] = "INVALID_SLICE: %d (texture has %d slices)" % (
                     slice,
                     max_slices,
@@ -437,7 +450,7 @@ class ResourceService:
                 return
 
             # Validate sample for MSAA
-            if sample < 0 or (tex_desc.msSamp > 1 and sample >= tex_desc.msSamp):
+            if sample < 0 or sample >= max(1, tex_desc.msSamp):
                 result["error"] = "INVALID_SAMPLE: %d (texture has %d samples)" % (
                     sample,
                     tex_desc.msSamp,
@@ -503,7 +516,15 @@ class ResourceService:
                 "content_base64": base64.b64encode(data).decode("ascii"),
             }
 
-        self._invoke(callback)
+        def scoped(controller, event):
+            callback(controller)
+            if "data" in result and isinstance(result["data"], dict):
+                result["data"]["action_event_id"] = event
+                result["data"]["event_phase"] = "after"
+            else:
+                result["action_event_id"] = event
+                result["event_phase"] = "after"
+        at_event(self.ctx, self._invoke, action_event_id, scoped)
 
         if result["error"]:
             raise ValueError(result["error"])

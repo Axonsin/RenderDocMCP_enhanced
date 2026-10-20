@@ -181,12 +181,17 @@ The entire MCP toolset is organized into three capability tiers:
 
 #### Pipeline State
 
-- `get_pipeline_state` - Get full pipeline state with concise input/output texture summaries
-- `get_shader_info` - Get shader disassembly, constant buffers, and bindings
+- `get_pipeline_state` - Get a compact action pipeline overview and diagnostics
+- `get_pipeline_stage` - Inspect one stage and its resource/fixed-function sections
+- `inspect_pipeline_binding` - Inspect binding ranges and expand constant variables by path
+- `get_action_textures` - List action texture inputs/outputs with stage labels and capture resource identities
+- `get_shader_info` - Get shader identity, entry point and disassembly
 - `get_shader_source` - Get original shader source text when RenderDoc preserves text-backed source
 - `get_shader_edit_context` - Prepare editable GLSL/SPIR-V text and its compilation path
 - `replace_shader` / `revert_shader` - Compile/apply or restore a shader in the current capture session
 - `list_shader_replacements` / `export_shader_source` - Query replacement state or export UTF-8 source
+
+Breaking change: `get_pipeline_state` now requires `action_event_id`; use the stage/texture tools for binding rows. `get_texture_data` and `save_texture` accept optional `action_event_id` for pixels after that action. All new pipeline reads restore the UI replay event. Native detail support is deepest on Vulkan.
 
 Shader replacement affects every draw using the original resource and does not write the `.rdc` file.
 Original GLSL, SPIRV-Cross GLSL and spirv-dis assembly are supported; HLSL / DXBC / DXIL editing
@@ -203,6 +208,7 @@ is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader
 #### Action Metadata
 
 - `get_draw_call_details` - Get detailed information about a specific draw call
+- `get_action_api_calls` - List an action's API calls and expand parameter trees like API Inspector
 - `get_action_timings` - Get GPU timings for actions
 
 #### Composite Analysis
@@ -210,7 +216,7 @@ is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader
 Cross-dimensional queries that orchestrate multiple services on top of atomic tools, providing a quick global view.
 
 - `inspect_event` - Inspect one event with compact details, timing, shader summaries, pipeline summaries, and mesh summary
-- `trace_resource_usage` - Trace where a resource is read, written, and consumed across matching events
+- `trace_resource_usage` - Timeline-aligned categories/counts and optional `categories` filtering; raw usage is retained
 - `trace_event_dependencies` - Trace the immediate resource dependencies and likely producer events of one event
 - `diff_events` - Compare two events and highlight meaningful state differences
 - `analyze_pass` - Summarize one marker subtree or pass as a coherent workload

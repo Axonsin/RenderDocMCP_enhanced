@@ -50,14 +50,15 @@ RenderDocMCP/
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
 | `search_draws` | 按 shader/texture/resource 搜索 draw call |
 | `get_draw_call_details` | 特定 draw call 的详情 |
+| `get_action_api_calls` | action 关联 API 调用列表及按路径展开的参数树（API Inspector） |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
 | `inspect_event` | 单个 event 的紧凑详情（时间、shader、管线、网格摘要） |
 | `summarize_capture` | 捕获整体摘要 |
-| `trace_resource_usage` | 追踪资源在各 event 中的读取/写入/消费 |
+| `trace_resource_usage` | 资源整帧 usage，含 Timeline 五类分类、计数和筛选 |
 | `trace_event_dependencies` | 追踪单个 event 的直接资源依赖与生产者 |
 | `diff_events` | 比较两个 event 的状态差异 |
 | `analyze_pass` | 将一个 marker 子树/pass 汇总为整体工作负载 |
-| `get_shader_info` | 着色器源码/常量缓冲区 |
+| `get_shader_info` | Shader 身份、入口点和反汇编 |
 | `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
 | `get_shader_edit_context` | 获取 GLSL/SPIR-V 的可编辑文本及编译路径 |
 | `replace_shader` | 编译并应用 shader 替换（当前捕获会话内生效） |
@@ -71,7 +72,10 @@ RenderDocMCP/
 | `get_texture_info` | 纹理元数据 |
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
-| `get_pipeline_state` | 管线状态（含 `input_textures`/`output_textures` 摘要） |
+| `get_pipeline_state` | Action 管线总览、阶段状态和诊断 |
+| `get_pipeline_stage` | 阶段绑定、descriptor 信息和固定功能状态 |
+| `inspect_pipeline_binding` | 绑定范围、资源身份和常量树展开 |
+| `get_action_textures` | Action 输入/输出纹理与 FS/FB 等阶段标签 |
 | `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件 |
@@ -139,25 +143,27 @@ search_draws(by="resource", query="ResourceId::12345")
 # }
 ```
 
-### 事件纹理输入/输出
-
-纹理摘要已并入 `get_pipeline_state` 响应中。
+### 管线与事件纹理
 
 ```python
-get_pipeline_state(event_id=150)
-# → { ..., "input_textures": [
-#       {"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", "stage": "ShaderStage.Pixel", "slot": 0},
-#       ...
-#     ], "output_textures": [
-#       {"resource_id": "ResourceId::3001", "name": "Backbuffer Color", "type": "render_target", "index": 0},
-#       {"resource_id": "ResourceId::2949", "name": "DepthBuffer", "type": "depth_target"},
-#     ], "input_count": 3, "output_count": 2
-# }
+get_pipeline_state(action_event_id=343)
+get_pipeline_stage(action_event_id=343, stage="FS", section="constant_buffers")
+# binding_id 使用上一条响应返回的值。
+inspect_pipeline_binding(action_event_id=343, binding_id="<returned-id>", section="variables", child_path=[])
+get_action_textures(action_event_id=343, direction="input", stage="FS")
+get_action_textures(action_event_id=343, direction="output")
+get_texture_data(resource_id="ResourceId::487", action_event_id=343)
 ```
 
-**说明**：
-- `input_textures`: 通过 SRV 绑定到 shader 的纹理（只读输入），去重后按 stage 列出
-- `output_textures`: Render target（`type: "render_target"`）和 Depth target（`type: "depth_target"`）
+- Pipeline State 使用总览→阶段→绑定详情；旧 event_id 参数与纹理聚合响应已移除。
+- 阶段和纹理列表支持 offset/limit（1–500），show_unused/show_empty 默认 false，异常条目仍保留。
+- 纹理列表按绑定保留多次引用，不按 resource_id 去重；read-write 同时匹配 input/output。
+- binding_id 限当前捕获/action/绑定内容；resource.resource_id 继续关联资源 Inspector 工具。
+- 常量范围包含 Vulkan dynamic offset；不要再次相加。变量只在显式 variables 查询时解码。
+- get_texture_data/save_texture 的可选 action_event_id 指定 action 执行后的内容，查询后恢复 UI replay 事件。
+- inspect_event/diff_events 使用完整共享快照，包含 buffer/sampler/固定功能状态，比较不受公开工具分页影响。
+- get_shader_info 仅保留 shader 身份、入口点和反汇编。
+- trace_resource_usage(resource_id, categories=["barrier", "clear"]) 按 Timeline 分类筛选；category_counts 包含 read/write/read_write/barrier/clear 五类，统计全部筛选后分页前的 usage 记录。GenMips 属于 read_write，Discard 属于 clear；原始 usage 和旧 access 语义保留。
 
 ### GPU 时间获取
 
@@ -182,6 +188,7 @@ get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"
 # 将纹理保存为 PNG 文件
 save_texture(
     resource_id="ResourceId::2495",
+    action_event_id=343,
     output_path="D:/output/texture.png"
 )
 # → {"success": true, "dimensions": [1920, 1080], "output_path": "D:/output/texture.png"}
@@ -189,6 +196,7 @@ save_texture(
 # 指定格式和选项
 save_texture(
     resource_id="ResourceId::2495",
+    action_event_id=343,
     output_path="D:/output/texture.exr",
     format_type="EXR",           # PNG, JPG, BMP, TGA, EXR, DDS, HDR
     mip=-1,                      # -1 表示导出所有 mip 级别

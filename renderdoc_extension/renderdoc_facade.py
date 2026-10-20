@@ -62,6 +62,7 @@ class RenderDocFacade:
     def dispose(self):
         """Revert owned shader edits before the extension unloads."""
         self._shader_edit.dispose()
+        self._pipeline.dispose()
 
     # ==================== Capture Management ====================
 
@@ -108,6 +109,11 @@ class RenderDocFacade:
         """Get detailed information about a specific draw call"""
         return self._action.get_draw_call_details(event_id)
 
+    def get_action_api_calls(self, action_event_id, api_event_id=None, child_path=None,
+                             offset=0, limit=50):
+        return self._action.get_action_api_calls(
+            action_event_id, api_event_id, child_path, offset, limit)
+
     def get_action_timings(self, event_ids=None, marker_filter=None, exclude_markers=None):
         """Get GPU timing information for actions"""
         return self._action.get_action_timings(
@@ -153,9 +159,9 @@ class RenderDocFacade:
         """Get texture metadata"""
         return self._resource.get_texture_info(resource_id)
 
-    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None):
+    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None, action_event_id=None):
         """Get texture pixel data"""
-        return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice)
+        return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice, action_event_id)
 
     def save_texture(
         self,
@@ -165,6 +171,7 @@ class RenderDocFacade:
         mip=0,
         slice_index=0,
         alpha_mode="preserve",
+        action_event_id=None,
     ):
         """Save texture to file"""
         return self._resource.save_texture(
@@ -174,6 +181,7 @@ class RenderDocFacade:
             mip=mip,
             slice_index=slice_index,
             alpha_mode=alpha_mode,
+            action_event_id=action_event_id,
         )
 
     # ==================== Pipeline Operations ====================
@@ -201,9 +209,23 @@ class RenderDocFacade:
     def export_shader_source(self, edit_id, output_path):
         return self._shader_edit.export_shader_source(edit_id, output_path)
 
-    def get_pipeline_state(self, event_id):
-        """Get full pipeline state at an event"""
-        return self._pipeline.get_pipeline_state(event_id)
+    def get_pipeline_state(self, action_event_id):
+        return self._pipeline.get_pipeline_state(action_event_id)
+
+    def get_pipeline_stage(self, action_event_id, stage, section="overview",
+                           show_unused=False, show_empty=False, offset=0, limit=50):
+        return self._pipeline.get_pipeline_stage(action_event_id, stage, section,
+                                                show_unused, show_empty, offset, limit)
+
+    def inspect_pipeline_binding(self, action_event_id, binding_id, section="details",
+                                 child_path=None, offset=0, limit=50):
+        return self._pipeline.inspect_pipeline_binding(action_event_id, binding_id, section,
+                                                      child_path, offset, limit)
+
+    def get_action_textures(self, action_event_id, direction="all", stage=None,
+                            show_unused=False, show_empty=False, offset=0, limit=50):
+        return self._pipeline.get_action_textures(action_event_id, direction, stage,
+                                                 show_unused, show_empty, offset, limit)
 
     def trace_resource_usage(
         self,
@@ -215,6 +237,7 @@ class RenderDocFacade:
         before_event_id=None,
         offset=0,
         limit=100,
+        categories=None,
     ):
         """Trace how a resource is used across matching events."""
         return self._analysis.trace_resource_usage(
@@ -226,6 +249,7 @@ class RenderDocFacade:
             before_event_id=before_event_id,
             offset=offset,
             limit=limit,
+            categories=categories,
         )
 
     def trace_event_dependencies(self, event_id):

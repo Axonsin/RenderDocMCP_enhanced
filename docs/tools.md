@@ -223,7 +223,7 @@ get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, chi
 
 Invalid pagination, sort keys, resource types, chunk ownership and paths produce invalid-parameter errors. Missing resources and capture/query failures produce runtime errors. Only textures/buffers (including swapchain images with texture descriptors) have usage queries in this version. Initialization describes creation/setup, not current buffer or texture contents.
 
-**Migration:** `list_resources` now defaults to all objects and returns compact identities; move width/format/size reads to `inspect_resource(...)["metadata"]` (or existing `get_texture_info`). `trace_resource_usage` returns one paginated `events` list instead of duplicate `reads`/`writes` lists; filter by `access` as needed and follow `has_more`. Its `resource` is also a compact identity. `event_count` counts distinct EIDs; `usage_count`/`total_count` count usage records.
+**Migration:** `list_resources` now defaults to all objects and returns compact identities; move width/format/size reads to `inspect_resource(...)["metadata"]` (or existing `get_texture_info`). `trace_resource_usage` returns one paginated `events` list instead of duplicate `reads`/`writes` lists; use Timeline `category` / the `categories` filter and follow `has_more`. Its `resource` is also a compact identity. `event_count` counts distinct EIDs; `usage_count`/`total_count` count usage records.
 
 After installing/reloading the updated extension and restarting the MCP server, open a capture and run `python scripts/validate_resources_live.py --resource-id ResourceId::86983` (substitute an ID from that capture). The read-only script prints a JSON report for comparison with Resource Inspector and leaves the current selection unchanged. Automated tests use simulated bindings and real file IPC; they do not replace this live check.
 
@@ -261,7 +261,7 @@ edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
 # Modify edit["source_text"], preserving bindings and stage interfaces.
 result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
 # Check last_attempt_status == "applied" and inspect warnings/errors in log.
-get_pipeline_state(event_id=123)
+get_pipeline_state(action_event_id=123)
 # Compare the same output texture using get_texture_data / save_texture.
 export_shader_source(edit_id=edit["edit_id"], output_path="D:/captures/edited_shader.glsl")
 revert_shader(edit_id=edit["edit_id"])
@@ -309,34 +309,126 @@ is a separate-instance local replay helper and refuses to load hkrpg captures lo
 
 #### `get_pipeline_state`
 
-Get the full graphics pipeline state at a specific event. Includes bound shaders, resource bindings, samplers, constant buffers, render targets, input/output texture summaries, viewports, and input assembly state.
+`get_pipeline_state(action_event_id)` returns a compact Pipeline State overview: API,
+pipeline identities, stage status, available sections, binding counts and diagnostics.
+It requires an exact action EID. The former `event_id` argument and aggregate
+`shaders` / `input_textures` / `output_textures` response fields have been removed.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | The event ID to inspect |
+#### `get_pipeline_stage`
 
-**Returns:** Detailed pipeline state with `input_textures` / `output_textures` summaries.
-
-**Example:**
+```python
+get_pipeline_state(action_event_id=343)
+get_pipeline_stage(action_event_id=343, stage="FS")
+get_pipeline_stage(action_event_id=343, stage="FS", section="constant_buffers", offset=0, limit=50)
 ```
-get_pipeline_state(event_id=123)
-# → { ..., "input_textures": [{"resource_id": "ResourceId::2495", "name": "CharacterDiffuse", ...}],
-#        "output_textures": [{"resource_id": "ResourceId::3001", "type": "render_target", ...}],
-#        "input_count": 3, "output_count": 2 }
+
+Arguments: `action_event_id`, `stage`, `section="overview"`, `show_unused=False`,
+`show_empty=False`, `offset=0`, `limit=50` (1–500). Overview advertises sections.
+Stage identifiers: `vertex_input`, `vertex`, `tess_control`, `tess_eval`, `geometry`,
+`task`, `mesh`, `rasterizer`, `fragment`, `framebuffer`, `compute`. Aliases include
+VS, HS/TCS, DS/TES, GS, AS/TS, MS, FS/PS, CS and FB/OM; display labels follow the API.
+
+| Stage | Sections |
+|---|---|
+| Vertex Input | `assembly`, `attributes`, `buffers` |
+| Shader stages | `shader`, `descriptors`, `resources`, `samplers`, `constant_buffers`, `push_constants` |
+| Rasterizer | `rasterizer`, `viewports`, `scissors`, `multisample` |
+| Framebuffer | `attachments`, `blend`, `depth_stencil` |
+| Compute | Shader sections plus `dispatch` |
+
+Lists return `items`, `total_count`, `offset`, `limit`, `returned_count`, `has_more`.
+Stage state distinguishes `enabled`, `disabled`, `not_applicable`, `unavailable`.
+Section failures return `available=false` with a reason/errors; partial resource rows
+remain visible. Vulkan includes native descriptor sets/layouts, dynamic offsets,
+descriptor-buffer metadata, rasterizer, multisample and renderpass state. Other APIs
+expose common bindings/state and explicitly mark unsupported native details.
+Default filters hide definitely unused bindings and irrelevant empty slots, while
+preserving missing-required and invalid-range diagnostics. `possibly_used` is not
+proof of dynamic GPU access. Counts in overview include hidden bindings.
+
+#### `inspect_pipeline_binding`
+
+```python
+rows = get_pipeline_stage(action_event_id=343, stage="FS", section="constant_buffers")
+binding_id = rows["items"][0]["binding_id"]
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id)
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id, section="variables")
+# Expand using child_path returned by the previous query.
+inspect_pipeline_binding(action_event_id=343, binding_id=binding_id,
+                         section="variables", child_path=[0], offset=0, limit=50)
 ```
+
+Arguments: `action_event_id`, `binding_id`, `section="details"|"variables"`,
+`child_path=None`, `offset=0`, `limit=50`. Details do not decode variables.
+Bindings retain stage, native set/space and binding, reflection index, array element,
+shader declaration name and resource identity. Buffer ranges are effective byte
+ranges; Vulkan dynamic offsets are already included and never added twice.
+`constant_buffer_range_too_small` reports `required_bytes` and `provided_bytes`
+(e.g. 720 vs 512), not a claim that execution performed an out-of-bounds read.
+Direct constants do not require a buffer resource. `push_constants` includes
+non-buffer-backed constant blocks; their reflected names describe the API-specific kind.
+Variables expand one level with reflected layout, scalar/vector/matrix values and
+integer child paths. Large structs/arrays stay paginated; binary buffer decoding
+remains the responsibility of existing buffer tools.
+
+`binding_id` is opaque and valid only for the current capture, action and binding
+contents. Reloading even the same capture invalidates IDs. `binding_key` identifies
+a semantic location for comparisons; it is not an inspector argument.
+Use `resource.resource_id` for `inspect_resource`, `trace_resource_usage`, and
+`get_resource_initialization`. Resource names are display/search values, not unique IDs.
+
+#### `get_action_textures`
+
+```python
+get_action_textures(action_event_id=343, direction="all", offset=0, limit=50)
+get_action_textures(action_event_id=343, direction="input", stage="FS")
+get_action_textures(action_event_id=343, direction="output")
+get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice=0)
+save_texture(action_event_id=343, resource_id="ResourceId::487",
+             output_path="D:/output/texture.png")
+```
+
+Arguments: `action_event_id`, `direction="all"|"input"|"output"`, optional `stage`,
+`show_unused=False`, `show_empty=False`, `offset=0`, `limit=50`.
+Returns one paginated list of bindings with stage labels (FS/FB etc.), declaration
+names, capture resource identities, roles, dimensions/format and view subresources.
+The same texture at different stages/slots/array elements remains separate.
+Read-write images match both direction filters but occur once in `all`.
+Framebuffer outputs describe bindings, not guaranteed writes. Depth/stencil write
+state and available attachment-access information are reported separately.
+Copy/resolve use explicit action source/destination subresources. Clear reports its
+known target, with unavailable subresource detail marked explicitly. Other actions
+never inherit stale shader bindings as their own texture inputs.
+
+No image preview is generated. `get_texture_data` and `save_texture` accept optional
+`action_event_id`: supplied means pixels **after** that action; omitted means the
+current UI replay event. Responses include the event and `event_phase="after"`.
+A texture marked input is still read at the requested after-action event, not a
+historical snapshot of each shader access. Queries restore the UI replay event
+on success and failure without changing the UI selection.
+
+`inspect_event` now returns overview `pipeline`, unpaged `bindings` / `textures`
+and `fixed_function`. `diff_events` compares complete binding positions and ranges,
+including buffers/samplers and fixed-function state, ignoring action-scoped tokens.
+`get_shader_info` no longer returns constant values or resource binding collections.
+
+Automated tests: `python -m unittest discover -s tests -v`.
+After manually installing/reloading the updated extension, compare the live UI with
+`python scripts/validate_pipeline_live.py --action-event-id 343 --stage FS`.
+The script reads the already-open capture and does not export images or select a UI event.
 
 ---
 
 #### `get_shader_info`
 
-Get shader information for a specific stage at a given event. Includes disassembly, constant buffer values, and resource bindings.
+Get shader information for a specific stage at a given event. Includes shader identity, entry point and disassembly; bindings and constants are available through the pipeline tools.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `event_id` | `int` | Yes | The event ID |
 | `stage` | `str` | Yes | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
 
-**Returns:** Shader resource ID, entry point, stage, disassembly, constant buffers, resource bindings.
+**Returns:** Shader resource ID, entry point, stage and disassembly.
 
 **Example:**
 ```
@@ -410,6 +502,7 @@ Read the pixel data of a texture resource. Returns base64-encoded bytes.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `resource_id` | `str` | Yes | | The resource ID |
+| `action_event_id` | `int` | No | current UI event | Read after this exact action; restore replay afterwards |
 | `mip` | `int` | No | `0` | Mip level to retrieve |
 | `slice` | `int` | No | `0` | Array slice or cube face index (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-) |
 | `sample` | `int` | No | `0` | MSAA sample index |
@@ -420,16 +513,16 @@ Read the pixel data of a texture resource. Returns base64-encoded bytes.
 **Examples:**
 ```
 # Get mip 0 of a 2D texture
-get_texture_data(resource_id="ResourceId::123")
+get_texture_data(action_event_id=123, resource_id="ResourceId::123")
 
 # Get a specific mip level
-get_texture_data(resource_id="ResourceId::123", mip=2)
+get_texture_data(action_event_id=123, resource_id="ResourceId::123", mip=2)
 
 # Get a specific face of a cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(resource_id="ResourceId::456", slice=3)
+get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice=3)
 
 # Get a specific depth slice of a 3D texture
-get_texture_data(resource_id="ResourceId::789", depth_slice=5)
+get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
 ```
 
 ---
@@ -508,6 +601,32 @@ get_mesh_data(event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMA
 ---
 
 ### Action Metadata
+
+#### `get_action_api_calls`
+
+Read the API Inspector data for a draw/dispatch action without changing the selected event.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `action_event_id` | `int` | Required | Exact action EID, not an intermediate state-setting API event |
+| `api_event_id` | `int` | `None` | Omit to list calls; select an item's `api_event_id` to expand its parameters |
+| `child_path` | `list[int]` | `[]` | Raw child-index path returned by a previous expansion |
+| `offset` | `int` | `0` | Offset in calls or visible immediate children |
+| `limit` | `int` | `50` | Page size, 1–500 |
+
+The list preserves `ActionDescription.events` order and includes all associated calls through pagination: the events since the previous action, not every historical state-setting call. Returns `action_event_id`, `action_name`, and paginated `items` with `api_event_id`, `name`, `chunk_index`, `available`, and raw `child_count` when available.
+
+Selecting `api_event_id` returns `api_call`, `node`, and paginated `children`. Parameter expansion shares the resource-initialization serializer: one level at a time, hidden children omitted, raw index paths preserved, resource IDs/names included, binary contents omitted, and text previews bounded to 4096 characters. Calls without structured chunks remain in the list with `available: false` and `reason: "no_chunk"` or `"invalid_chunk_index"`; selecting them returns `api_call` without a parameter tree. An API EID outside the requested action returns `INVALID_API_EVENT_ID`.
+
+```python
+get_action_api_calls(action_event_id=343)  # For example, API EIDs 340–343
+get_action_api_calls(action_event_id=343, offset=50)  # Continue if has_more is true
+get_action_api_calls(action_event_id=343, api_event_id=343)  # vkCmdDrawIndexed parameters
+# Use a child_path returned above to expand a specific parameter:
+get_action_api_calls(action_event_id=343, api_event_id=341, child_path=[0])
+```
+
+---
 
 #### `get_draw_call_details`
 
@@ -588,14 +707,28 @@ Trace how a resource is read, written, and consumed across matching events.
 | `event_id_min` | `int` | No | | Legacy lower event bound alias |
 | `event_id_max` | `int` | No | | Legacy upper event bound alias |
 | `before_event_id` | `int` | No | | Compute the latest prior writer before this event |
+| `categories` | `list[str]` | No | all | Timeline categories: `read`, `write`, `read_write`, `barrier`, `clear` |
 | `offset` | `int` | No | `0` | Offset after filtering |
 | `limit` | `int` | No | `100` | Page size, 1–500 |
 
 **Returns:** `available`, compact `resource`, paginated `events`, pagination fields, roles, usage/read/write counts, and writer summaries. Counts and writers cover all matching records before pagination. `before_event_id` only affects the prior-writer summary. Each event retains raw `usage`, optional `view_resource_id`, marker context and inferred `access` (`access_source: "usage_classification"`). Unknown actions retain EID/usage unless marker filters require known context. Unsupported objects return an explicit unavailable reason; successful empty queries remain available. UI EID-range merging is not performed.
 
+Each event includes `category`; `category_counts` always contains all five keys, including zeros, matching Timeline Reads / Writes / Read/Write / Barriers / Clears.
+
+- `GenMips`, `Copy`, `Resolve` and shader RWResource usages are `read_write`.
+- `Clear` and `Discard` are `clear`; `Barrier` is `barrier`.
+- StreamOut, ColorTarget, DepthStencilTarget, CopyDst, ResolveDst and CPUWrite are `write`; all remaining usages follow Timeline's default `read` branch.
+
+Selections in `categories` are ORed and combined with marker/event filters using AND. Omission selects all; `[]` selects none; invalid categories produce a parameter error. All counts, totals and writer summaries cover records **after all filters, before pagination**. Category counts measure usage records, not distinct EIDs or merged on-screen markers; multiple usages at one EID remain separate.
+
+Original `usage` and `usage_counts` are retained. Legacy `access`, `read_count` and `write_count` keep their existing dependency semantics, independent of Timeline presentation: Clear still counts as a write and GenMips retains access=write. Use `category` and `category_counts` to match the panel.
+
+Classification reference: [RenderDoc TimelineBar.cpp](https://github.com/baldurk/renderdoc/blob/v1.x/qrenderdoc/Windows/TimelineBar.cpp).
+
 **Example:**
 ```
 trace_resource_usage(resource_id="ResourceId::2495")
+trace_resource_usage(resource_id="ResourceId::2495", categories=["barrier", "clear"], limit=50)
 trace_resource_usage(resource_id="ResourceId::2495", marker_filter="Forward", before_event_id=1517)
 ```
 
@@ -666,6 +799,7 @@ Save a texture to an image file. Handles format conversion automatically.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `resource_id` | `str` | Yes | | The resource ID (e.g. `"ResourceId::2495"`) |
+| `action_event_id` | `int` | No | current UI event | Read after this exact action; restore replay afterwards |
 | `output_path` | `str` | Yes | | Output file path (e.g. `"D:/output/texture.png"`) |
 | `format_type` | `str` | No | `"PNG"` | Output format: `"PNG"`, `"JPG"`, `"BMP"`, `"TGA"`, `"EXR"`, `"DDS"`, `"HDR"` |
 | `mip` | `int` | No | `0` | Mip level to save (`-1` = all mips) |
@@ -677,13 +811,13 @@ Save a texture to an image file. Handles format conversion automatically.
 **Examples:**
 ```
 # Save as PNG
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.png")
+save_texture(action_event_id=123, resource_id="ResourceId::123", output_path="D:/output/texture.png")
 
 # Save as JPG with alpha blending
-save_texture(resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG", alpha_mode="blend_to_black")
+save_texture(action_event_id=123, resource_id="ResourceId::123", output_path="D:/output/texture.jpg", format_type="JPG", alpha_mode="blend_to_black")
 
 # Export all mip levels as DDS
-save_texture(resource_id="ResourceId::2495", output_path="D:/output/texture.dds", format_type="DDS", mip=-1)
+save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D:/output/texture.dds", format_type="DDS", mip=-1)
 ```
 
 ---

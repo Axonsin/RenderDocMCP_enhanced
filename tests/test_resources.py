@@ -54,13 +54,16 @@ def modules():
                              "renderdoc_extension/utils/parsers.py").Parsers
         utils.Helpers = NS()
         utils.Serializers = NS(serialize_flags=lambda value: [])
-        for name in ("resource_catalog", "structured_data", "resource_service", "analysis_service"):
+        for name in ("resource_catalog", "structured_data", "replay_query", "resource_service", "analysis_service",
+                     "action_service"):
             module = load("renderdoc_extension.services." + name,
                           "renderdoc_extension/services/" + name + ".py")
             if name == "resource_service":
                 resource = module
             if name == "analysis_service":
                 analysis = module
+            if name == "action_service":
+                action = module
         services = packages["renderdoc_extension.services"]
         for name in ("CaptureManager", "ActionService", "SearchService", "ResourceService",
                      "PipelineService", "ShaderEditService", "MeshService", "AnalysisService"):
@@ -69,10 +72,10 @@ def modules():
                       "renderdoc_extension/renderdoc_facade.py")
         handler = load("renderdoc_extension.request_handler",
                        "renderdoc_extension/request_handler.py")
-    return resource, analysis, facade, handler
+    return resource, analysis, facade, handler, action
 
 
-RESOURCE, ANALYSIS, FACADE, HANDLER = modules()
+RESOURCE, ANALYSIS, FACADE, HANDLER, ACTION = modules()
 
 
 class Node:
@@ -186,6 +189,7 @@ class ResourceTests(unittest.TestCase):
         self.analysis = ANALYSIS.AnalysisService(self.ctx, self.invoke, None, None, self.service, None)
         self.facade = FACADE.RenderDocFacade.__new__(FACADE.RenderDocFacade)
         self.facade._resource, self.facade._analysis = self.service, self.analysis
+        self.facade._action = ACTION.ActionService(self.ctx, self.invoke)
         self.handler = HANDLER.RequestHandler(self.facade)
 
     def name(self, rid):
@@ -273,6 +277,71 @@ class ResourceTests(unittest.TestCase):
         result = self.analysis.trace_resource_usage("86983", limit=1)
         self.assertEqual((result["usage_count"], result["event_count"]), (4, 3))
         self.assertEqual(self.service.inspect_resource("86983")["usage"]["event_count"], 3)
+
+    def test_timeline_mapping_covers_renderdoc_usage_enum(self):
+        usage_enum = load("timeline_usage_enum", "stubs/renderdoc/_ResourceUsage.py").ResourceUsage
+        groups = {
+            "read": ("Unused VertexBuffer IndexBuffer VS_Constants HS_Constants DS_Constants "
+                     "GS_Constants PS_Constants CS_Constants TS_Constants MS_Constants All_Constants "
+                     "VS_Resource HS_Resource DS_Resource GS_Resource PS_Resource CS_Resource "
+                     "TS_Resource MS_Resource All_Resource InputTarget Indirect ResolveSrc CopySrc"),
+            "write": "StreamOut ColorTarget DepthStencilTarget ResolveDst CopyDst CPUWrite",
+            "read_write": ("VS_RWResource HS_RWResource DS_RWResource GS_RWResource PS_RWResource "
+                           "CS_RWResource TS_RWResource MS_RWResource All_RWResource GenMips Copy Resolve"),
+            "barrier": "Barrier",
+            "clear": "Clear Discard",
+        }
+        expected = {name: category for category, names in groups.items() for name in names.split()}
+        self.assertEqual(set(expected), {item.name for item in usage_enum})
+        for name, category in expected.items():
+            with self.subTest(usage=name):
+                self.assertEqual(self.analysis._classify_timeline_usage(name), category)
+        # Timeline's final else branch also renders an unrecognised usage as Reads.
+        self.assertEqual(self.analysis._classify_timeline_usage("FutureUsage"), "read")
+
+    def test_timeline_counts_filters_and_original_usage(self):
+        values = [(10, "Clear"), (20, "Barrier"), (20, "GenMips"),
+                  (30, "Discard"), (30, "CopyDst"), (40, "PS_Resource"), (40, "FutureUsage")]
+        self.controller.usages = [NS(eventId=eid, usage=use, view=ResourceId(201))
+                                  for eid, use in values]
+        result = self.analysis.trace_resource_usage("86983", offset=1, limit=1)
+        self.assertEqual(result["category_counts"], {
+            "read": 2, "write": 1, "read_write": 1, "barrier": 1, "clear": 2})
+        self.assertEqual((result["usage_count"], result["event_count"]), (7, 4))
+        self.assertEqual(result["events"][0]["usage"], "Barrier")
+        self.assertEqual(result["events"][0]["category"], "barrier")
+        self.assertEqual(result["events"][0]["access"], "other")
+        self.assertEqual(result["events"][0]["view_resource_id"], "ResourceId::201")
+        result = self.analysis.trace_resource_usage(
+            "86983", categories=["clear", "barrier", "clear"], event_id_min=20,
+            before_event_id=31, limit=1)
+        self.assertEqual(result["category_counts"], {
+            "read": 0, "write": 0, "read_write": 0, "barrier": 1, "clear": 1})
+        self.assertEqual(result["usage_counts"], {"Barrier": 1, "Discard": 1})
+        self.assertEqual(result["latest_writer_before_event"]["event_id"], 30)
+        self.assertEqual(result["total_count"], 2)
+        self.assertTrue(result["has_more"])
+        result = self.analysis.trace_resource_usage(
+            "86983", categories=["read_write"], marker_filter="compute")
+        self.assertEqual(result["events"][0]["usage"], "GenMips")
+        self.assertEqual(result["events"][0]["category"], "read_write")
+        self.assertEqual(result["events"][0]["access"], "write")  # legacy semantics unchanged
+        result = self.analysis.trace_resource_usage("86983", categories=[])
+        self.assertTrue(result["available"])
+        self.assertEqual(result["total_count"], 0)
+        self.assertEqual(sum(result["category_counts"].values()), 0)
+        self.assertIsNone(result["latest_writer"])
+        result = self.analysis.trace_resource_usage("86983", categories=["clear"], offset=100)
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["category_counts"]["clear"], 2)
+
+    def test_invalid_timeline_categories_rejected_by_handler(self):
+        for categories in ("clear", ["Clear"], ["other"], [None], [1], {}):
+            response = self.handler.handle({
+                "id": "invalid-category", "method": "trace_resource_usage",
+                "params": {"resource_id": "86983", "categories": categories}})
+            self.assertEqual(response["error"]["code"], -32602)
+            self.assertIn("INVALID_USAGE_CATEGORIES", response["error"]["message"])
 
     def test_initialization_paths_hidden_fields_and_duplicate_names(self):
         root = self.service.get_resource_initialization("86983", 0)
@@ -380,10 +449,79 @@ class ResourceTests(unittest.TestCase):
                 self.assertEqual(server.get_resource_initialization("86983", 1, [1])["node"]["value"], 98304)
                 self.assertEqual(server.trace_resource_usage("86983", offset=1, limit=1)
                                  ["events"][0]["event_id"], 20)
+                usage = server.trace_resource_usage("86983", categories=["clear"], limit=1)
+                self.assertEqual(usage["events"][0]["usage"], "Clear")
+                self.assertEqual(usage["category_counts"]["clear"], 1)
+                self.assertEqual(usage["total_count"], 1)
+                self.assertEqual(server.trace_resource_usage("86983", categories=[])["events"], [])
+                self.prepare_api_action()
+                self.assertEqual(server.get_action_api_calls(action_event_id=343)["total_count"], 4)
+                self.assertEqual(server.get_action_api_calls(action_event_id=343, api_event_id=343, child_path=[0])["node"]["value"], 29835)
                 with self.assertRaises(CLIENT.RenderDocBridgeError):
                     server.get_resource_initialization("86983", 2)
         finally:
             fixture.tearDown()
+
+    def prepare_api_action(self):
+        self.controller.chunks = [
+            Node("vkCmdBindPipeline", Basic.Chunk, children=[
+                Node("pipeline", Basic.Resource, ResourceId(200))]),
+            Node("vkCmdSetVertexInputEXT", Basic.Chunk, children=[
+                Node("bindings", Basic.Array, children=[
+                    Node("binding", children=[Node("stride", Basic.UnsignedInteger, 32)])])]),
+            Node("vkCmdBindDescriptorSets", Basic.Chunk),
+            Node("vkCmdDrawIndexed", Basic.Chunk, children=[
+                Node("indexCount", Basic.UnsignedInteger, 29835),
+                Node("instanceCount", Basic.UnsignedInteger, 1)]),
+        ]
+        action = NS(eventId=343, GetName=lambda _: "vkCmdDrawIndexed(29835, 1)",
+                    events=[NS(eventId=340 + i, chunkIndex=i) for i in range(4)])
+        self.ctx.GetAction = lambda eid: action if eid == 343 else None
+        return action
+
+    def test_api_inspector_list_pagination_and_parameter_expansion(self):
+        self.prepare_api_action()
+        service = self.facade._action
+        calls = service.get_action_api_calls(343)
+        self.assertEqual([e["api_event_id"] for e in calls["items"]], [340, 341, 342, 343])
+        self.assertEqual(calls["items"][0]["name"], "vkCmdBindPipeline")
+        page = service.get_action_api_calls(343, offset=2, limit=1)
+        self.assertEqual(page["items"][0]["api_event_id"], 342)
+        self.assertTrue(page["has_more"])
+        self.assertEqual(service.get_action_api_calls(343, 343)["children"]["items"][0]["value"], 29835)
+        self.assertEqual(service.get_action_api_calls(343, 341, [0, 0, 0])["node"]["value"], 32)
+        resource = service.get_action_api_calls(343, 340)["children"]["items"][0]["value"]
+        self.assertEqual(resource["resource_id"], "ResourceId::200")
+        self.assertEqual(resource["name"], "Shader 200")
+        json.dumps(calls, allow_nan=False)
+        # Controller has no SetFrameEvent: any replay-selection mutation would fail.
+
+    def test_api_inspector_missing_chunks_empty_actions_and_ownership(self):
+        action = self.prepare_api_action()
+        service = self.facade._action
+        action.events[0].chunkIndex = 0xFFFFFFFF
+        action.events[1].chunkIndex = 999
+        items = service.get_action_api_calls(343)["items"]
+        self.assertEqual(items[0]["reason"], "no_chunk")
+        self.assertEqual(items[1]["reason"], "invalid_chunk_index")
+        expanded = service.get_action_api_calls(343, 340)
+        self.assertFalse(expanded["api_call"]["available"])
+        self.assertNotIn("node", expanded)
+        for params in [
+            {"action_event_id": 342}, {"action_event_id": 343, "api_event_id": 999},
+            {"action_event_id": 343, "api_event_id": 343, "child_path": [9]},
+            {"action_event_id": 343, "child_path": [0]}, {"action_event_id": 343, "limit": 0},
+            {"action_event_id": True}, {"action_event_id": 343, "api_event_id": False},
+        ]:
+            with self.subTest(params=params):
+                response = self.handler.handle({"id": 1, "method": "get_action_api_calls",
+                                                "params": params})
+                self.assertEqual(response["error"]["code"], -32602)
+        action.events = []
+        self.assertEqual(service.get_action_api_calls(343)["items"], [])
+        self.loaded = False
+        with self.assertRaisesRegex(ValueError, "CAPTURE_NOT_LOADED"):
+            service.get_action_api_calls(343)
 
 
 if __name__ == "__main__":

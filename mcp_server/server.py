@@ -137,6 +137,31 @@ def search_draws(
 
 
 @mcp.tool
+def get_action_api_calls(
+    action_event_id: int, api_event_id: int | None = None,
+    child_path: list[int] | None = None, offset: int = 0, limit: int = 50,
+) -> dict:
+    """Read a draw/dispatch action's associated API calls, like API Inspector.
+
+    action_event_id must identify an action. Omit api_event_id to list its API events
+    in capture order with EID, API name, chunk index and parameter availability.
+    Follow has_more/offset to retrieve all calls. These are ActionDescription.events,
+    not all historical calls that contributed to the current pipeline state.
+
+    Pass an item's api_event_id to inspect its root parameters. Reuse
+    returned child_path indices to expand a structure/array one level at a time.
+    offset/limit paginate the call list or the selected node's visible children.
+    limit is 1..500. Resource parameters include IDs/names; binary contents are
+    omitted and text previews are bounded. Missing chunks report an explicit
+    unavailable reason. This query does not change the selected event.
+    """
+    return bridge.call("get_action_api_calls", {
+        "action_event_id": action_event_id, "api_event_id": api_event_id,
+        "child_path": child_path, "offset": offset, "limit": limit,
+    })
+
+
+@mcp.tool
 def get_draw_call_details(event_id: int) -> dict:
     """
     Get detailed information about a specific draw call.
@@ -195,7 +220,8 @@ def get_shader_info(
         event_id: The event ID to inspect the shader at
         stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
 
-    Returns shader disassembly, constant buffer values, and resource bindings.
+    Returns shader identity, entry point and disassembly. Use get_pipeline_stage
+    and inspect_pipeline_binding for bindings and constant values.
     """
     return bridge.call("get_shader_info", {"event_id": event_id, "stage": stage})
 
@@ -387,9 +413,10 @@ def get_texture_data(
     slice: int = 0,
     sample: int = 0,
     depth_slice: int | None = None,
+    action_event_id: int | None = None,
 ) -> dict:
     """
-    Read the pixel data of a texture resource.
+    Read texture pixels after action_event_id (or the current UI event if omitted).
 
     Args:
         resource_id: The resource ID of the texture to read
@@ -403,7 +430,8 @@ def get_texture_data(
     Returns texture pixel data as base64-encoded bytes along with metadata
     including dimensions at the requested mip level and format information.
     """
-    params = {"resource_id": resource_id, "mip": mip, "slice": slice, "sample": sample}
+    params = {"resource_id": resource_id, "mip": mip, "slice": slice, "sample": sample,
+              "action_event_id": action_event_id}
     if depth_slice is not None:
         params["depth_slice"] = depth_slice
     return bridge.call("get_texture_data", params)
@@ -417,9 +445,10 @@ def save_texture(
     mip: int = 0,
     slice_index: int = 0,
     alpha_mode: Literal["preserve", "discard", "blend_to_black"] = "preserve",
+    action_event_id: int | None = None,
 ) -> dict:
     """
-    Save a texture to an image file.
+    Save a texture after action_event_id (or the current UI event if omitted).
 
     Args:
         resource_id: The resource ID of the texture to save (e.g. "ResourceId::2495")
@@ -445,29 +474,76 @@ def save_texture(
             "mip": mip,
             "slice_index": slice_index,
             "alpha_mode": alpha_mode,
+            "action_event_id": action_event_id,
         },
     )
 
 
 @mcp.tool
-def get_pipeline_state(event_id: int) -> dict:
-    """
-    Get the full graphics pipeline state at a specific event.
+def get_pipeline_state(action_event_id: int) -> dict:
+    """Get a compact Pipeline State overview for an exact action event.
 
-    Args:
-        event_id: The event ID to get pipeline state at
-
-    Returns detailed pipeline state including:
-    - Bound shaders with entry points for each stage
-    - Shader resources (SRVs): textures and buffers with dimensions, format, slot, name
-    - UAVs (RWTextures/RWBuffers): resource details with dimensions and format
-    - Samplers: addressing modes, filter settings, LOD parameters
-    - Constant buffers: slot, size, variable count
-    - Render targets and depth target
-    - Concise input/output texture summaries for the event
-    - Viewports and input assembly state
+    Returns API, pipeline kind, stage status, section availability, binding counts
+    and diagnostics. Use get_pipeline_stage for rows and get_action_textures for
+    the Texture Viewer input/output list. Queries restore the UI replay event.
     """
-    return bridge.call("get_pipeline_state", {"event_id": event_id})
+    return bridge.call("get_pipeline_state", {"action_event_id": action_event_id})
+
+
+@mcp.tool
+def get_pipeline_stage(
+    action_event_id: int, stage: str, section: str = "overview",
+    show_unused: bool = False, show_empty: bool = False, offset: int = 0, limit: int = 50,
+) -> dict:
+    """Inspect one Pipeline State stage; overview lists available sections.
+
+    Stages: vertex_input, vertex, tess_control, tess_eval, geometry, task, mesh,
+    rasterizer, fragment, framebuffer, compute. VS/FS/PS/CS/FB/OM aliases work.
+    Shader sections: shader, descriptors, resources, samplers, constant_buffers,
+    push_constants. Other sections are advertised by overview. List limit 1..500.
+    Missing required bindings remain visible regardless of the empty/unused filters.
+    """
+    return bridge.call("get_pipeline_stage", dict(
+        action_event_id=action_event_id, stage=stage, section=section,
+        show_unused=show_unused, show_empty=show_empty, offset=offset, limit=limit))
+
+
+@mcp.tool
+def inspect_pipeline_binding(
+    action_event_id: int, binding_id: str, section: Literal["details", "variables"] = "details",
+    child_path: list[int] | None = None, offset: int = 0, limit: int = 50,
+) -> dict:
+    """Inspect a returned binding_id in the same capture and action.
+
+    details returns resource identities, effective view/buffer ranges and issues.
+    variables decodes one constant binding and expands one level at child_path;
+    use returned child_path values to expand further (limit 1..500). IDs become
+    invalid after capture reload or binding changes. Resource IDs link to Resource
+    Inspector tools; binding IDs preserve stage, array element and range context.
+    """
+    return bridge.call("inspect_pipeline_binding", dict(
+        action_event_id=action_event_id, binding_id=binding_id, section=section,
+        child_path=child_path, offset=offset, limit=limit))
+
+
+@mcp.tool
+def get_action_textures(
+    action_event_id: int, direction: Literal["all", "input", "output"] = "all",
+    stage: str | None = None, show_unused: bool = False, show_empty: bool = False,
+    offset: int = 0, limit: int = 50,
+) -> dict:
+    """List action texture bindings as a Texture Viewer view (no pixel preview).
+
+    Each row has stage label, shader binding name, capture resource identity,
+    roles and view subresources. Repeated resource bindings are preserved.
+    Read-write images match both input/output filters but occur once in all.
+    Supports draw/dispatch and copy/resolve/clear targets. Binding/use information
+    does not prove dynamic GPU access. Use resource.resource_id with texture and
+    Resource Inspector tools; pass action_event_id explicitly to pixel/export calls.
+    """
+    return bridge.call("get_action_textures", dict(
+        action_event_id=action_event_id, direction=direction, stage=stage,
+        show_unused=show_unused, show_empty=show_empty, offset=offset, limit=limit))
 
 
 @mcp.tool
@@ -481,6 +557,7 @@ def trace_resource_usage(
     before_event_id: int | None = None,
     offset: int = 0,
     limit: int = 100,
+    categories: list[Literal["read", "write", "read_write", "barrier", "clear"]] | None = None,
 ) -> dict:
     """
     Trace how a resource is read, written, and consumed across matching events.
@@ -495,14 +572,21 @@ def trace_resource_usage(
         before_event_id: Optional event ID used to compute the latest prior writer
         offset: First usage record to return after filtering.
         limit: Page size, from 1 to 500 (default 100).
+        categories: Optional Timeline categories, combined with OR. None selects all;
+            [] selects none. Other event/marker filters are combined with AND.
 
-    Returns paginated events with raw usage and inferred access classification.
-    Counts and writer summaries cover all matching records before pagination.
+    Returns raw usage, Timeline category, and legacy inferred access per record.
+    category_counts contains all five categories, including zeros. GenMips/Copy/Resolve
+    are read_write; Discard/Clear are clear, matching the RenderDoc Timeline.
+    Counts and writer summaries cover records matching ALL filters before pagination.
+    Counts are usage records, not distinct EIDs or merged visual timeline markers.
+    Legacy access/read_count/write_count remain independent from Timeline categories.
     Non-texture/buffer objects report unavailable usage rather than a missing ID.
     """
     params: dict[str, object] = {"resource_id": resource_id, "offset": offset, "limit": limit}
     _optional_param(params, "marker_filter", marker_filter)
     _optional_param(params, "exclude_markers", exclude_markers)
+    _optional_param(params, "categories", categories)
     if event_id_range is not None:
         params["event_id_range"] = event_id_range
     else:

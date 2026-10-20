@@ -49,9 +49,9 @@ class RenderDocBridge:
         call stays within the client-side tool timeout.
         """
         with open(CALL_LOCK_FILE, "a+b") as handle:
-            if os.fstat(handle.fileno()).st_size == 0:
-                handle.write(b"\0")
-                handle.flush()
+            # Windows permits locking a byte beyond EOF. Do not seed the file:
+            # another client can lock byte zero between our size check and flush,
+            # causing the initialization write to fail with PermissionError.
             locked = False
             while not locked:
                 handle.seek(0)

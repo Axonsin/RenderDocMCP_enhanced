@@ -78,6 +78,10 @@ def shader_modules():
         packages["renderdoc_extension.utils"].Serializers = types.SimpleNamespace()
         shader = load_module("renderdoc_extension.services.shader_edit_service",
                              "renderdoc_extension/services/shader_edit_service.py")
+        for dependency in ("resource_catalog", "structured_data", "replay_query", "pipeline_snapshot",
+                           "shader_variables", "pipeline_queries"):
+            load_module("renderdoc_extension.services." + dependency,
+                        "renderdoc_extension/services/" + dependency + ".py")
         pipeline = load_module("renderdoc_extension.services.pipeline_service",
                                "renderdoc_extension/services/pipeline_service.py")
         handler = load_module("renderdoc_extension.request_handler", "renderdoc_extension/request_handler.py")
