@@ -1,76 +1,80 @@
-# encoding: utf-8
-# module qrenderdoc
-# from C:\Users\13908\Desktop\works\renderdoc_pythonmodules\x64\Development\pymodules\qrenderdoc.pyd
-# by generator 1.147
-# no doc
+# Stubs for {module.__name__}
 
-# imports
-import enum as __enum
+from typing import List
 
-from typing import List, Tuple, Callable, Any
+# Dummy types
+from typing import NewType, Optional
+QWidget = Optional[NewType('QWidget', int)]
+
+# Classes
+from ._APIInspector import APIInspector
+from ._AnnotationViewer import AnnotationViewer
+from ._BufferInterpreter import BufferInterpreter
+from ._BufferViewer import BufferViewer
+from ._BugReport import BugReport
+from ._CaptureConnection import CaptureConnection
+from ._ClosedCallback import ClosedCallback
+from .qrenderdoc_circular1 import CaptureContext
+from ._CaptureDialog import CaptureDialog
+from ._CaptureModifications import CaptureModifications
+from ._CaptureSettings import CaptureSettings
+from ._CaptureViewer import CaptureViewer
+from ._CommentView import CommentView
+from ._ConnectedTempCapture import ConnectedTempCapture
+from ._ContextMenu import ContextMenu
+from ._DebugMessageView import DebugMessageView
+from ._DescriptorViewer import DescriptorViewer
+from ._DiagnosticLogView import DiagnosticLogView
+from ._DialogButton import DialogButton
+from ._DockReference import DockReference
+from ._EventBookmark import EventBookmark
+from .qrenderdoc_circular1 import EventBrowser
+from ._EventFilterCallback import EventFilterCallback
+from ._FilterParseCallback import FilterParseCallback
+from ._AutoCompleteCallback import AutoCompleteCallback
+from .qrenderdoc_circular1 import ExtensionManager
+from ._ExtensionCallback import ExtensionCallback
+from ._ExtensionMetadata import ExtensionMetadata
+from ._FollowType import FollowType
+from ._MainWindow import MainWindow
+from ._ShortcutCallback import ShortcutCallback
+from .qrenderdoc_circular1 import MiniQtHelper
+from ._WidgetCallback import WidgetCallback
+from ._UIInvokeCallback import UIInvokeCallback
+from ._OffsetSizeDisplayMode import OffsetSizeDisplayMode
+from ._PackingRules import PackingRules
+from ._PanelMenu import PanelMenu
+from ._ParseError import ParseError
+from ._ParsedBufferFormat import ParsedBufferFormat
+from ._PerformanceCounterViewer import PerformanceCounterViewer
+from ._PersistentConfig import PersistentConfig
+from ._PipelineStage import PipelineStage
+from ._PipelineStateViewer import PipelineStateViewer
+from ._PixelHistoryView import PixelHistoryView
+from ._PythonShell import PythonShell
+from ._RGPInterop import RGPInterop
+from ._RemoteHost import RemoteHost
+from ._ReplayManager import ReplayManager
+from ._ReplayInvokeCallback import ReplayInvokeCallback
+from ._DirectoryBrowseCallback import DirectoryBrowseCallback
+from ._ResourceInspector import ResourceInspector
+from ._ShaderMessageViewer import ShaderMessageViewer
+from ._ShaderProcessingTool import ShaderProcessingTool
+from ._ShaderToolOutput import ShaderToolOutput
+from ._ShaderViewer import ShaderViewer
+from ._SaveCallback import SaveCallback
+from ._RevertCallback import RevertCallback
+from ._StatisticsViewer import StatisticsViewer
+from ._TextureViewer import TextureViewer
+from ._TimeUnit import TimeUnit
+from ._TimelineBar import TimelineBar
+from ._WindowMenu import WindowMenu
+
+# Functions
 
 
-# classes
-
-from .AnnotationViewer import AnnotationViewer
-from .APIInspector import APIInspector
-from .BufferViewer import BufferViewer
-from .BugReport import BugReport
-from .CaptureContext import CaptureContext
-from .CaptureDialog import CaptureDialog
-from .CaptureModifications import CaptureModifications
-from .CaptureSettings import CaptureSettings
-from .CaptureViewer import CaptureViewer
-from .CommentView import CommentView
-from .ContextMenu import ContextMenu
-from .DebugMessageView import DebugMessageView
-from .DescriptorViewer import DescriptorViewer
-from .DiagnosticLogView import DiagnosticLogView
-from .DialogButton import DialogButton
-from .DockReference import DockReference
-from .EventBookmark import EventBookmark
-from .EventBrowser import EventBrowser
-from .ExtensionManager import ExtensionManager
-from .ExtensionMetadata import ExtensionMetadata
-from .FollowType import FollowType
-from .MainWindow import MainWindow
-from .MiniQtHelper import MiniQtHelper
-from .OffsetSizeDisplayMode import OffsetSizeDisplayMode
-from .PanelMenu import PanelMenu
-from .PerformanceCounterViewer import PerformanceCounterViewer
-from .PersistantConfig import PersistantConfig
-from .PipelineStage import PipelineStage
-from .PipelineStateViewer import PipelineStateViewer
-from .PixelHistoryView import PixelHistoryView
-from .PythonShell import PythonShell
-from .rdcarray_of_BugReport import rdcarray_of_BugReport
-from .rdcarray_of_DialogButton import rdcarray_of_DialogButton
-from .rdcarray_of_EventBookmark import rdcarray_of_EventBookmark
-from .rdcarray_of_ExtensionMetadata import rdcarray_of_ExtensionMetadata
-from .rdcarray_of_ptr_ICaptureViewer import rdcarray_of_ptr_ICaptureViewer
-from .rdcarray_of_rdcstrpair import rdcarray_of_rdcstrpair
-from .rdcarray_of_RemoteHost import rdcarray_of_RemoteHost
-from .rdcarray_of_ShaderProcessingTool import rdcarray_of_ShaderProcessingTool
-from .RemoteHost import RemoteHost
-from .ReplayManager import ReplayManager
-from .ResourceInspector import ResourceInspector
-from .RGPInterop import RGPInterop
-from .ShaderMessageViewer import ShaderMessageViewer
-from .ShaderProcessingTool import ShaderProcessingTool
-from .ShaderToolOutput import ShaderToolOutput
-from .ShaderViewer import ShaderViewer
-from .StatisticsViewer import StatisticsViewer
-from .TextureViewer import TextureViewer
-from .TimelineBar import TimelineBar
-from .TimeUnit import TimeUnit
-from .WindowMenu import WindowMenu
-
-# functions
-
-def AddRecentFile(recentList: List[str], file: str): # real signature unknown; restored from __doc__
+def AddRecentFile(recentList: List[str], file: str):
     """
-    AddRecentFile(recentList, file)
-    
     Checks if a given file is in a list. If it is, then it's shuffled to the end. If it's
     not then it's added to the end
     
@@ -81,10 +85,10 @@ def AddRecentFile(recentList: List[str], file: str): # real signature unknown; r
     """
     pass
 
-def ConfigFilePath(filename: str) -> str: # real signature unknown; restored from __doc__
+
+
+def ConfigFilePath(filename: str) -> str:
     """
-    ConfigFilePath(filename)
-    
     Retrieve the absolute path where a given file can be stored with other application
     data.
     
@@ -94,10 +98,10 @@ def ConfigFilePath(filename: str) -> str: # real signature unknown; restored fro
     """
     pass
 
-def RemoveRecentFile(recentList: List[str], file: str): # real signature unknown; restored from __doc__
+
+
+def RemoveRecentFile(recentList: List[str], file: str):
     """
-    RemoveRecentFile(recentList, file)
-    
     Removes a given file from the list, after normalising the path. If the path isn't
     present then the list is not modified.
     
@@ -108,13 +112,10 @@ def RemoveRecentFile(recentList: List[str], file: str): # real signature unknown
     """
     pass
 
-def SWIG_PyInstanceMethod_New(*args, **kwargs): # real signature unknown
-    pass
 
-def UnitSuffix(unit: TimeUnit) -> str: # real signature unknown; restored from __doc__
+
+def UnitSuffix(unit: TimeUnit) -> str:
     """
-    UnitSuffix(unit)
-    
     Gets the suffix for a time unit.
     
     :param TimeUnit unit: The unit to get a suffix for.
@@ -122,70 +123,4 @@ def UnitSuffix(unit: TimeUnit) -> str: # real signature unknown; restored from _
     :rtype: str
     """
     pass
-
-# variables with complex values
-
-__all__ = [
-    'SWIG_PyInstanceMethod_New',
-    'ConfigFilePath',
-    'UnitSuffix',
-    'AddRecentFile',
-    'RemoveRecentFile',
-    'CaptureSettings',
-    'MainWindow',
-    'EventBrowser',
-    'APIInspector',
-    'AnnotationViewer',
-    'PipelineStage',
-    'PipelineStateViewer',
-    'FollowType',
-    'TextureViewer',
-    'BufferViewer',
-    'ResourceInspector',
-    'CaptureDialog',
-    'DebugMessageView',
-    'DiagnosticLogView',
-    'CommentView',
-    'StatisticsViewer',
-    'TimelineBar',
-    'PerformanceCounterViewer',
-    'PythonShell',
-    'ShaderViewer',
-    'ShaderMessageViewer',
-    'DescriptorViewer',
-    'PixelHistoryView',
-    'CaptureViewer',
-    'ReplayManager',
-    'DockReference',
-    'CaptureModifications',
-    'EventBookmark',
-    'RGPInterop',
-    'CaptureContext',
-    'ShaderToolOutput',
-    'ShaderProcessingTool',
-    'BugReport',
-    'OffsetSizeDisplayMode',
-    'TimeUnit',
-    'PersistantConfig',
-    'RemoteHost',
-    'WindowMenu',
-    'PanelMenu',
-    'ContextMenu',
-    'DialogButton',
-    'ExtensionMetadata',
-    'MiniQtHelper',
-    'ExtensionManager',
-    'rdcarray_of_EventBookmark',
-    'rdcarray_of_ShaderProcessingTool',
-    'rdcarray_of_rdcstrpair',
-    'rdcarray_of_BugReport',
-    'rdcarray_of_ExtensionMetadata',
-    'rdcarray_of_DialogButton',
-    'rdcarray_of_RemoteHost',
-    'rdcarray_of_ptr_ICaptureViewer',
-]
-
-__loader__ = None # (!) real value is '<_frozen_importlib_external.ExtensionFileLoader object at 0x000001F816E2C2B0>'
-
-__spec__ = None # (!) real value is "ModuleSpec(name='qrenderdoc', loader=<_frozen_importlib_external.ExtensionFileLoader object at 0x000001F816E2C2B0>, origin='C:\\\\Users\\\\13908\\\\Desktop\\\\works\\\\renderdoc_pythonmodules\\\\x64\\\\Development\\\\pymodules\\\\qrenderdoc.pyd')"
 
