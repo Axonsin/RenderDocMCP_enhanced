@@ -8,6 +8,11 @@ import base64
 import renderdoc as rd
 
 from ..utils import Parsers
+from .resource_catalog import (
+    build_catalog, enum_name, identity, paginate, query_usage,
+    resolve_resource, resource_type as type_name, validate_page,
+)
+from .structured_data import read_node
 
 
 class ResourceService:
@@ -34,20 +39,6 @@ class ResourceService:
         if not flag_names:
             flag_names.append("None")
         return flag_names
-
-    @staticmethod
-    def _build_paginated_result(items, offset, limit):
-        """Build a canonical paginated result payload."""
-        total_count = len(items)
-        paginated = items[offset:offset + limit]
-        return {
-            "items": paginated,
-            "total_count": total_count,
-            "offset": offset,
-            "limit": limit,
-            "returned_count": len(paginated),
-            "has_more": offset + len(paginated) < total_count,
-        }
 
     def _serialize_texture_item(self, tex):
         """Serialize texture descriptor to a canonical resource item."""
@@ -89,39 +80,152 @@ class ResourceService:
             "creation_flags": self._parse_buffer_flags(buf.creationFlags),
         }
 
-    def list_resources(self, resource_type, name_filter=None, offset=0, limit=50):
-        """List capture resources using a canonical resource-list interface."""
+    def _query(self, operation):
+        """Run a read-only query once on the replay thread."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
-
-        if resource_type not in ("texture", "buffer"):
-            raise ValueError("INVALID_RESOURCE_TYPE: resource_type must be texture or buffer")
-
-        result = {"data": None}
+        result = {}
 
         def callback(controller):
-            if resource_type == "texture":
-                items = [
-                    self._serialize_texture_item(tex)
-                    for tex in controller.GetTextures()
-                ]
-            else:
-                items = [
-                    self._serialize_buffer_item(buf)
-                    for buf in controller.GetBuffers()
-                ]
-
-            if name_filter is not None:
-                items = [
-                    item for item in items
-                    if name_filter.lower() in item["name"].lower()
-                ]
-
-            result["data"] = self._build_paginated_result(items, offset, limit)
-            result["data"]["resource_type"] = resource_type
+            # Propagate explicitly: SWIG callbacks may not propagate Python exceptions.
+            try:
+                result["data"] = operation(controller)
+            except Exception as exc:
+                result["error"] = exc
 
         self._invoke(callback)
+        if "error" in result:
+            raise result["error"]
         return result["data"]
+
+    def list_resources(self, resource_type="all", name_filter=None, offset=0,
+                       limit=50, sort_by="name"):
+        """List all API objects, with compact identities and stable pagination."""
+        validate_page(offset, limit)
+        kinds = {type_name(value) for value in rd.ResourceType}
+        if resource_type not in kinds | {"all"}:
+            raise ValueError("INVALID_RESOURCE_TYPE: unknown type: %s" % resource_type)
+        if sort_by not in ("name", "resource_id"):
+            raise ValueError("INVALID_SORT: expected name or resource_id")
+
+        def operation(controller):
+            catalog = build_catalog(controller, descriptors=False)
+            items = [identity(self.ctx, res.resourceId, catalog)
+                     for res in catalog["resources"].values()]
+            items = [item for item in items
+                     if (resource_type == "all" or item["resource_type"] == resource_type)
+                     and (name_filter is None or name_filter.lower() in item["name"].lower())]
+            items.sort(key=lambda item: (
+                item["name"].casefold() if sort_by == "name" else "",
+                Parsers.extract_numeric_id(item["resource_id"])))
+            result = paginate(items, offset, limit)
+            result["resource_type"] = resource_type
+            return result
+        return self._query(operation)
+
+    def _metadata(self, resource, catalog):
+        numeric = int(resource.resourceId)
+        if numeric in catalog["textures"]:
+            data = self._serialize_texture_item(catalog["textures"][numeric])
+        elif numeric in catalog["buffers"]:
+            data = self._serialize_buffer_item(catalog["buffers"][numeric])
+        else:
+            return {}
+        return {key: value for key, value in data.items()
+                if key not in ("name", "resource_id", "resource_type")}
+
+    def _initialization_directory(self, resource, structured_file, offset, limit):
+        indices = list(resource.initialisationChunks)
+        result = paginate(indices, offset, limit)
+        result["available"] = True
+        items = []
+        for index in result["items"]:
+            if 0 <= index < len(structured_file.chunks):
+                chunk = structured_file.chunks[index]
+                items.append({"chunk_index": int(index), "name": str(chunk.name),
+                              "child_count": chunk.NumChildren()})
+            else:
+                items.append({"chunk_index": int(index),
+                              "error": "INVALID_CHUNK_INDEX"})
+        result["items"] = items
+        return result
+
+    def inspect_resource(self, resource_id, related_offset=0, related_limit=50):
+        """Inspect identity, metadata, immediate relations and compact summaries."""
+        validate_page(related_offset, related_limit)
+
+        def operation(controller):
+            catalog = build_catalog(controller)
+            resource = resolve_resource(resource_id, catalog)
+            related = []
+            for relationship, ids in (("parent", resource.parentResources),
+                                      ("derived", resource.derivedResources)):
+                group = []
+                for rid in ids:
+                    item = identity(self.ctx, rid, catalog)
+                    item["relationship"] = relationship
+                    group.append(item)
+                group.sort(key=lambda item: (item["name"].casefold(),
+                                             Parsers.extract_numeric_id(item["resource_id"])))
+                related.extend(group)
+            result = {
+                "resource": identity(self.ctx, resource.resourceId, catalog),
+                "metadata": self._metadata(resource, catalog),
+                "related_resources": paginate(related, related_offset, related_limit),
+            }
+            try:
+                status, usages = query_usage(controller, resource, catalog)
+                if status["available"]:
+                    counts = {}
+                    for usage in usages:
+                        name = enum_name(usage.usage)
+                        counts[name] = counts.get(name, 0) + 1
+                    status.update({"usage_count": len(usages),
+                                   "event_count": len({u.eventId for u in usages}),
+                                   "usage_counts": counts})
+                result["usage"] = status
+            except Exception as exc:
+                result["usage"] = {"available": False, "reason": "query_failed",
+                                   "error": str(exc)}
+            try:
+                result["initialization"] = self._initialization_directory(
+                    resource, controller.GetStructuredFile(), 0, 20)
+            except Exception as exc:
+                result["initialization"] = {
+                    "available": False, "reason": "query_failed", "error": str(exc)}
+            return result
+        return self._query(operation)
+
+    def get_resource_initialization(self, resource_id, chunk_index=None,
+                                    child_path=None, offset=0, limit=50):
+        """List initialization calls or expand one parameter node by raw indices."""
+        validate_page(offset, limit)
+        if child_path is not None and (
+                not isinstance(child_path, list) or
+                any(type(i) is not int or i < 0 for i in child_path)):
+            raise ValueError("INVALID_CHILD_PATH: expected non-negative child indices")
+        if chunk_index is not None and (type(chunk_index) is not int or chunk_index < 0):
+            raise ValueError("INVALID_CHUNK_INDEX: expected a non-negative integer")
+        if chunk_index is None and child_path:
+            raise ValueError("INVALID_CHILD_PATH: chunk_index is required")
+
+        def operation(controller):
+            catalog = build_catalog(controller, descriptors=False)
+            resource = resolve_resource(resource_id, catalog)
+            structured_file = controller.GetStructuredFile()
+            if chunk_index is None:
+                result = self._initialization_directory(resource, structured_file, offset, limit)
+            else:
+                if (chunk_index not in resource.initialisationChunks or
+                        chunk_index >= len(structured_file.chunks)):
+                    raise ValueError("INVALID_CHUNK_INDEX: chunk does not belong to this resource")
+                result = read_node(structured_file.chunks[chunk_index],
+                                   [] if child_path is None else child_path,
+                                   self.ctx, catalog, offset, limit)
+                result["chunk_index"] = chunk_index
+            result["resource"] = identity(self.ctx, resource.resourceId, catalog)
+            return result
+        return self._query(operation)
 
     def _find_texture_by_id(self, controller, resource_id):
         """Find texture by resource ID"""

@@ -165,7 +165,9 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 #### 资源空间浏览
 
-- `list_resources` - 用一个分页接口列出 texture 或 buffer
+- `list_resources` - 分页列举全部 API 对象，支持类型和名称过滤
+- `inspect_resource` - 查看元数据、父/派生资源、使用统计和初始化调用目录
+- `get_resource_initialization` - 查询初始化调用，并按路径展开参数树
 
 ### 局部数据分析能力
 

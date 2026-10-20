@@ -5,6 +5,7 @@ High-level analysis service for RenderDoc.
 import renderdoc as rd
 
 from ..utils import Helpers, Parsers, Serializers
+from .resource_catalog import build_catalog, identity, paginate, query_usage, resolve_resource, validate_page
 
 
 class AnalysisService:
@@ -146,48 +147,36 @@ class AnalysisService:
         event_id_min=None,
         event_id_max=None,
         before_event_id=None,
+        offset=0,
+        limit=100,
     ):
         """Trace how a resource is used across matching events in the capture."""
+        validate_page(offset, limit)
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"data": None, "error": None}
-
-        def callback(controller):
+        def operation(controller):
+            catalog = self._build_resource_catalog(controller)
+            resource = resolve_resource(resource_id, catalog)
+            resource_info = identity(self.ctx, resource.resourceId, catalog)
+            status, usages = query_usage(controller, resource, catalog)
+            if not status["available"]:
+                return dict(status, resource=resource_info)
             structured_file = controller.GetStructuredFile()
             action_index = self._build_action_index(
                 controller.GetRootActions(), structured_file
             )
-            catalog = self._build_resource_catalog(controller)
-            resource_info = self._get_resource_info(resource_id, catalog)
-
-            # Use the original raw ResourceId from the catalog for GetUsage,
-            # because re-constructed ResourceId objects don't work in OpenGL.
-            numeric_id = Parsers.extract_numeric_id(resource_id)
-            rid = None
-            tex = catalog["textures"].get(numeric_id)
-            buf = catalog["buffers"].get(numeric_id)
-            if tex is not None:
-                rid = tex.resourceId
-            elif buf is not None:
-                rid = buf.resourceId
-
-            if rid is None:
-                result["error"] = "INVALID_RESOURCE_ID: %s" % resource_id
-                return
-
             usage_entries = []
             usage_histogram = {}
             roles = set()
 
-            try:
-                usages = controller.GetUsage(rid)
-            except Exception as exc:
-                result["error"] = "RESOURCE_QUERY_FAILED: %s" % str(exc)
-                return
-
             for usage in usages:
                 action_info = action_index.get(usage.eventId)
+                if action_info is None:
+                    # Unknown actions still have authoritative EID/usage data.
+                    if marker_filter or exclude_markers:
+                        continue
+                    action_info = {"event_id": usage.eventId}
                 if not self._matches_filters(
                     action_info,
                     marker_filter=marker_filter,
@@ -209,6 +198,7 @@ class AnalysisService:
                     "flags": action_info.get("flags", []),
                     "usage": usage_name,
                     "access": access,
+                    "access_source": "usage_classification",
                 }
                 if getattr(usage, "view", rd.ResourceId.Null()) != rd.ResourceId.Null():
                     entry["view_resource_id"] = Parsers.canonical_resource_id(usage.view)
@@ -233,26 +223,24 @@ class AnalysisService:
                     else:
                         break
 
-            result["data"] = {
+            page = paginate(usage_entries, offset, limit)
+            result = {
+                "available": True,
                 "resource": resource_info,
                 "roles": sorted(roles),
                 "usage_counts": usage_histogram,
-                "event_count": len(usage_entries),
+                "usage_count": len(usage_entries),
+                "event_count": len({item["event_id"] for item in usage_entries}),
                 "read_count": len(reads),
                 "write_count": len(writes),
                 "first_writer": writes[0] if writes else None,
                 "latest_writer": writes[-1] if writes else None,
                 "latest_writer_before_event": latest_writer_before_event,
-                "reads": reads,
-                "writes": writes,
-                "events": usage_entries,
+                "events": page.pop("items"),
             }
-
-        self._invoke(callback)
-
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["data"]
+            result.update(page)
+            return result
+        return self._resource._query(operation)
 
     def trace_event_dependencies(self, event_id):
         """Trace immediate resource dependencies for an event."""
@@ -761,32 +749,7 @@ class AnalysisService:
 
     def _build_resource_catalog(self, controller):
         """Build a lightweight lookup catalog for resources in the capture."""
-        catalog = {
-            "textures": {},
-            "buffers": {},
-            "resources": {},
-            "cache": {},
-        }
-
-        try:
-            for tex in controller.GetTextures():
-                catalog["textures"][int(tex.resourceId)] = tex
-        except Exception:
-            pass
-
-        try:
-            for buf in controller.GetBuffers():
-                catalog["buffers"][int(buf.resourceId)] = buf
-        except Exception:
-            pass
-
-        try:
-            for res in controller.GetResources():
-                catalog["resources"][int(res.resourceId)] = res
-        except Exception:
-            pass
-
-        return catalog
+        return build_catalog(controller)
 
     def _get_resource_info(self, resource_id, catalog):
         """Get cached resource metadata."""
@@ -811,6 +774,8 @@ class AnalysisService:
             name_source = tex.resourceId
         elif buf is not None:
             name_source = buf.resourceId
+        elif res is not None:
+            name_source = res.resourceId
         if name_source is not None:
             info["name"] = self._safe_resource_name(name_source)
         else:

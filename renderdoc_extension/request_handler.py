@@ -31,6 +31,8 @@ class RequestHandler:
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "list_resources": self._handle_list_resources,
+            "inspect_resource": self._handle_inspect_resource,
+            "get_resource_initialization": self._handle_get_resource_initialization,
             "get_texture_data": self._handle_get_texture_data,
             "save_texture": self._handle_save_texture,
             "get_pipeline_state": self._handle_get_pipeline_state,
@@ -84,6 +86,10 @@ class RequestHandler:
             "INVALID_EVENT_ID",
             "INVALID_RESOURCE_ID",
             "INVALID_RESOURCE_TYPE",
+            "INVALID_PAGINATION",
+            "INVALID_SORT",
+            "INVALID_CHUNK_INDEX",
+            "INVALID_CHILD_PATH",
             "INVALID_SEARCH_TYPE",
             "INVALID_MARKER_FILTER",
             "INVALID_MIP_LEVEL",
@@ -233,11 +239,22 @@ class RequestHandler:
 
     def _handle_list_resources(self, params):
         """Handle list_resources request."""
-        resource_type = self._require_param(params, "resource_type")
+        resource_type = params.get("resource_type", "all")
         name_filter = params.get("name_filter")
-        offset = int(params.get("offset", 0))
-        limit = int(params.get("limit", 50))
-        return self.facade.list_resources(resource_type, name_filter, offset, limit)
+        offset = params.get("offset", 0)
+        limit = params.get("limit", 50)
+        return self.facade.list_resources(resource_type, name_filter, offset, limit,
+                                          params.get("sort_by", "name"))
+
+    def _handle_inspect_resource(self, params):
+        return self.facade.inspect_resource(
+            self._require_param(params, "resource_id"),
+            params.get("related_offset", 0), params.get("related_limit", 50))
+
+    def _handle_get_resource_initialization(self, params):
+        return self.facade.get_resource_initialization(
+            self._require_param(params, "resource_id"), params.get("chunk_index"),
+            params.get("child_path"), params.get("offset", 0), params.get("limit", 50))
 
     def _handle_get_texture_data(self, params):
         """Handle get_texture_data request"""
@@ -290,6 +307,8 @@ class RequestHandler:
             event_id_min=int(event_id_min) if event_id_min is not None else None,
             event_id_max=int(event_id_max) if event_id_max is not None else None,
             before_event_id=int(before_event_id) if before_event_id is not None else None,
+            offset=params.get("offset", 0),
+            limit=params.get("limit", 100),
         )
 
     def _handle_trace_event_dependencies(self, params):

@@ -132,9 +132,18 @@ class RenderDocFacade:
 
     # ==================== Resource Operations ====================
 
-    def list_resources(self, resource_type, name_filter=None, offset=0, limit=50):
+    def list_resources(self, resource_type="all", name_filter=None, offset=0, limit=50,
+                       sort_by="name"):
         """List resources using a canonical resource-listing interface."""
-        return self._resource.list_resources(resource_type, name_filter, offset, limit)
+        return self._resource.list_resources(resource_type, name_filter, offset, limit, sort_by)
+
+    def inspect_resource(self, resource_id, related_offset=0, related_limit=50):
+        return self._resource.inspect_resource(resource_id, related_offset, related_limit)
+
+    def get_resource_initialization(self, resource_id, chunk_index=None,
+                                    child_path=None, offset=0, limit=50):
+        return self._resource.get_resource_initialization(
+            resource_id, chunk_index, child_path, offset, limit)
 
     def get_buffer_contents(self, resource_id, offset=0, length=0):
         """Get buffer data"""
@@ -204,6 +213,8 @@ class RenderDocFacade:
         event_id_min=None,
         event_id_max=None,
         before_event_id=None,
+        offset=0,
+        limit=100,
     ):
         """Trace how a resource is used across matching events."""
         return self._analysis.trace_resource_usage(
@@ -213,6 +224,8 @@ class RenderDocFacade:
             event_id_min=event_id_min,
             event_id_max=event_id_max,
             before_event_id=before_event_id,
+            offset=offset,
+            limit=limit,
         )
 
     def trace_event_dependencies(self, event_id):

@@ -301,29 +301,70 @@ def get_buffer_contents(
 
 @mcp.tool
 def list_resources(
-    resource_type: Literal["texture", "buffer"],
+    resource_type: str = "all",
     name_filter: str | None = None,
     offset: int = 0,
     limit: int = 50,
+    sort_by: Literal["name", "resource_id"] = "name",
 ) -> dict:
     """
-    List resources using a canonical resource-listing interface.
+    List all capture API objects, matching the Resource Inspector resource list.
 
     Args:
-        resource_type: The resource family to list - texture or buffer
+        resource_type: all, or a snake_case RenderDoc ResourceType such as texture,
+            buffer, device, memory, shader, view, pipeline_state, command_buffer,
+            swapchain_image, descriptor_store, or acceleration_structure.
         name_filter: Optional partial name match (case-insensitive)
         offset: Starting index for pagination (default: 0)
         limit: Maximum number of resources to return (default: 50)
+        sort_by: Stable name or numeric resource_id order.
 
-    Returns a paginated result with items, total_count, returned_count, and has_more.
+    Returns compact resource_id/name/resource_type identities and pagination.
+    Use inspect_resource for metadata and related resources.
     """
     params: dict[str, object] = {
         "resource_type": resource_type,
         "offset": offset,
         "limit": limit,
+        "sort_by": sort_by,
     }
     _optional_param(params, "name_filter", name_filter)
     return bridge.call("list_resources", params)
+
+
+@mcp.tool
+def inspect_resource(
+    resource_id: str, related_offset: int = 0, related_limit: int = 50,
+) -> dict:
+    """Inspect one API object: metadata, parent/derived resources, usage counts,
+    and the first 20 initialization calls. Related resources are paginated.
+    Use trace_resource_usage for events and get_resource_initialization for
+    call-directory pagination and parameter expansion. Unavailable sections
+    carry an explicit reason; no event selection is changed.
+    """
+    return bridge.call("inspect_resource", {
+        "resource_id": resource_id, "related_offset": related_offset,
+        "related_limit": related_limit,
+    })
+
+
+@mcp.tool
+def get_resource_initialization(
+    resource_id: str, chunk_index: int | None = None,
+    child_path: list[int] | None = None, offset: int = 0, limit: int = 50,
+) -> dict:
+    """List initialization calls, or expand a selected call's parameter tree.
+
+    Omit chunk_index for the paginated call directory. Otherwise pass a returned
+    chunk_index and child_path (raw child indices, default root []) to retrieve
+    that node and one page of visible immediate children. Reuse returned paths
+    to expand structures/arrays. Binary contents are omitted; text previews are
+    limited to 4096 characters with explicit truncation. limit must be 1..500.
+    """
+    return bridge.call("get_resource_initialization", {
+        "resource_id": resource_id, "chunk_index": chunk_index,
+        "child_path": child_path, "offset": offset, "limit": limit,
+    })
 
 
 @mcp.tool
@@ -438,6 +479,8 @@ def trace_resource_usage(
     event_id_min: int | None = None,
     event_id_max: int | None = None,
     before_event_id: int | None = None,
+    offset: int = 0,
+    limit: int = 100,
 ) -> dict:
     """
     Trace how a resource is read, written, and consumed across matching events.
@@ -450,10 +493,14 @@ def trace_resource_usage(
         event_id_min: Legacy lower event bound alias
         event_id_max: Legacy upper event bound alias
         before_event_id: Optional event ID used to compute the latest prior writer
+        offset: First usage record to return after filtering.
+        limit: Page size, from 1 to 500 (default 100).
 
-    Returns resource metadata, usage roles, read/write event lists, and writer summaries.
+    Returns paginated events with raw usage and inferred access classification.
+    Counts and writer summaries cover all matching records before pagination.
+    Non-texture/buffer objects report unavailable usage rather than a missing ID.
     """
-    params: dict[str, object] = {"resource_id": resource_id}
+    params: dict[str, object] = {"resource_id": resource_id, "offset": offset, "limit": limit}
     _optional_param(params, "marker_filter", marker_filter)
     _optional_param(params, "exclude_markers", exclude_markers)
     if event_id_range is not None:

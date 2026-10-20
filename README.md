@@ -173,7 +173,9 @@ The entire MCP toolset is organized into three capability tiers:
 
 #### Resource Space Browsing
 
-- `list_resources` - List textures or buffers with one paginated interface
+- `list_resources` - List all API objects with type/name filters and pagination
+- `inspect_resource` - Inspect metadata, parent/derived resources, usage counts and initialization calls
+- `get_resource_initialization` - Browse initialization calls and expand parameter trees by path
 
 ### Local Data Analysis
 

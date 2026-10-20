@@ -1,0 +1,390 @@
+"""Resource Inspector contracts without a RenderDoc installation or GPU."""
+
+import enum
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import types
+import unittest
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+NS = types.SimpleNamespace
+
+
+class ResourceId(int):
+    @staticmethod
+    def Null():
+        return ResourceId(0)
+
+
+Kind = enum.IntEnum("ResourceType", "Unknown Device Memory Buffer Texture Shader View SwapchainImage")
+Basic = enum.IntEnum("SDBasic", "Chunk Struct Array Null Buffer String Enum UnsignedInteger "
+                     "SignedInteger Float Boolean Character Resource GPUAddress")
+Flags = enum.IntFlag("SDTypeFlags", {"NoFlags": 0, "Hidden": 2, "HasCustomString": 1})
+Usage = enum.IntEnum("ResourceUsage", "Clear CS_RWResource CS_Resource CopyDst")
+ActionFlags = enum.IntFlag("ActionFlags", {"PushMarker": 1, "PopMarker": 2, "SetMarker": 4})
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def modules():
+    rd = types.ModuleType("renderdoc")
+    rd.ResourceType, rd.ResourceId, rd.SDBasic = Kind, ResourceId, Basic
+    rd.SDTypeFlags, rd.ActionFlags = Flags, ActionFlags
+    rd.BufferCategory = enum.IntFlag("BufferCategory",
+                                   {"Vertex": 1, "Index": 2, "Constants": 4,
+                                    "ReadWrite": 8, "Indirect": 16})
+    rd.ShaderStage = enum.IntEnum("ShaderStage", "Vertex Hull Domain Geometry Pixel Compute")
+    packages = {"renderdoc": rd}
+    for name in ("renderdoc_extension", "renderdoc_extension.services", "renderdoc_extension.utils"):
+        packages[name] = types.ModuleType(name)
+        packages[name].__path__ = []
+    with patch.dict(sys.modules, packages):
+        utils = packages["renderdoc_extension.utils"]
+        utils.Parsers = load("renderdoc_extension.utils.parsers",
+                             "renderdoc_extension/utils/parsers.py").Parsers
+        utils.Helpers = NS()
+        utils.Serializers = NS(serialize_flags=lambda value: [])
+        for name in ("resource_catalog", "structured_data", "resource_service", "analysis_service"):
+            module = load("renderdoc_extension.services." + name,
+                          "renderdoc_extension/services/" + name + ".py")
+            if name == "resource_service":
+                resource = module
+            if name == "analysis_service":
+                analysis = module
+        services = packages["renderdoc_extension.services"]
+        for name in ("CaptureManager", "ActionService", "SearchService", "ResourceService",
+                     "PipelineService", "ShaderEditService", "MeshService", "AnalysisService"):
+            setattr(services, name, object)
+        facade = load("renderdoc_extension.renderdoc_facade",
+                      "renderdoc_extension/renderdoc_facade.py")
+        handler = load("renderdoc_extension.request_handler",
+                       "renderdoc_extension/request_handler.py")
+    return resource, analysis, facade, handler
+
+
+RESOURCE, ANALYSIS, FACADE, HANDLER = modules()
+
+
+class Node:
+    def __init__(self, name, basic=Basic.Struct, value=None, children=(), flags=0,
+                 display="", byte_size=0):
+        self.name = name
+        self.type = NS(name=basic.name, basetype=basic, flags=flags, byteSize=byte_size)
+        self.value, self.children = value, list(children)
+        self.data = NS(string=display, basic=NS(u=value, i=value, c=value))
+
+    def NumChildren(self):
+        return len(self.children)
+
+    def GetChild(self, index):
+        return self.children[index]
+
+    def AsResourceId(self):
+        return self.value
+
+    def AsString(self):
+        return self.value
+
+    def AsBool(self):
+        return self.value
+
+    def AsFloat(self):
+        return self.value
+
+
+def desc(rid, kind, name, parents=(), derived=(), chunks=()):
+    return NS(resourceId=ResourceId(rid), type=kind, name=name,
+              parentResources=[ResourceId(i) for i in parents],
+              derivedResources=[ResourceId(i) for i in derived],
+              initialisationChunks=list(chunks))
+
+
+class Controller:
+    def __init__(self):
+        self.resources = [
+            desc(86983, Kind.Buffer, "Buffer 86983", [190, 86826], [99], [0, 1]),
+            desc(190, Kind.Device, "Device 190", derived=[86983]),
+            desc(86826, Kind.Memory, "Memory 86826", derived=[86983]),
+            desc(200, Kind.Shader, "Shader 200"), desc(201, Kind.View, "View 201"),
+            desc(202, Kind.Texture, "Same"), desc(203, Kind.SwapchainImage, "Same"),
+        ]
+        self.buffers = [NS(resourceId=self.resources[0].resourceId, length=11040, creationFlags=8)]
+        self.textures = [NS(resourceId=r.resourceId, width=8, height=8, depth=1,
+                            format=NS(Name=lambda: "RGBA8"), mips=1, arraysize=1,
+                            byteSize=256, type="Texture2D", cubemap=False, msSamp=1)
+                         for r in self.resources if r.type in (Kind.Texture, Kind.SwapchainImage)]
+        self.chunks = [
+            Node("vkCreateBuffer", Basic.Chunk, children=[
+                Node("device", Basic.Resource, self.resources[1].resourceId),
+                Node("CreateInfo", children=[
+                    Node("size", Basic.UnsignedInteger, 11040),
+                    Node("internal", Basic.UnsignedInteger, 99, flags=Flags.Hidden),
+                    Node("usage", Basic.Enum, 3, flags=Flags.HasCustomString, display="A | B"),
+                    Node("size", Basic.UnsignedInteger, 22),
+                ]),
+            ]),
+            Node("vkBindBufferMemory", Basic.Chunk, children=[
+                Node("memory", Basic.Resource, self.resources[2].resourceId),
+                Node("memoryOffset", Basic.UnsignedInteger, 98304),
+            ]),
+            Node("unrelated"),
+        ]
+        self.usages = [NS(eventId=eid, usage=use, view=ResourceId(view)) for eid, use, view in
+                       [(10, Usage.Clear, 0), (20, Usage.CS_RWResource, 201),
+                        (30, Usage.CS_Resource, 0)]]
+        self.fail_usage = False
+        self.fail_structured = False
+        self.usage_calls = []
+
+    def GetResources(self):
+        return self.resources
+
+    def GetTextures(self):
+        return self.textures
+
+    def GetBuffers(self):
+        return self.buffers
+
+    def GetUsage(self, rid):
+        # OpenGL-style bindings must receive the actual catalog object.
+        assert rid is self.resources[0].resourceId
+        self.usage_calls.append(rid)
+        if self.fail_usage:
+            raise RuntimeError("driver query failed")
+        return self.usages
+
+    def GetStructuredFile(self):
+        if self.fail_structured:
+            raise RuntimeError("structured data unavailable")
+        return NS(chunks=self.chunks)
+
+    def GetRootActions(self):
+        draw = NS(eventId=20, flags=0, children=[], GetName=lambda _: "Dispatch")
+        return [NS(eventId=1, flags=ActionFlags.PushMarker, children=[draw],
+                   GetName=lambda _: "Compute Pass #1")]
+
+
+class ResourceTests(unittest.TestCase):
+    def setUp(self):
+        self.controller = Controller()
+        self.names = {}
+        self.loaded = True
+        self.invokes = 0
+        self.in_callback = False
+        self.ctx = NS(IsCaptureLoaded=lambda: self.loaded, GetResourceName=self.name)
+        self.service = RESOURCE.ResourceService(self.ctx, self.invoke)
+        self.analysis = ANALYSIS.AnalysisService(self.ctx, self.invoke, None, None, self.service, None)
+        self.facade = FACADE.RenderDocFacade.__new__(FACADE.RenderDocFacade)
+        self.facade._resource, self.facade._analysis = self.service, self.analysis
+        self.handler = HANDLER.RequestHandler(self.facade)
+
+    def name(self, rid):
+        return self.names.get(int(rid), next((r.name for r in self.controller.resources
+                                             if int(r.resourceId) == int(rid)), ""))
+
+    def invoke(self, callback):
+        self.assertFalse(self.in_callback, "nested BlockInvoke")
+        self.invokes += 1
+        self.in_callback = True
+        try:
+            callback(self.controller)
+        finally:
+            self.in_callback = False
+
+    def test_full_directory_filters_stable_order_and_rename(self):
+        result = self.service.list_resources()
+        self.assertEqual(result["total_count"], 7)
+        self.assertEqual(set(result["items"][0]), {"resource_id", "name", "resource_type"})
+        self.assertEqual(self.service.list_resources("texture")["total_count"], 1)
+        self.assertEqual(self.service.list_resources("swapchain_image")["total_count"], 1)
+        page = self.service.list_resources(name_filter="sAmE", offset=1, limit=1)
+        self.assertEqual(page["items"][0]["resource_id"], "ResourceId::203")
+        self.names[190] = "Renamed"
+        self.assertEqual(self.service.list_resources(name_filter="renamed")["total_count"], 1)
+        ids = [i["resource_id"] for i in self.service.list_resources(sort_by="resource_id")["items"]]
+        self.assertEqual(ids[0], "ResourceId::190")
+        self.assertEqual(self.controller.usage_calls, [])
+
+    def test_inspection_matches_buffer_relations_and_summary(self):
+        result = self.service.inspect_resource("86983")
+        json.dumps(result, allow_nan=False)
+        self.assertEqual(self.invokes, 1)
+        self.assertEqual(result["metadata"]["byte_size"], 11040)
+        relations = result["related_resources"]["items"]
+        self.assertEqual([i["relationship"] for i in relations], ["parent", "parent", "derived"])
+        self.assertTrue(relations[2]["missing"])
+        self.assertEqual(result["usage"]["event_count"], 3)
+        self.assertNotIn("events", result["usage"])
+        self.assertEqual(result["initialization"]["items"][1]["name"], "vkBindBufferMemory")
+        self.assertEqual(self.service.inspect_resource("86983", 2, 1)["related_resources"]["items"],
+                         relations[2:])
+
+    def test_many_relations_and_initialization_calls_are_paged(self):
+        self.controller.resources[0].derivedResources = [ResourceId(i) for i in range(1000, 1600)]
+        self.controller.resources[0].initialisationChunks = [0] * 25
+        result = self.service.inspect_resource("86983")
+        self.assertEqual(result["related_resources"]["total_count"], 602)
+        self.assertEqual(result["related_resources"]["returned_count"], 50)
+        self.assertEqual(result["initialization"]["returned_count"], 20)
+        self.assertTrue(result["initialization"]["has_more"])
+        self.assertEqual(self.service.get_resource_initialization("86983", offset=20)["returned_count"], 5)
+
+    def test_usage_unavailable_empty_and_failure_are_distinct(self):
+        self.assertEqual(self.service.inspect_resource("190")["usage"]["reason"], "unsupported_resource_type")
+        self.assertFalse(self.analysis.trace_resource_usage("190")["available"])
+        self.controller.usages = []
+        self.assertTrue(self.service.inspect_resource("86983")["usage"]["available"])
+        self.controller.fail_usage = True
+        self.controller.fail_structured = True
+        result = self.service.inspect_resource("86983")
+        self.assertEqual(result["usage"]["reason"], "query_failed")
+        self.assertEqual(result["initialization"]["reason"], "query_failed")
+        self.assertEqual(result["metadata"]["byte_size"], 11040)
+        with self.assertRaisesRegex(ValueError, "RESOURCE_QUERY_FAILED"):
+            self.analysis.trace_resource_usage("86983")
+
+    def test_usage_paging_preserves_unmatched_actions_and_global_summaries(self):
+        result = self.analysis.trace_resource_usage("86983", before_event_id=25, offset=2, limit=1)
+        self.assertEqual(result["total_count"], 3)
+        self.assertEqual(result["events"][0]["event_id"], 30)
+        self.assertEqual(result["latest_writer_before_event"]["event_id"], 20)
+        self.assertEqual(result["read_count"], 2)
+        self.assertEqual(result["write_count"], 2)
+        self.assertNotIn("reads", result)
+        result = self.analysis.trace_resource_usage("86983", marker_filter="compute")
+        self.assertEqual(result["total_count"], 1)
+        self.assertEqual(result["events"][0]["view_resource_id"], "ResourceId::201")
+        self.assertEqual(result["events"][0]["marker_path"], "Compute Pass #1")
+        self.assertEqual(self.analysis.trace_resource_usage("86983", event_id_min=25)["total_count"], 1)
+        self.assertEqual(self.analysis.trace_resource_usage("86983", exclude_markers=["compute"])["total_count"], 0)
+
+    def test_multiple_usages_at_one_event_have_distinct_record_and_event_counts(self):
+        self.controller.usages.append(NS(eventId=20, usage=Usage.CS_Resource, view=ResourceId(0)))
+        result = self.analysis.trace_resource_usage("86983", limit=1)
+        self.assertEqual((result["usage_count"], result["event_count"]), (4, 3))
+        self.assertEqual(self.service.inspect_resource("86983")["usage"]["event_count"], 3)
+
+    def test_initialization_paths_hidden_fields_and_duplicate_names(self):
+        root = self.service.get_resource_initialization("86983", 0)
+        self.assertEqual(root["children"]["items"][1]["child_path"], [1])
+        self.assertEqual(root["children"]["items"][0]["value"]["resource_id"], "ResourceId::190")
+        result = self.service.get_resource_initialization("86983", 0, [1], 1, 1)
+        node = result["children"]["items"][0]
+        self.assertEqual(node["child_path"], [1, 2])
+        self.assertEqual(node["display_value"], "A | B")
+        self.assertEqual(node["value"], 3)
+        second = self.service.get_resource_initialization("86983", 0, [1, 3])
+        self.assertEqual(second["node"]["value"], 22)
+        self.assertEqual(second["children"]["total_count"], 0)
+        memory = self.service.get_resource_initialization("86983", 1)
+        self.assertEqual(memory["children"]["items"][1]["value"], 98304)
+
+    def test_structured_scalars_arrays_and_truncation_are_json_safe(self):
+        self.controller.chunks[0] = Node("root", Basic.Chunk, children=[
+            Node("null", Basic.Null), Node("blob", Basic.Buffer, byte_size=999999),
+            Node("text", Basic.String, "x" * 5000), Node("signed", Basic.SignedInteger, -4),
+            Node("nan", Basic.Float, float("nan")), Node("bool", Basic.Boolean, True),
+            Node("array", Basic.Array, children=[Node("e", Basic.UnsignedInteger, i) for i in range(1000)]),
+            Node("char", Basic.Character, "x"), Node("gpu", Basic.GPUAddress, 2 ** 63),
+        ])
+        result = self.service.get_resource_initialization("86983", 0)
+        json.dumps(result, allow_nan=False)
+        items = result["children"]["items"]
+        self.assertIsNone(items[0]["value"])
+        self.assertTrue(items[1]["content_omitted"])
+        self.assertEqual(items[1]["byte_size"], 999999)
+        self.assertEqual(len(items[2]["value"]), 4096)
+        self.assertTrue(items[2]["value_truncated"])
+        self.assertEqual(items[3]["value"], -4)
+        self.assertTrue(items[5]["value"])
+        page = self.service.get_resource_initialization("86983", 0, [6], offset=995, limit=5)
+        self.assertEqual(page["children"]["total_count"], 1000)
+        self.assertEqual(page["children"]["items"][0]["value"], 995)
+        self.assertFalse(page["children"]["has_more"])
+
+    def test_validation_and_route_error_codes(self):
+        for method, params, code in [
+            ("list_resources", {"resource_type": "nonsense"}, -32602),
+            ("list_resources", {"sort_by": "size"}, -32602),
+            ("list_resources", {"offset": -1}, -32602),
+            ("list_resources", {"limit": 501}, -32602),
+            ("inspect_resource", {"resource_id": "nope"}, -32602),
+            ("inspect_resource", {"resource_id": "999"}, -32000),
+            ("inspect_resource", {"resource_id": "190", "related_limit": True}, -32602),
+            ("get_resource_initialization", {"resource_id": "86983", "chunk_index": 2}, -32602),
+            ("get_resource_initialization", {"resource_id": "86983", "chunk_index": 0,
+                                             "child_path": [9]}, -32602),
+            ("get_resource_initialization", {"resource_id": "86983", "child_path": [1]}, -32602),
+            ("get_resource_initialization", {"resource_id": "86983", "child_path": 0}, -32602),
+            ("get_resource_initialization", {"resource_id": "86983", "chunk_index": True}, -32602),
+        ]:
+            with self.subTest(method=method, params=params):
+                result = self.handler.handle({"id": 1, "method": method, "params": params})
+                self.assertEqual(result["error"]["code"], code)
+        self.loaded = False
+        with self.assertRaisesRegex(ValueError, "CAPTURE_NOT_LOADED"):
+            self.service.list_resources()
+
+    def test_catalog_is_request_local_and_failures_are_not_silenced(self):
+        self.controller.resources[0].name = "changed capture"
+        self.assertEqual(self.service.inspect_resource("86983")["resource"]["name"], "changed capture")
+        self.controller.GetResources = lambda: (_ for _ in ()).throw(RuntimeError("catalog failed"))
+        with self.assertRaisesRegex(RuntimeError, "catalog failed"):
+            self.service.list_resources()
+
+    def test_mcp_functions_route_all_new_parameters(self):
+        from mcp_server import server
+        calls = []
+
+        def call(method, params):
+            calls.append((method, params))
+            response = self.handler.handle(json.loads(json.dumps(
+                {"id": "contract", "method": method, "params": params})))
+            if "error" in response:
+                raise AssertionError(response)
+            return json.loads(json.dumps(response["result"], allow_nan=False))
+
+        with patch.object(server.bridge, "call", call):
+            self.assertEqual(server.list_resources(sort_by="resource_id", offset=1, limit=1)["returned_count"], 1)
+            self.assertEqual(server.inspect_resource("86983", related_offset=2, related_limit=1)
+                             ["related_resources"]["items"][0]["relationship"], "derived")
+            self.assertEqual(server.get_resource_initialization("86983", 0, [1, 3])["node"]["value"], 22)
+            result = server.trace_resource_usage("86983", event_id_range={"min": 20},
+                                                 before_event_id=25, offset=1, limit=1)
+            self.assertEqual(result["events"][0]["event_id"], 30)
+            self.assertEqual(result["total_count"], 2)
+        self.assertEqual(len(calls), 4)
+
+    def test_tools_roundtrip_through_real_file_ipc(self):
+        # Reuse the isolated IPC fixture; no running RenderDoc process is needed.
+        from test_bridge import BridgeTests, CLIENT
+        from mcp_server import server
+        fixture = BridgeTests("test_concurrent_clients_are_serialized")
+        fixture.setUp()
+        try:
+            fixture.server.handler = self.handler
+            fixture.start_server()
+            with patch.object(server, "bridge", CLIENT.RenderDocBridge()):
+                self.assertEqual(server.list_resources(resource_type="device")["total_count"], 1)
+                self.assertEqual(server.inspect_resource("86983")["metadata"]["byte_size"], 11040)
+                self.assertEqual(server.get_resource_initialization("86983", 1, [1])["node"]["value"], 98304)
+                self.assertEqual(server.trace_resource_usage("86983", offset=1, limit=1)
+                                 ["events"][0]["event_id"], 20)
+                with self.assertRaises(CLIENT.RenderDocBridgeError):
+                    server.get_resource_initialization("86983", 2)
+        finally:
+            fixture.tearDown()
+
+
+if __name__ == "__main__":
+    unittest.main()

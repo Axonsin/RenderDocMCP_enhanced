@@ -163,30 +163,69 @@ search_draws(by="resource", query="ResourceId::12345")
 
 ### 资源空间浏览
 
+以下只读工具对应 Resource Inspector 的数据，不改变当前选中的事件或资源。资源 ID、chunk 索引和参数路径仅属于当前捕获。所有分页要求 `offset >= 0`、`1 <= limit <= 500`，返回 `total_count`、`offset`、`limit`、`returned_count`、`has_more`。
+
 #### `list_resources`
 
-使用统一的分页接口列出 texture 或 buffer。
+通过 `GetResources()` 枚举全部 API 对象，包括 Device、Memory、Shader、View、CommandBuffer 等。
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `resource_type` | `"texture"` / `"buffer"` | 是 | | 要列出的资源类型 |
-| `name_filter` | `str` | 否 | | 名称部分匹配（不区分大小写） |
-| `offset` | `int` | 否 | `0` | 分页起始索引 |
-| `limit` | `int` | 否 | `50` | 最大返回资源数 |
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `resource_type` | `str` | `"all"` | `all` 或 RenderDoc ResourceType 的小写下划线名称，精确匹配 |
+| `name_filter` | `str` | `None` | 显示名称的子串匹配，不区分大小写 |
+| `offset` | `int` | `0` | 匹配结果的起始位置 |
+| `limit` | `int` | `50` | 每页 1–500 项 |
+| `sort_by` | `str` | `"name"` | 按 `name` 或数字 `resource_id` 排序；同名时按数字 ID 排序 |
 
-**返回值：** `{"items": [...], "total_count": 150, "offset": 0, "limit": 50, "returned_count": 50}`
+每项仅包含 `resource_id`、`name`、`resource_type`。名称包含 RenderDoc 中的用户重命名。`texture` 与 `swapchain_image` 是独立的类型过滤值。
 
-**示例：**
+```python
+list_resources()  # 全部 API 对象
+list_resources(resource_type="memory", sort_by="resource_id")
+list_resources(resource_type="texture", name_filter="Scene", offset=50)
 ```
-# 按名称过滤列出纹理
-list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
 
-# 列出缓冲区
-list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
+#### `inspect_resource`
 
-# 分页访问
-list_resources(resource_type="texture", offset=50, limit=50)
+参数：必填 `resource_id: str`，可选 `related_offset: int = 0`、`related_limit: int = 50`。
+
+返回 `resource`（身份）、`metadata`（纹理/缓冲区详情，其他类型为 `{}`）、`related_resources`、`usage`、`initialization`。
+
+- 关联资源包含 `relationship: "parent" | "derived"` 和资源身份。父资源优先，各组按名称和数字 ID 排序。关联目标不存在时仍保留 ID，并标记 `missing: true`。
+- `usage` 包含可用状态、使用记录数 `usage_count`、去重事件数 `event_count`、原始用途统计 `usage_counts`，不包含事件列表。不适用时为 `available: false, reason: "unsupported_resource_type"`；查询成功但没有记录时计数为零；驱动查询失败时为 `reason: "query_failed"`，附带错误。
+- `initialization` 返回前 20 项初始化调用目录（`chunk_index`、`name`、`child_count`）及分页信息，后续通过 `get_resource_initialization(offset=20)` 读取。无效目录索引保留并标注错误。某一区域失败不丢弃其余检查结果。
+
+```python
+inspect_resource(resource_id="ResourceId::86983")
+inspect_resource(resource_id="ResourceId::86826", related_offset=50)
 ```
+
+#### `get_resource_initialization`
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `resource_id` | `str` | 必填 | 被检查的资源 |
+| `chunk_index` | `int` | `None` | 省略时列举调用；指定时必须使用属于该资源的返回索引 |
+| `child_path` | `list[int]` | `[]` | 相对于所选 chunk 的原始子节点索引路径，直接复用返回值 |
+| `offset` | `int` | `0` | 调用目录或当前节点可见子节点的分页偏移 |
+| `limit` | `int` | `50` | 每页 1–500 项 |
+
+省略 `chunk_index` 返回分页调用目录；指定后返回 `node` 和分页 `children`。每个节点包含 `name`、`type`、`basic_type`、`child_path`、原始 `child_count`；标量另有 `value`。结构体与数组每次只展开一层。子节点分页隐藏 Hidden 字段，但路径保留原始索引，因此同名字段及隐藏兄弟节点不会导致路径歧义。分页总数按可见子节点计算。
+
+枚举/位标志同时保留数字值和可用的 `display_value`；资源引用返回资源身份。二进制只返回 `byte_size` 与 `content_omitted`。文本值和显示字符串最多 4096 字符，截断时提供 `<field>_truncated`、`<field>_length`。非有限浮点数以 `value: null` 和 `non_finite` 标签表示。
+
+```python
+get_resource_initialization(resource_id="ResourceId::86983")
+# 使用前一步返回的 chunk_index 与 child_path，以下索引仅为示例：
+get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42)
+get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, child_path=[1])
+```
+
+无效分页、排序、资源类型、chunk 归属及节点路径返回参数错误；资源不存在、未加载捕获和底层查询失败返回运行时错误。本版仅对纹理/缓冲区（含具有纹理描述符的交换链图像）查询 usage。初始化参数描述创建和设置过程，当前资源内容仍通过数据读取工具获取。
+
+**迁移说明：** `list_resources` 默认列举全部资源，返回紧凑身份；原先读取的尺寸、格式、大小改从 `inspect_resource(...)["metadata"]` 获取，也可继续使用 `get_texture_info`。`trace_resource_usage` 移除重复的 `reads`/`writes` 数组，统一读取分页 `events`，按 `access` 分类并通过 `has_more` 翻页；其 `resource` 同样改为紧凑身份。`event_count` 为去重 EID 数，`usage_count`/`total_count` 为使用记录数。
+
+安装/重新加载新版扩展并重启 MCP 服务后，打开捕获，运行 `python scripts/validate_resources_live.py --resource-id ResourceId::86983`（替换为当前捕获中的 ID）。该只读脚本输出 JSON 报告，供对照 Resource Inspector 检查，不改变当前选择。自动化测试使用模拟绑定和真实文件 IPC，不能替代真实捕获验证。
 
 ---
 
@@ -542,8 +581,10 @@ inspect_event(event_id=1517)
 | `event_id_min` | `int` | 否 | | event 范围下界的旧版别名 |
 | `event_id_max` | `int` | 否 | | event 范围上界的旧版别名 |
 | `before_event_id` | `int` | 否 | | 计算此 event 之前的最近写入者 |
+| `offset` | `int` | 否 | `0` | 过滤后的分页偏移 |
+| `limit` | `int` | 否 | `100` | 每页 1–500 项 |
 
-**返回值：** 资源元数据、使用角色、读/写事件列表、写入者摘要。
+**返回值：** `available`、紧凑 `resource`、分页 `events`、分页字段、用途/读写统计及写入事件摘要。统计与写入摘要基于分页前全部匹配记录；`before_event_id` 只影响此前写入摘要。事件保留原始 `usage`、可选 `view_resource_id`、marker 和推导的 `access`（`access_source: "usage_classification"`）。缺失 action 的记录仍保留 EID/usage；指定 marker 条件时无法确认 marker 的记录不匹配。不适用与成功空结果分别表达。首版不合并 UI 的 EID 区间。
 
 **示例：**
 ```

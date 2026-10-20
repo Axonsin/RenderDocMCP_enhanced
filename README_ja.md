@@ -173,7 +173,9 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 #### リソース空間閲覧
 
-- `list_resources` - texture と buffer を 1 つのページネーションインターフェースで一覧表示
+- `list_resources` - 全 API オブジェクトを型・名前で絞り込み、ページ単位で一覧表示
+- `inspect_resource` - メタデータ、親・派生リソース、使用統計、初期化呼び出しを取得
+- `get_resource_initialization` - 初期化呼び出しとパラメータツリーをパスで参照
 
 ### 局所データ分析能力
 

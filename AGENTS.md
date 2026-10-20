@@ -65,7 +65,9 @@ RenderDocMCP/
 | `list_shader_replacements` | 查询生效替换与各编辑会话状态 |
 | `export_shader_source` | 导出编辑后的 shader 源码（UTF-8，不覆盖已有文件） |
 | `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
-| `list_resources` | 资源枚举（texture/buffer，支持名称过滤和分页） |
+| `list_resources` | 全部 API 对象目录（支持类型/名称过滤、排序和分页） |
+| `inspect_resource` | 资源元数据、父/派生关系、使用统计和初始化调用目录 |
+| `get_resource_initialization` | 初始化调用目录和按索引路径展开的参数树 |
 | `get_texture_info` | 纹理元数据 |
 | `get_texture_data` | 纹理像素数据获取（支持 mip/slice/3D 切片） |
 | `save_texture` | 将纹理保存为图片文件（支持 PNG/JPG/BMP/TGA/EXR/DDS/HDR） |
@@ -100,41 +102,29 @@ open_capture(capture_path="D:\\captures\\game.rdc")
 # → {"success": true, "filename": "game.rdc", "api": "D3D11"}
 ```
 
-### 资源枚举工具
+### 资源枚举与检查工具
 
 ```python
-# 统一资源枚举接口
-list_resources(resource_type="texture")
-# → {
-#     "items": [
-#         {"resource_id": "ResourceId::2495", "name": "SceneColor", "width": 1920, "height": 1080,
-#          "depth": 1, "format": "R8G8B8A8_UNORM", "mip_levels": 1, "array_size": 1,
-#          "byte_size": 8294400, "dimension": "Texture2D", "cubemap": false, "msaa_samples": 1},
-#         ...
-#     ],
-#     "total_count": 150,
-#     "offset": 0, "limit": 50, "returned_count": 50
-# }
+list_resources()  # 默认 all，覆盖 Device/Memory/Shader/View/Texture/Buffer 等全部 API 对象
+list_resources(resource_type="texture", name_filter="Character", offset=0, limit=50)
+# items 每项为 resource_id/name/resource_type；包含 total_count/returned_count/has_more 等分页信息。
+# texture 与 swapchain_image 独立过滤，支持 sort_by="name" 或 "resource_id"。
 
-list_resources(resource_type="buffer")
-# → {
-#     "items": [
-#         {"resource_id": "ResourceId::3001", "name": "CameraCB",
-#          "byte_size": 256, "creation_flags": ["Constants"]},
-#         ...
-#     ],
-#     "total_count": 80,
-#     "offset": 0, "limit": 50, "returned_count": 50
-# }
+inspect_resource(resource_id="ResourceId::86983")
+# resource、metadata、related_resources、usage、initialization。
+# related_resources 包含 parent/derived 关系，可用 related_offset/related_limit 分页。
+# usage 为统计；initialization 为前 20 项调用目录。
 
-# 按名称过滤（部分匹配，不区分大小写）
-list_resources(resource_type="texture", name_filter="Character")
-
-# 分页
-list_resources(resource_type="texture", offset=50, limit=50)
-
-# creation_flags 可能的值: "Vertex", "Index", "Constants", "ReadWrite", "Indirect"
+get_resource_initialization(resource_id="ResourceId::86983", offset=20)
+# 指定返回的 chunk_index 和 child_path 后，读取目标节点及一页可见子节点。
+get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, child_path=[1])
 ```
+
+分页要求 offset >= 0、1 <= limit <= 500。纹理尺寸/格式、缓冲区大小等详情改从
+`inspect_resource.metadata` 获取。`trace_resource_usage` 统一返回分页 events（默认 limit=100），
+不再返回重复的 reads/writes 数组；统计与写入摘要基于分页前全部匹配记录。
+`event_count` 为去重 EID 数，`usage_count` 为记录数。初始化参数每次只展开一层，路径使用
+原始子节点索引；大块二进制仅返回大小，超长文本明确标记截断。详细契约见 docs/tools_zh.md。
 
 ### 反向搜索工具
 

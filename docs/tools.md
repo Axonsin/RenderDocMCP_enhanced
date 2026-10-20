@@ -163,30 +163,69 @@ search_draws(by="resource", query="ResourceId::12345")
 
 ### Resource Space Browsing
 
+These read-only tools expose the Resource Inspector data without changing the selected event or resource. IDs, chunk indices and parameter paths belong to the currently loaded capture. All pages require `offset >= 0` and `1 <= limit <= 500` and return `total_count`, `offset`, `limit`, `returned_count`, and `has_more`.
+
 #### `list_resources`
 
-List textures or buffers with a unified paginated interface.
+List every API object from `GetResources()`, including devices, memory, shaders, views and command buffers.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `resource_type` | `"texture"` / `"buffer"` | Yes | | Resource family to list |
-| `name_filter` | `str` | No | | Partial name match (case-insensitive) |
-| `offset` | `int` | No | `0` | Starting index for pagination |
-| `limit` | `int` | No | `50` | Maximum resources to return |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `resource_type` | `str` | `"all"` | `all` or an exact snake_case RenderDoc ResourceType |
+| `name_filter` | `str` | `None` | Case-insensitive display-name substring |
+| `offset` | `int` | `0` | First matching resource |
+| `limit` | `int` | `50` | Page size, 1–500 |
+| `sort_by` | `str` | `"name"` | `name` or numeric `resource_id`; ID breaks name ties |
 
-**Returns:** `{"items": [...], "total_count": 150, "offset": 0, "limit": 50, "returned_count": 50}`
+Each item contains only `resource_id`, `name`, and `resource_type`. Display names include user renames. `texture` and `swapchain_image` are distinct type filters.
 
-**Examples:**
+```python
+list_resources()  # All API objects
+list_resources(resource_type="memory", sort_by="resource_id")
+list_resources(resource_type="texture", name_filter="Scene", offset=50)
 ```
-# List textures with name filter
-list_resources(resource_type="texture", name_filter="Scene", offset=0, limit=50)
 
-# List buffers
-list_resources(resource_type="buffer", name_filter="Camera", offset=0, limit=50)
+#### `inspect_resource`
 
-# Paginated access
-list_resources(resource_type="texture", offset=50, limit=50)
+Parameters: required `resource_id: str`, `related_offset: int = 0`, `related_limit: int = 50`.
+
+Returns `resource` (identity), `metadata` (texture/buffer details, otherwise `{}`), `related_resources`, `usage`, and `initialization`.
+
+- Related items contain `relationship: "parent" | "derived"` and a resource identity. Parents precede derived resources; each group is sorted by display name and numeric ID. Missing referenced objects retain their IDs with `missing: true`.
+- `usage` contains availability, `usage_count`, distinct `event_count` and raw `usage_counts`, without event records. Unsupported object types return `available: false, reason: "unsupported_resource_type"`. Successful empty queries return zero counts. A driver failure is reported as `reason: "query_failed"` with an error.
+- `initialization` contains the first 20 call-directory items (`chunk_index`, `name`, `child_count`) and pagination. Continue with `get_resource_initialization(offset=20)`. Invalid directory indices are preserved with an error. Section failures do not discard the remaining inspection result.
+
+```python
+inspect_resource(resource_id="ResourceId::86983")
+inspect_resource(resource_id="ResourceId::86826", related_offset=50)
 ```
+
+#### `get_resource_initialization`
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `resource_id` | `str` | Required | Resource whose initialization is inspected |
+| `chunk_index` | `int` | `None` | Omit to list calls; otherwise use a returned index belonging to this resource |
+| `child_path` | `list[int]` | `[]` | Raw child indices from a returned node, relative to the selected chunk |
+| `offset` | `int` | `0` | Offset in the call directory or visible immediate children |
+| `limit` | `int` | `50` | Page size, 1–500 |
+
+Without `chunk_index`, returns a paginated call directory. With it, returns `node` and paginated `children`. Each node has `name`, `type`, `basic_type`, `child_path` and raw `child_count`; scalar nodes also contain `value`. Structures and arrays expand one level per request. Hidden children are excluded from child pages, but returned paths retain raw indices so duplicate names and hidden siblings cannot make paths ambiguous. Child-page totals count visible children.
+
+Enums/flags retain their numeric value and any available `display_value`. Resource-valued parameters contain resource identities. Binary data is represented by `byte_size` and `content_omitted`, never payload bytes. Text values/display strings are limited to 4096 characters with `<field>_truncated` and `<field>_length`. Non-finite floats use `value: null` and a `non_finite` label.
+
+```python
+get_resource_initialization(resource_id="ResourceId::86983")
+# Use chunk_index and child_path returned by the previous response:
+get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42)
+get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, child_path=[1])
+```
+
+Invalid pagination, sort keys, resource types, chunk ownership and paths produce invalid-parameter errors. Missing resources and capture/query failures produce runtime errors. Only textures/buffers (including swapchain images with texture descriptors) have usage queries in this version. Initialization describes creation/setup, not current buffer or texture contents.
+
+**Migration:** `list_resources` now defaults to all objects and returns compact identities; move width/format/size reads to `inspect_resource(...)["metadata"]` (or existing `get_texture_info`). `trace_resource_usage` returns one paginated `events` list instead of duplicate `reads`/`writes` lists; filter by `access` as needed and follow `has_more`. Its `resource` is also a compact identity. `event_count` counts distinct EIDs; `usage_count`/`total_count` count usage records.
+
+After installing/reloading the updated extension and restarting the MCP server, open a capture and run `python scripts/validate_resources_live.py --resource-id ResourceId::86983` (substitute an ID from that capture). The read-only script prints a JSON report for comparison with Resource Inspector and leaves the current selection unchanged. Automated tests use simulated bindings and real file IPC; they do not replace this live check.
 
 ---
 
@@ -549,8 +588,10 @@ Trace how a resource is read, written, and consumed across matching events.
 | `event_id_min` | `int` | No | | Legacy lower event bound alias |
 | `event_id_max` | `int` | No | | Legacy upper event bound alias |
 | `before_event_id` | `int` | No | | Compute the latest prior writer before this event |
+| `offset` | `int` | No | `0` | Offset after filtering |
+| `limit` | `int` | No | `100` | Page size, 1–500 |
 
-**Returns:** Resource metadata, usage roles, read/write event lists, and writer summaries.
+**Returns:** `available`, compact `resource`, paginated `events`, pagination fields, roles, usage/read/write counts, and writer summaries. Counts and writers cover all matching records before pagination. `before_event_id` only affects the prior-writer summary. Each event retains raw `usage`, optional `view_resource_id`, marker context and inferred `access` (`access_source: "usage_classification"`). Unknown actions retain EID/usage unless marker filters require known context. Unsupported objects return an explicit unavailable reason; successful empty queries remain available. UI EID-range merging is not performed.
 
 **Example:**
 ```
