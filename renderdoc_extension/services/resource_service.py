@@ -319,15 +319,15 @@ class ResourceService:
             result["width"] = tex_desc.width
             result["height"] = tex_desc.height
             result["mip"] = mip
-            result["slice"] = slice_index
+            result["slice_index"] = slice_index
 
         def scoped(controller, event):
             callback(controller)
             if "data" in result and isinstance(result["data"], dict):
-                result["data"]["action_event_id"] = event
+                result["data"]["action_event_id" if action_event_id is not None else "event_id"] = event
                 result["data"]["event_phase"] = "after"
             else:
-                result["action_event_id"] = event
+                result["action_event_id" if action_event_id is not None else "event_id"] = event
                 result["event_phase"] = "after"
         at_event(self.ctx, self._invoke, action_event_id, scoped)
 
@@ -416,7 +416,7 @@ class ResourceService:
             raise ValueError(result["error"])
         return result["texture"]
 
-    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None, action_event_id=None):
+    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None):
         """Get texture pixel data."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
@@ -442,9 +442,9 @@ class ResourceService:
             max_slices = tex_desc.arraysize
             if tex_desc.cubemap:
                 max_slices = tex_desc.arraysize * 6
-            if slice < 0 or slice >= max_slices:
+            if slice_index < 0 or slice_index >= max_slices:
                 result["error"] = "INVALID_SLICE: %d (texture has %d slices)" % (
-                    slice,
+                    slice_index,
                     max_slices,
                 )
                 return
@@ -479,7 +479,7 @@ class ResourceService:
             # Create subresource specification
             sub = rd.Subresource()
             sub.mip = mip
-            sub.slice = slice
+            sub.slice = slice_index
             sub.sample = sample
 
             # Get texture data
@@ -505,7 +505,7 @@ class ResourceService:
                 "height": mip_height,
                 "depth": output_depth,
                 "mip": mip,
-                "slice": slice,
+                "slice_index": slice_index,
                 "sample": sample,
                 "depth_slice": depth_slice,
                 "format": str(tex_desc.format.Name()),
@@ -519,10 +519,10 @@ class ResourceService:
         def scoped(controller, event):
             callback(controller)
             if "data" in result and isinstance(result["data"], dict):
-                result["data"]["action_event_id"] = event
+                result["data"]["action_event_id" if action_event_id is not None else "event_id"] = event
                 result["data"]["event_phase"] = "after"
             else:
-                result["action_event_id"] = event
+                result["action_event_id" if action_event_id is not None else "event_id"] = event
                 result["event_phase"] = "after"
         at_event(self.ctx, self._invoke, action_event_id, scoped)
 

@@ -235,12 +235,12 @@ class MeshService:
 
         return ""
 
-    def get_mesh_summary(self, event_id: int) -> dict:
+    def get_mesh_summary(self, action_event_id: int) -> dict:
         """
         Get mesh summary information for an event.
 
         Args:
-            event_id: Event ID of the draw call
+            action_event_id: Event ID of the draw call
 
         Returns:
             Dict with topology, vertex/index counts, attributes, bounding box
@@ -252,17 +252,17 @@ class MeshService:
 
         def callback(controller):
             # Set frame event
-            controller.SetFrameEvent(event_id, True)
+            controller.SetFrameEvent(action_event_id, True)
 
             # Get action
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetAction(action_event_id)
             if not action:
-                result["error"] = f"INVALID_EVENT_ID: no action at event {event_id}"
+                result["error"] = f"INVALID_ACTION_EVENT_ID: no action at event {action_event_id}"
                 return
 
             # Check if it's a draw call
             if not (action.flags & rd.ActionFlags.Drawcall):
-                result["error"] = f"INVALID_EVENT_ID: event {event_id} is not a draw call"
+                result["error"] = f"INVALID_ACTION_EVENT_ID: event {action_event_id} is not a draw call"
                 return
 
             # Get mesh inputs
@@ -292,8 +292,8 @@ class MeshService:
                     if mesh.vertexResourceId in buffer_cache:
                         buffer_data = buffer_cache[mesh.vertexResourceId]
                         for idx in indices[:1000]:  # Limit for performance
-                            offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
-                            pos = self._unpack_vertex_data(mesh.format, buffer_data, offset)
+                            byte_offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
+                            pos = self._unpack_vertex_data(mesh.format, buffer_data, byte_offset)
                             for i in range(min(3, len(pos))):
                                 min_pos[i] = min(min_pos[i], pos[i])
                                 max_pos[i] = max(max_pos[i], pos[i])
@@ -331,7 +331,7 @@ class MeshService:
                 mesh_name = getattr(action, 'name', '')
 
             result["summary"] = {
-                "event_id": event_id,
+                "action_event_id": action_event_id,
                 "name": mesh_name,
                 "topology": topology,
                 "num_vertices": action.numIndices,
@@ -349,28 +349,24 @@ class MeshService:
 
     def get_mesh_data(
         self,
-        event_id: int,
+        action_event_id: int,
         stage: str = "VSIn",
         offset: int = 0,
         limit: int = 100,
-        start_offset: int = 0,
-        max_vertices: int = 100,
         attributes: Optional[List[str]] = None,
     ) -> dict:
         """
         Get mesh vertex and index data for a specific draw call.
 
         Args:
-            event_id: Event ID of the draw call
+            action_event_id: Event ID of the draw call
             stage: Mesh data stage - "VSIn", "VSOut", or "GSOut"
             offset: Canonical starting vertex offset for pagination (default: 0)
             limit: Canonical maximum number of vertices to return (default: 100, recommended: 100-500)
-            start_offset: Legacy alias for offset
-            max_vertices: Legacy alias for limit
             attributes: Optional list of attribute names to include
 
         Returns:
-            Dict with vertices, indices, topology, attribute info, total_count, has_more
+            Dict with items, indices, topology, attributes, total_count, has_more
         """
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
@@ -378,38 +374,34 @@ class MeshService:
         if stage not in ["VSIn", "VSOut", "GSOut"]:
             raise ValueError(f"INVALID_STAGE: {stage}. Must be VSIn, VSOut, or GSOut")
 
-        if offset != 0 or limit != 100:
-            start_offset = offset
-            max_vertices = limit
-
         result = {"data": None, "error": None}
 
         def callback(controller):
             # Set frame event
-            controller.SetFrameEvent(event_id, True)
+            controller.SetFrameEvent(action_event_id, True)
 
             # Get action
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetAction(action_event_id)
             if not action:
-                result["error"] = f"INVALID_EVENT_ID: no action at event {event_id}"
+                result["error"] = f"INVALID_ACTION_EVENT_ID: no action at event {action_event_id}"
                 return
 
             # Check if it's a draw call
             if not (action.flags & rd.ActionFlags.Drawcall):
-                result["error"] = f"INVALID_EVENT_ID: event {event_id} is not a draw call"
+                result["error"] = f"INVALID_ACTION_EVENT_ID: event {action_event_id} is not a draw call"
                 return
 
             # Get mesh data based on stage
             if stage == "VSIn":
                 mesh_inputs = self._get_mesh_inputs(controller, action)
                 if not mesh_inputs:
-                    result["error"] = f"RESOURCE_NOT_FOUND: no mesh input data available for event {event_id}"
+                    result["error"] = f"RESOURCE_NOT_FOUND: no mesh input data available for event {action_event_id}"
                     return
             else:
                 # VSOut or GSOut
                 postvs_mesh = self._get_postvs_data(controller, action, stage)
                 if not postvs_mesh:
-                    result["error"] = f"RESOURCE_NOT_FOUND: no {stage} data available for event {event_id}"
+                    result["error"] = f"RESOURCE_NOT_FOUND: no {stage} data available for event {action_event_id}"
                     return
                 # For post-VS, we need to get attribute info from shader reflection
                 mesh_inputs = [postvs_mesh]
@@ -434,12 +426,12 @@ class MeshService:
 
             # Calculate pagination info
             total_count = len(all_indices)
-            has_more = (start_offset + max_vertices) < total_count
+            has_more = (offset + limit) < total_count
 
             # Apply pagination
-            end_offset = min(start_offset + max_vertices, total_count)
-            indices = all_indices[start_offset:end_offset]
-            truncated = total_count > max_vertices
+            end_offset = min(offset + limit, total_count)
+            indices = all_indices[offset:end_offset]
+            truncated = total_count > limit
 
             # Batch get buffer data for performance
             buffer_cache = self._batch_get_buffer_data(controller, mesh_inputs)
@@ -465,8 +457,8 @@ class MeshService:
 
                     if mesh.vertexResourceId in buffer_cache:
                         buffer_data = buffer_cache[mesh.vertexResourceId]
-                        offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
-                        values = self._unpack_vertex_data(mesh.format, buffer_data, offset)
+                        byte_offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
+                        values = self._unpack_vertex_data(mesh.format, buffer_data, byte_offset)
 
                         # Store as list
                         vertex[mesh.name] = list(values)[: mesh.format.compCount]
@@ -479,12 +471,12 @@ class MeshService:
                 topology = str(mesh_inputs[0].topology)
 
             result["data"] = {
-                "event_id": event_id,
+                "action_event_id": action_event_id,
                 "stage": stage,
                 "topology": topology,
                 "items": vertices,
-                "offset": start_offset,
-                "limit": max_vertices,
+                "offset": offset,
+                "limit": limit,
                 "returned_count": len(vertices),
                 "total_count": total_count,
                 "num_vertices": len(vertices),
@@ -503,10 +495,10 @@ class MeshService:
 
     def export_mesh_csv(
         self,
-        event_id: int,
+        action_event_id: int,
         output_path: str,
         stage: str = "VSIn",
-        include_attributes: Optional[List[str]] = None,
+        attributes: Optional[List[str]] = None,
     ) -> dict:
         """
         Export mesh data to CSV file.
@@ -518,10 +510,10 @@ class MeshService:
         - Attribute columns: {attribute_name}.{component}
 
         Args:
-            event_id: Event ID of the draw call
+            action_event_id: Event ID of the draw call
             output_path: Output CSV file path
             stage: Mesh data stage - "VSIn", "VSOut", or "GSOut"
-            include_attributes: Optional list of attributes to include
+            attributes: Optional list of attributes to include
 
         Returns:
             Dict with success status and export info
@@ -536,41 +528,41 @@ class MeshService:
 
         def callback(controller):
             # Set frame event
-            controller.SetFrameEvent(event_id, True)
+            controller.SetFrameEvent(action_event_id, True)
 
             # Get action
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetAction(action_event_id)
             if not action:
-                result["error"] = f"No action at event {event_id}"
+                result["error"] = f"No action at event {action_event_id}"
                 return
 
             # Check if it's a draw call
             if not (action.flags & rd.ActionFlags.Drawcall):
-                result["error"] = f"Event {event_id} is not a draw call"
+                result["error"] = f"Event {action_event_id} is not a draw call"
                 return
 
             # Get mesh data based on stage
             if stage == "VSIn":
                 mesh_inputs = self._get_mesh_inputs(controller, action)
                 if not mesh_inputs:
-                    result["error"] = f"No mesh input data available for event {event_id}"
+                    result["error"] = f"No mesh input data available for event {action_event_id}"
                     return
             else:
                 postvs_mesh = self._get_postvs_data(controller, action, stage)
                 if not postvs_mesh:
-                    result["error"] = f"No {stage} data available for event {event_id}"
+                    result["error"] = f"No {stage} data available for event {action_event_id}"
                     return
                 mesh_inputs = [postvs_mesh]
 
             # Filter attributes if specified
-            if include_attributes and stage == "VSIn":
-                attr_names_lower = [a.lower() for a in include_attributes]
+            if attributes and stage == "VSIn":
+                attr_names_lower = [a.lower() for a in attributes]
                 mesh_inputs = [
                     m for m in mesh_inputs
                     if any(n in m.name.lower() for n in attr_names_lower)
                 ]
                 if not mesh_inputs:
-                    result["error"] = f"No matching attributes found: {include_attributes}"
+                    result["error"] = f"No matching attributes found: {attributes}"
                     return
 
             # Get indices
@@ -605,8 +597,8 @@ class MeshService:
                             continue
                         if mesh.vertexResourceId in buffer_cache:
                             buffer_data = buffer_cache[mesh.vertexResourceId]
-                            offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
-                            values = self._unpack_vertex_data(mesh.format, buffer_data, offset)
+                            byte_offset = mesh.vertexByteOffset + mesh.vertexByteStride * idx
+                            values = self._unpack_vertex_data(mesh.format, buffer_data, byte_offset)
                             for j in range(mesh.format.compCount):
                                 attribute_values.append(values[j])
                     unique_vertices[idx] = attribute_values
@@ -643,6 +635,7 @@ class MeshService:
                     idx_file.write(f"{remapped_idx}\n")
 
             result["success"] = True
+            result["action_event_id"] = action_event_id
             result["output_path"] = output_path
             result["index_path"] = index_path
             result["vertex_count"] = len(unique_vertices)

@@ -1,5 +1,5 @@
 """
-Draw call / action operations service for RenderDoc.
+Action operations service for RenderDoc.
 """
 
 import renderdoc as rd
@@ -7,27 +7,27 @@ import renderdoc as rd
 from ..utils import Serializers, Helpers
 from .resource_catalog import build_catalog, paginate, validate_page
 from .structured_data import read_node
+from .replay_query import require_action
 
 
 class ActionService:
-    """Draw call / action operations service"""
+    """Action operations service"""
 
     def __init__(self, ctx, invoke_fn):
         self.ctx = ctx
         self._invoke = invoke_fn
 
-    def get_draw_calls(
+    def get_actions(
         self,
         include_children=True,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
-        only_actions=False,
+        action_event_id_range=None,
+        exclude_marker_actions=False,
         flags_filter=None,
     ):
         """
-        Get all draw calls/actions in the capture with optional filtering.
+        Get the action tree in the capture with optional filtering.
         """
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
@@ -43,9 +43,8 @@ class ActionService:
                 include_children,
                 marker_filter=marker_filter,
                 exclude_markers=exclude_markers,
-                event_id_min=event_id_min,
-                event_id_max=event_id_max,
-                only_actions=only_actions,
+                action_event_id_range=action_event_id_range,
+                exclude_marker_actions=exclude_marker_actions,
                 flags_filter=flags_filter,
             )
 
@@ -117,7 +116,7 @@ class ActionService:
                     child_count = Helpers.count_children(action)
                     top_markers.append({
                         "name": action.GetName(structured_file),
-                        "event_id": action.eventId,
+                        "action_event_id": action.eventId,
                         "child_count": child_count,
                     })
 
@@ -139,26 +138,27 @@ class ActionService:
         self._invoke(callback)
         return result["summary"]
 
-    def get_draw_call_details(self, event_id):
-        """Get detailed information about a specific draw call"""
+    def get_action_details(self, action_event_id):
+        """Get metadata, draw counts, offsets and output resources for an action."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
+        require_action(self.ctx, action_event_id)
 
         result = {"details": None, "error": None}
 
         def callback(controller):
             # Move to the event
-            controller.SetFrameEvent(event_id, True)
+            controller.SetFrameEvent(action_event_id, True)
 
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetAction(action_event_id)
             if not action:
-                result["error"] = "INVALID_EVENT_ID: no action at event %d" % event_id
+                result["error"] = "INVALID_ACTION_EVENT_ID: no action at event %d" % action_event_id
                 return
 
             structured_file = controller.GetStructuredFile()
 
             details = {
-                "event_id": action.eventId,
+                "action_event_id": action.eventId,
                 "action_id": action.actionId,
                 "name": action.GetName(structured_file),
                 "flags": Serializers.serialize_flags(action.flags),
@@ -193,7 +193,7 @@ class ActionService:
         """Read the selected action's API events or expand one call's parameters."""
         validate_page(offset, limit)
         if type(action_event_id) is not int or action_event_id <= 0:
-            raise ValueError("INVALID_EVENT_ID: expected a positive action EID")
+            raise ValueError("INVALID_ACTION_EVENT_ID: expected a positive action EID")
         if api_event_id is not None and (type(api_event_id) is not int or api_event_id <= 0):
             raise ValueError("INVALID_API_EVENT_ID: expected a positive API EID")
         if child_path is not None and (
@@ -210,11 +210,11 @@ class ActionService:
             try:
                 action = self.ctx.GetAction(action_event_id)
                 if action is None or action.eventId != action_event_id:
-                    raise ValueError("INVALID_EVENT_ID: no action at event %d" % action_event_id)
+                    raise ValueError("INVALID_ACTION_EVENT_ID: no action at event %d" % action_event_id)
                 structured = controller.GetStructuredFile()
                 events = list(action.events)
                 context = {"action_event_id": int(action.eventId),
-                           "action_name": str(action.GetName(structured))}
+                           "name": str(action.GetName(structured))}
 
                 def describe(event):
                     index = int(event.chunkIndex)
@@ -258,7 +258,7 @@ class ActionService:
 
     def get_action_timings(
         self,
-        event_ids=None,
+        action_event_ids=None,
         marker_filter=None,
         exclude_markers=None,
     ):
@@ -266,7 +266,7 @@ class ActionService:
         Get GPU timing information for actions.
 
         Args:
-            event_ids: Optional list of specific event IDs to get timings for.
+            action_event_ids: Optional list of specific event IDs to get timings for.
                       If None, returns timings for all actions.
             marker_filter: Only include actions under markers containing this string.
             exclude_markers: Exclude actions under markers containing these strings.
@@ -275,7 +275,7 @@ class ActionService:
             Dictionary with:
             - available: Whether GPU timing counters are supported
             - unit: Time unit (typically "seconds")
-            - timings: List of {event_id, name, duration_seconds, duration_ms}
+            - timings: List of {action_event_id, name, duration_seconds, duration_ms}
             - total_duration_ms: Sum of all durations
         """
         if not self.ctx.IsCaptureLoaded():
@@ -299,7 +299,7 @@ class ActionService:
             # Fetch timing data
             counter_results = controller.FetchCounters([rd.GPUCounter.EventGPUDuration])
 
-            # Build event_id to timing map
+            # Build action_event_id to timing map
             timing_map = {}
             target_counter = int(rd.GPUCounter.EventGPUDuration)
             for r in counter_results:
@@ -355,16 +355,16 @@ class ActionService:
                             continue
 
                     # Check if we should include this event
-                    event_id = action.eventId
+                    action_event_id = action.eventId
                     include = True
-                    if event_ids is not None:
-                        include = event_id in event_ids
+                    if action_event_ids is not None:
+                        include = action_event_id in action_event_ids
 
-                    if include and event_id in timing_map:
-                        duration_sec = timing_map[event_id]
+                    if include and action_event_id in timing_map:
+                        duration_sec = timing_map[action_event_id]
                         duration_ms = duration_sec * 1000.0
                         timings.append({
-                            "event_id": event_id,
+                            "action_event_id": action_event_id,
                             "name": action_name,
                             "duration_seconds": duration_sec,
                             "duration_ms": duration_ms,
@@ -377,8 +377,8 @@ class ActionService:
 
             collect_timings(root_actions)
 
-            # Sort by event_id
-            timings.sort(key=lambda x: x["event_id"])
+            # Sort by action_event_id
+            timings.sort(key=lambda x: x["action_event_id"])
 
             result["data"] = {
                 "available": True,

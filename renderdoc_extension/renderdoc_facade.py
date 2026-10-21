@@ -78,26 +78,24 @@ class RenderDocFacade:
         """Open a capture file in RenderDoc"""
         return self._capture.open_capture(capture_path)
 
-    # ==================== Draw Call / Action Operations ====================
+    # ==================== Action Operations ====================
 
-    def get_draw_calls(
+    def get_actions(
         self,
         include_children=True,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
-        only_actions=False,
+        action_event_id_range=None,
+        exclude_marker_actions=False,
         flags_filter=None,
     ):
-        """Get all draw calls/actions in the capture with optional filtering"""
-        return self._action.get_draw_calls(
+        """Get the action tree in the capture with optional filtering"""
+        return self._action.get_actions(
             include_children=include_children,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
-            event_id_min=event_id_min,
-            event_id_max=event_id_max,
-            only_actions=only_actions,
+            action_event_id_range=action_event_id_range,
+            exclude_marker_actions=exclude_marker_actions,
             flags_filter=flags_filter,
         )
 
@@ -105,26 +103,26 @@ class RenderDocFacade:
         """Get a summary of the current capture frame"""
         return self._action.get_frame_summary()
 
-    def get_draw_call_details(self, event_id):
-        """Get detailed information about a specific draw call"""
-        return self._action.get_draw_call_details(event_id)
+    def get_action_details(self, action_event_id):
+        """Get metadata, draw counts, offsets and output resources for an action."""
+        return self._action.get_action_details(action_event_id=action_event_id)
 
     def get_action_api_calls(self, action_event_id, api_event_id=None, child_path=None,
                              offset=0, limit=50):
         return self._action.get_action_api_calls(
             action_event_id, api_event_id, child_path, offset, limit)
 
-    def get_action_timings(self, event_ids=None, marker_filter=None, exclude_markers=None):
+    def get_action_timings(self, action_event_ids=None, marker_filter=None, exclude_markers=None):
         """Get GPU timing information for actions"""
         return self._action.get_action_timings(
-            event_ids=event_ids,
+            action_event_ids=action_event_ids,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
         )
 
-    def inspect_event(self, event_id):
-        """Get a compact analysis-oriented event inspection bundle."""
-        return self._analysis.inspect_event(event_id)
+    def inspect_action(self, action_event_id):
+        """Get a compact analysis-oriented action inspection bundle."""
+        return self._analysis.inspect_action(action_event_id)
 
     def summarize_capture(self):
         """Get a high-level summary of the current capture."""
@@ -132,9 +130,9 @@ class RenderDocFacade:
 
     # ==================== Search Operations ====================
 
-    def search_draws(self, by, query, stage=None):
-        """Search draw calls using a canonical search interface."""
-        return self._search.search_draws(by, query, stage)
+    def search_actions(self, by, query, stage=None):
+        """Search draw and dispatch actions by shader, texture or resource."""
+        return self._search.search_actions(by, query, stage)
 
     # ==================== Resource Operations ====================
 
@@ -159,9 +157,9 @@ class RenderDocFacade:
         """Get texture metadata"""
         return self._resource.get_texture_info(resource_id)
 
-    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None, action_event_id=None):
+    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None):
         """Get texture pixel data"""
-        return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice, action_event_id)
+        return self._resource.get_texture_data(resource_id, mip, slice_index, sample, depth_slice, action_event_id)
 
     def save_texture(
         self,
@@ -232,8 +230,7 @@ class RenderDocFacade:
         resource_id,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
+        event_id_range=None,
         before_event_id=None,
         offset=0,
         limit=100,
@@ -244,21 +241,20 @@ class RenderDocFacade:
             resource_id=resource_id,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
-            event_id_min=event_id_min,
-            event_id_max=event_id_max,
+            event_id_range=event_id_range,
             before_event_id=before_event_id,
             offset=offset,
             limit=limit,
             categories=categories,
         )
 
-    def trace_event_dependencies(self, event_id):
-        """Trace the resource dependencies of an event."""
-        return self._analysis.trace_event_dependencies(event_id)
+    def trace_action_dependencies(self, action_event_id):
+        """Trace the resource dependencies of an action."""
+        return self._analysis.trace_action_dependencies(action_event_id)
 
-    def diff_events(self, event_id_a, event_id_b):
-        """Compare two events."""
-        return self._analysis.diff_events(event_id_a, event_id_b)
+    def diff_actions(self, action_event_id_a, action_event_id_b):
+        """Compare two actions."""
+        return self._analysis.diff_actions(action_event_id_a, action_event_id_b)
 
     def analyze_pass(self, marker_filter, exclude_markers=None):
         """Summarize work under a marker subtree."""
@@ -266,37 +262,33 @@ class RenderDocFacade:
 
     # ==================== Mesh Operations ====================
 
-    def get_mesh_summary(self, event_id):
+    def get_mesh_summary(self, action_event_id):
         """Get mesh summary information for a draw call"""
-        return self._mesh.get_mesh_summary(event_id)
+        return self._mesh.get_mesh_summary(action_event_id)
 
     def get_mesh_data(
         self,
-        event_id,
+        action_event_id,
         stage="VSIn",
         offset=0,
         limit=100,
-        start_offset=0,
-        max_vertices=100,
         attributes=None,
     ):
         """Get mesh vertex and index data for a draw call (with pagination)"""
         return self._mesh.get_mesh_data(
-            event_id=event_id,
+            action_event_id=action_event_id,
             stage=stage,
             offset=offset,
             limit=limit,
-            start_offset=start_offset,
-            max_vertices=max_vertices,
             attributes=attributes,
         )
 
     def export_mesh_csv(
         self,
-        event_id,
+        action_event_id,
         output_path,
         stage="VSIn",
-        include_attributes=None,
+        attributes=None,
     ):
         """Export mesh data to CSV file"""
-        return self._mesh.export_mesh_csv(event_id, output_path, stage, include_attributes)
+        return self._mesh.export_mesh_csv(action_event_id, output_path, stage, attributes)

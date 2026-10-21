@@ -15,14 +15,12 @@ from PySide2.QtCore import QObject, QTimer
 # IPC directory
 IPC_DIR = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
 REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
-RESPONSE_FILE = os.path.join(IPC_DIR, "response.json")
-LOCK_FILE = os.path.join(IPC_DIR, "lock")
 
 
 class MCPBridgeServer(QObject):
     """File-based IPC server for MCP bridge communication"""
 
-    def __init__(self, host, port, handler, parent=None):
+    def __init__(self, handler, parent=None):
         super(MCPBridgeServer, self).__init__(parent)
         self.handler = handler
         self._timer = None
@@ -64,7 +62,7 @@ class MCPBridgeServer(QObject):
 
     def _cleanup_files(self):
         """Remove IPC files"""
-        for f in [REQUEST_FILE, RESPONSE_FILE, LOCK_FILE]:
+        for f in [REQUEST_FILE]:
             try:
                 if os.path.exists(f):
                     os.remove(f)
@@ -80,10 +78,6 @@ class MCPBridgeServer(QObject):
         if not os.path.exists(REQUEST_FILE):
             return
 
-        # Check if lock file exists (client is still writing)
-        if os.path.exists(LOCK_FILE):
-            return
-
         self._busy = True  # ShaderProcessingTool progress dialogs run a nested Qt event loop.
         temporary = None
         try:
@@ -93,6 +87,10 @@ class MCPBridgeServer(QObject):
 
             # Remove request file
             os.remove(REQUEST_FILE)
+
+            request_id = str(uuid.UUID(request["id"]))
+            if request["ipc_version"] != 2:
+                raise ValueError("Invalid IPC protocol version")
 
             # Process request
             try:
@@ -104,10 +102,7 @@ class MCPBridgeServer(QObject):
                     "error": {"code": -32603, "message": str(e)}
                 }
 
-            response_path = RESPONSE_FILE
-            if request.get("ipc_version") == 2:
-                request_id = str(uuid.UUID(request["id"]))
-                response_path = os.path.join(IPC_DIR, "response_%s.json" % request_id)
+            response_path = os.path.join(IPC_DIR, "response_%s.json" % request_id)
             temporary = response_path + ".tmp"
             with open(temporary, "w", encoding="utf-8") as f:
                 json.dump(response, f)

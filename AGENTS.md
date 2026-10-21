@@ -41,22 +41,30 @@ RenderDocMCP/
 
 ## MCP 工具
 
+术语统一：action 的 EID 用 `action_event_id`（列表/范围用 `action_event_ids` /
+`action_event_id_range`），独立 action 序号用 `action_id`，关联 API event 的 EID 用
+`api_event_id`。shader 状态查询、原始 usage 及隐式 UI replay 位置保留通用 `event_id`。
+shader 阶段统一返回 `fragment` / `tess_control` / `tess_eval` 等名称，接受 pixel/PS/FS、
+hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位置。
+纹理数组层/立方体面用 `slice_index`；网格读取/导出的属性筛选用 `attributes`。
+完整字段规则及破坏性改名见 docs/tools_zh.md 的“术语与字段约定”。
+
 | 工具名 | 说明 |
 |---------|------|
 | `list_captures` | 获取指定目录内的 .rdc 文件列表 |
 | `open_capture` | 打开捕获文件（现有捕获会自动关闭） |
 | `get_capture_status` | 确认捕获加载状态 |
-| `get_draw_calls` | Draw call 列表（支持层级结构、过滤） |
+| `get_actions` | action 列表（含 marker/draw/dispatch/copy/clear，支持层级与过滤） |
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
-| `search_draws` | 按 shader/texture/resource 搜索 draw call |
-| `get_draw_call_details` | 特定 draw call 的详情 |
+| `search_actions` | 按 shader/texture/resource 搜索 draw 和 dispatch action |
+| `get_action_details` | action 的元数据、绘制计数、偏移及输出资源（参数 action_event_id） |
 | `get_action_api_calls` | action 关联 API 调用列表及按路径展开的参数树（API Inspector） |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
-| `inspect_event` | 单个 event 的紧凑详情（时间、shader、管线、网格摘要） |
+| `inspect_action` | 单个 action 的紧凑详情（时间、shader、管线、网格摘要） |
 | `summarize_capture` | 捕获整体摘要 |
 | `trace_resource_usage` | 资源整帧 usage，含 Timeline 五类分类、计数和筛选 |
-| `trace_event_dependencies` | 追踪单个 event 的直接资源依赖与生产者 |
-| `diff_events` | 比较两个 event 的状态差异 |
+| `trace_action_dependencies` | 追踪单个 action 的直接资源依赖与生产者 |
+| `diff_actions` | 比较两个 action 的状态差异 |
 | `analyze_pass` | 将一个 marker 子树/pass 汇总为整体工作负载 |
 | `get_shader_info` | Shader 身份、入口点和反汇编 |
 | `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
@@ -80,16 +88,15 @@ RenderDocMCP/
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件 |
 
-### get_draw_calls 过滤选项
+### get_actions 过滤选项
 
 ```python
-get_draw_calls(
+get_actions(
     include_children=True,      # 包含子 action
     marker_filter="Camera.Render",  # 仅获取此标记下的内容
     exclude_markers=["GUI.Repaint", "UIR.DrawChain"],  # 排除的标记
-    event_id_min=7372,          # event_id 范围起始
-    event_id_max=7600,          # event_id 范围结束
-    only_actions=True,          # 排除标记（仅 draw call）
+    action_event_id_range={"min": 7372, "max": 7600},  # action EID 范围
+    exclude_marker_actions=True,          # 排除标记（仅 draw call）
     flags_filter=["Drawcall", "Dispatch"],  # 仅特定标志
 )
 ```
@@ -133,9 +140,9 @@ get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, chi
 ### 反向搜索工具
 
 ```python
-search_draws(by="shader", query="Toon", stage="pixel")
-search_draws(by="texture", query="CharacterSkin")
-search_draws(by="resource", query="ResourceId::12345")
+search_actions(by="shader", query="Toon", stage="fragment")
+search_actions(by="texture", query="CharacterSkin")
+search_actions(by="resource", query="ResourceId::12345")
 # → {
 #     "matches": [...],
 #     "scanned_count": 150,
@@ -161,7 +168,7 @@ get_texture_data(resource_id="ResourceId::487", action_event_id=343)
 - binding_id 限当前捕获/action/绑定内容；resource.resource_id 继续关联资源 Inspector 工具。
 - 常量范围包含 Vulkan dynamic offset；不要再次相加。变量只在显式 variables 查询时解码。
 - get_texture_data/save_texture 的可选 action_event_id 指定 action 执行后的内容，查询后恢复 UI replay 事件。
-- inspect_event/diff_events 使用完整共享快照，包含 buffer/sampler/固定功能状态，比较不受公开工具分页影响。
+- inspect_action/diff_actions 使用完整共享快照，包含 buffer/sampler/固定功能状态，比较不受公开工具分页影响。
 - get_shader_info 仅保留 shader 身份、入口点和反汇编。
 - trace_resource_usage(resource_id, categories=["barrier", "clear"]) 按 Timeline 分类筛选；category_counts 包含 read/write/read_write/barrier/clear 五类，统计全部筛选后分页前的 usage 记录。GenMips 属于 read_write，Discard 属于 clear；原始 usage 和旧 access 语义保留。
 
@@ -173,7 +180,7 @@ get_action_timings()
 # → {"available": true, "unit": "CounterUnit.Seconds", "timings": [...], "total_duration_ms": 12.5, "count": 150}
 
 # 仅获取特定事件 ID
-get_action_timings(event_ids=[100, 200, 300])
+get_action_timings(action_event_ids=[100, 200, 300])
 
 # 按标记过滤
 get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"])
@@ -213,9 +220,9 @@ save_texture(
 
 ```python
 # 获取网格概要信息
-get_mesh_summary(event_id=1234)
+get_mesh_summary(action_event_id=1234)
 # → {
-#     "event_id": 1234,
+#     "action_event_id": 1234,
 #     "topology": "TriangleList",
 #     "num_vertices": 3024,
 #     "num_indices": 9072,
@@ -230,14 +237,14 @@ get_mesh_summary(event_id=1234)
 # 获取网格顶点和索引数据（分页方式）
 # 建议：每次获取 100-500 顶点，避免数据过大
 get_mesh_data(
-    event_id=1234,
+    action_event_id=1234,
     stage="VSIn",           # VSIn, VSOut, GSOut
     offset=0,               # 起始偏移量（分页）
     limit=100,              # 每次获取的顶点数（建议 100-500）
     attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选，过滤属性
 )
 # → {
-#     "event_id": 1234,
+#     "action_event_id": 1234,
 #     "stage": "VSIn",
 #     "topology": "TriangleList",
 #     "items": [
@@ -255,14 +262,14 @@ get_mesh_data(
 # }
 
 # 分页获取下一批数据
-get_mesh_data(event_id=1234, offset=100, limit=100)
+get_mesh_data(action_event_id=1234, offset=100, limit=100)
 
 # 导出网格为 CSV 文件（与 csv_obj 项目兼容）
 export_mesh_csv(
-    event_id=1234,
+    action_event_id=1234,
     output_path="D:/output/mesh.csv",
     stage="VSIn",
-    include_attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选
+    attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选
 )
 # → {
 #     "success": true,
@@ -279,7 +286,7 @@ export_mesh_csv(
 - `GSOut`: 几何着色器输出
 
 **分页说明**：
-- 使用 `offset` 和 `limit` 进行分页（旧参数 `start_offset`/`max_vertices` 仍兼容）
+- 使用 `offset` 和 `limit` 进行分页
 - `total_count` 表示总顶点数，`returned_count` 为本次返回数量
 - `has_more` 表示是否还有更多数据
 - 建议每次获取 100-500 顶点
@@ -328,8 +335,8 @@ renderdoc-mcp
 基于文件的 IPC:
 - IPC 目录: `%TEMP%/renderdoc_mcp/`
 - `request.json`: 请求（MCP 服务器 → RenderDoc）
-- `response.json`: 响应（RenderDoc → MCP 服务器）
-- `lock`: 写入中的锁文件
+- `response_<request_id>.json`: 响应（RenderDoc → MCP 服务器）
+- `call.lock`: MCP 客户端间的 OS 事务锁；request/response 通过临时文件原子发布
 - 轮询间隔: 100ms（RenderDoc 端）
 
 ## 开发注意事项

@@ -4,11 +4,51 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
+## Naming Conventions
+
+| Term / field | Meaning |
+|---|---|
+| `event_id` (EID) | Frame event identifier; may refer to a state-setting API event. Used for shader replay-state queries and raw resource usage records. |
+| `action_event_id` | The EID of an action, used consistently in action inputs and response records, including nested records, meshes, timings and search matches. |
+| `action_id` | Separate, 1-based action ordinal. Never pass it as an EID. |
+| `api_event_id` | EID of one API event associated with the selected action. It shares the EID namespace with `action_event_id`. |
+| action / draw call | Action is the broader term: it includes draws, dispatches, copies, clears and marker nodes. Draw call means an actual draw. Search currently scans draw and dispatch actions. |
+
+An action EID is not an ID assigned to a bundle of API calls. For example, API EIDs
+340–343 may be associated with a draw whose `action_event_id` is 343 and whose
+`action_id` is 12. API EID 341 selects an individual associated API event.
+Raw resource usage and producer records retain `event_id`, including when no action
+can be resolved. Shader queries retain `event_id` because they read replay state at
+an event rather than requiring an exact action. Texture reads/exports accept an
+optional exact `action_event_id`; omission uses the current UI replay position.
+Texture responses identify an explicit action with `action_event_id`; implicit UI
+positions use `event_id` because they may be intermediate API events.
+
+Shader stages use `vertex`, `tess_control`, `tess_eval`, `geometry`, `fragment`,
+`compute`, `task`, `mesh` as canonical response names where supported by RenderDoc.
+Shader and pipeline tools accept the same shader-stage aliases, including
+`hull`/`HS`/`TCS`, `domain`/`DS`/`TES`, and `pixel`/`PS`/`FS`.
+Pipeline-only sections such as `vertex_input`, `rasterizer`, `framebuffer` are not
+shader stages. Mesh `stage` values `VSIn`/`VSOut`/`GSOut` select mesh data locations.
+
+Texture read/export inputs and response fields use `slice_index` for array layers
+or cube faces; `depth_slice` selects a Z plane in a 3D texture. Mesh read/export
+attribute filters use `attributes`. Pagination uses `offset`/`limit`, measured in
+items (mesh vertices for mesh reads); buffer `offset`/`length` are byte ranges.
+
+Action interfaces use `action_event_id` / `action_event_ids` / `action_event_id_range`.
+Comparison uses `action_event_id_a` / `action_event_id_b` and response `action_a` /
+`action_b`. `analyze_pass` returns `action_event_id_range`.
+`exclude_marker_actions` excludes marker nodes; markers are themselves actions.
+API-call context returns `name`, matching other action records.
+`inspect_action.timing.action` contains the matched action timing.
+Interfaces are checked against their current signatures.
+
 ## Recommended Workflow
 
 A typical analysis workflow follows this pattern:
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_actions` / `search_actions` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
 
 ---
 
@@ -106,57 +146,55 @@ summarize_capture()
 
 ### Action Navigation
 
-#### `get_draw_calls`
+#### `get_actions`
 
-Get the hierarchical tree of draw calls and actions with filtering support.
+Get the action tree (draws, dispatches, copies, clears and markers) with filtering support.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `include_children` | `bool` | No | `true` | Include child actions in hierarchy |
 | `marker_filter` | `str` | No | | Only include actions under markers containing this string (partial match) |
 | `exclude_markers` | `list[str]` | No | | Exclude actions under markers containing these strings |
-| `event_id_range` | `dict` | No | | Event ID range as `{"min": ..., "max": ...}` |
-| `event_id_min` | `int` | No | | Legacy lower bound alias for event ID range |
-| `event_id_max` | `int` | No | | Legacy upper bound alias for event ID range |
-| `only_actions` | `bool` | No | `false` | If true, exclude marker actions |
+| `action_event_id_range` | `dict` | No | | Event ID range as `{"min": ..., "max": ...}` |
+| `exclude_marker_actions` | `bool` | No | `false` | If true, exclude marker actions |
 | `flags_filter` | `list[str]` | No | | Only include actions with these flags (e.g. `["Drawcall", "Dispatch"]`) |
 
 **Returns:** Hierarchical tree of actions including markers, draw calls, dispatches, and other GPU events.
 
 **Examples:**
 ```
-# Get all draw calls with children
-get_draw_calls(include_children=true)
+# Get the full action tree
+get_actions(include_children=true)
 
 # Filter by marker and event range
-get_draw_calls(marker_filter="Camera.Render", event_id_min=7372, event_id_max=7600)
+get_actions(marker_filter="Camera.Render", action_event_id_range={"min": 7372, "max": 7600})
 
 # Only draw calls, exclude markers
-get_draw_calls(only_actions=true, flags_filter=["Drawcall"])
+get_actions(exclude_marker_actions=true, flags_filter=["Drawcall"])
 
 # Exclude specific markers
-get_draw_calls(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
+get_actions(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
 ```
 
 ---
 
-#### `search_draws`
+#### `search_actions`
 
-Unified search for draw calls by shader, texture, or resource.
+Search draw and dispatch actions by shader, texture, or resource.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `by` | `"shader"` / `"texture"` / `"resource"` | Yes | Search mode |
 | `query` | `str` | Yes | Shader name, texture name, or resource ID |
-| `stage` | `str` | No | Shader stage filter (`"vertex"`, `"pixel"`, `"compute"`, etc.) — only for `by="shader"` |
+| `stage` | `str` | No | Shader stage filter (`"vertex"`, `"fragment"`, `"compute"`, etc.) — only for `by="shader"` |
 
 **Returns:** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`
 
 **Examples:**
 ```
-search_draws(by="shader", query="Toon", stage="pixel")
-search_draws(by="texture", query="CharacterSkin")
-search_draws(by="resource", query="ResourceId::12345")
+search_actions(by="shader", query="Toon", stage="fragment")
+search_actions(by="texture", query="CharacterSkin")
+search_actions(by="resource", query="ResourceId::12345")
 ```
 
 ---
@@ -245,7 +283,7 @@ the `.rdc` file. HLSL / DXBC / DXIL editing is TODO.
 | `list_shader_replacements` | None | Active replacements in `items`; all prepared/failed/conflicting edits in `sessions` |
 | `export_shader_source` | `edit_id: str, output_path: str` | Export latest submitted text as UTF-8; refuse existing files |
 
-Stages use the existing `vertex / hull / domain / geometry / pixel / compute` names.
+Stages use the canonical `vertex / tess_control / tess_eval / geometry / fragment / compute / task / mesh` names.
 Modes: `auto / original / glsl / spirv_asm`. Auto uses original GLSL, or prefers a complete
 SPIRV-Cross → GLSL → compiler path, falling back to spirv-dis → assembly → spirv-as when
 that path is unavailable. Explicit modes never fall back. `original` requires captured
@@ -257,7 +295,7 @@ entry points of one resource are not supported.
 Tools are selected from RenderDoc's Settings → Shader Processing configuration.
 
 ```python
-edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+edit = get_shader_edit_context(event_id=123, stage="fragment", mode="auto")
 # Modify edit["source_text"], preserving bindings and stage interfaces.
 result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
 # Check last_attempt_status == "applied" and inspect warnings/errors in log.
@@ -383,7 +421,7 @@ Use `resource.resource_id` for `inspect_resource`, `trace_resource_usage`, and
 get_action_textures(action_event_id=343, direction="all", offset=0, limit=50)
 get_action_textures(action_event_id=343, direction="input", stage="FS")
 get_action_textures(action_event_id=343, direction="output")
-get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice=0)
+get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice_index=0)
 save_texture(action_event_id=343, resource_id="ResourceId::487",
              output_path="D:/output/texture.png")
 ```
@@ -407,8 +445,8 @@ A texture marked input is still read at the requested after-action event, not a
 historical snapshot of each shader access. Queries restore the UI replay event
 on success and failure without changing the UI selection.
 
-`inspect_event` now returns overview `pipeline`, unpaged `bindings` / `textures`
-and `fixed_function`. `diff_events` compares complete binding positions and ranges,
+`inspect_action` now returns overview `pipeline`, unpaged `bindings` / `textures`
+and `fixed_function`. `diff_actions` compares complete binding positions and ranges,
 including buffers/samplers and fixed-function state, ignoring action-scoped tokens.
 `get_shader_info` no longer returns constant values or resource binding collections.
 
@@ -426,13 +464,13 @@ Get shader information for a specific stage at a given event. Includes shader id
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `event_id` | `int` | Yes | The event ID |
-| `stage` | `str` | Yes | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
+| `stage` | `str` | Yes | Shader stage: `"vertex"`, `"tess_control"`, `"tess_eval"`, `"geometry"`, `"fragment"`, `"compute"` |
 
 **Returns:** Shader resource ID, entry point, stage and disassembly.
 
 **Example:**
 ```
-get_shader_info(event_id=123, stage="pixel")
+get_shader_info(event_id=123, stage="fragment")
 ```
 
 ---
@@ -444,13 +482,13 @@ Get original shader source text for a specific stage at a given event when the c
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `event_id` | `int` | Yes | The event ID |
-| `stage` | `str` | Yes | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
+| `stage` | `str` | Yes | Shader stage: `"vertex"`, `"tess_control"`, `"tess_eval"`, `"geometry"`, `"fragment"`, `"compute"` |
 
 **Returns:** Shader resource ID, entry point, stage, encoding, `source_available`, and `source_text` for text-backed encodings. For binary encodings such as DXBC/DXIL/SPIR-V, returns metadata plus a `reason` explaining why original source text is unavailable.
 
 **Example:**
 ```
-get_shader_source(event_id=123, stage="pixel")
+get_shader_source(event_id=123, stage="fragment")
 # → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
 ```
 
@@ -463,14 +501,14 @@ Prepare editable GLSL/SPIR-V text and its compilation path for an event/stage. S
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `event_id` | `int` | Yes | | The event ID |
-| `stage` | `str` | Yes | | Shader stage: `"vertex"`, `"hull"`, `"domain"`, `"geometry"`, `"pixel"`, `"compute"` |
+| `stage` | `str` | Yes | | Shader stage: `"vertex"`, `"tess_control"`, `"tess_eval"`, `"geometry"`, `"fragment"`, `"compute"` |
 | `mode` | `str` | No | `"auto"` | Representation to prepare: `auto / original / glsl / spirv_asm` |
 
 **Returns:** `edit_id`, `source_text`, `applied_source_text`, entry points, encodings, compiler, `revision`, `applied`, `last_attempt_status`, and `log`. Reuse `edit_id` with `replace_shader` / `revert_shader` / `export_shader_source`.
 
 **Example:**
 ```
-edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+edit = get_shader_edit_context(event_id=123, stage="fragment", mode="auto")
 # → {"edit_id": "...", "source_text": "...", "compiler": "...", "applied": false, ...}
 ```
 
@@ -504,7 +542,7 @@ Read the pixel data of a texture resource. Returns base64-encoded bytes.
 | `resource_id` | `str` | Yes | | The resource ID |
 | `action_event_id` | `int` | No | current UI event | Read after this exact action; restore replay afterwards |
 | `mip` | `int` | No | `0` | Mip level to retrieve |
-| `slice` | `int` | No | `0` | Array slice or cube face index (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-) |
+| `slice_index` | `int` | No | `0` | Array slice or cube face index (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-) |
 | `sample` | `int` | No | `0` | MSAA sample index |
 | `depth_slice` | `int` | No | | For 3D textures only, extract a specific depth slice. If omitted, returns full volume. |
 
@@ -519,7 +557,7 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::123")
 get_texture_data(action_event_id=123, resource_id="ResourceId::123", mip=2)
 
 # Get a specific face of a cubemap (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice=3)
+get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice_index=3)
 
 # Get a specific depth slice of a 3D texture
 get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
@@ -556,13 +594,13 @@ Get a summary of mesh data for a specific draw call event.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | The event ID of the draw call |
+| `action_event_id` | `int` | Yes | The event ID of the draw call |
 
 **Returns:** Topology, vertex/index counts, whether indexed, vertex attributes with formats, bounding box.
 
 **Example:**
 ```
-get_mesh_summary(event_id=1234)
+get_mesh_summary(action_event_id=1234)
 # → {"topology": "TriangleList", "num_vertices": 3024, "num_indices": 9072, "indexed": true,
 #    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT", "components": 3}, ...],
 #    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]}}
@@ -576,26 +614,24 @@ Get mesh vertex and index data for a specific draw call with pagination support.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `event_id` | `int` | Yes | | The event ID |
+| `action_event_id` | `int` | Yes | | The event ID |
 | `stage` | `str` | No | `"VSIn"` | Mesh data stage: `"VSIn"` (input), `"VSOut"` (vertex shader output), `"GSOut"` (geometry output) |
 | `offset` | `int` | No | `0` | Starting vertex offset for pagination |
 | `limit` | `int` | No | `100` | Max vertices to return (recommended: 100-500) |
-| `start_offset` | `int` | No | `0` | Legacy alias for `offset` |
-| `max_vertices` | `int` | No | `100` | Legacy alias for `limit` |
 | `attributes` | `list[str]` | No | | Filter to specific attribute names (e.g. `["POSITION", "NORMAL"]`). If omitted, all attributes included. |
 
-**Returns:** `vertices`, `indices`, `topology`, `attribute_info`, `total_count`, `has_more`, `truncated`.
+**Returns:** `items`, `indices`, `topology`, `attributes`, `total_count`, `has_more`, `truncated`.
 
 **Examples:**
 ```
 # First page
-get_mesh_data(event_id=1234, offset=0, limit=100)
+get_mesh_data(action_event_id=1234, offset=0, limit=100)
 
 # Next page
-get_mesh_data(event_id=1234, offset=100, limit=100)
+get_mesh_data(action_event_id=1234, offset=100, limit=100)
 
 # Filter specific attributes
-get_mesh_data(event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMAL", "TEXCOORD"])
+get_mesh_data(action_event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMAL", "TEXCOORD"])
 ```
 
 ---
@@ -614,7 +650,7 @@ Read the API Inspector data for a draw/dispatch action without changing the sele
 | `offset` | `int` | `0` | Offset in calls or visible immediate children |
 | `limit` | `int` | `50` | Page size, 1–500 |
 
-The list preserves `ActionDescription.events` order and includes all associated calls through pagination: the events since the previous action, not every historical state-setting call. Returns `action_event_id`, `action_name`, and paginated `items` with `api_event_id`, `name`, `chunk_index`, `available`, and raw `child_count` when available.
+The list preserves `ActionDescription.events` order and includes all associated calls through pagination: the events since the previous action, not every historical state-setting call. Returns `action_event_id`, `name`, and paginated `items` with `api_event_id`, `name`, `chunk_index`, `available`, and raw `child_count` when available.
 
 Selecting `api_event_id` returns `api_call`, `node`, and paginated `children`. Parameter expansion shares the resource-initialization serializer: one level at a time, hidden children omitted, raw index paths preserved, resource IDs/names included, binary contents omitted, and text previews bounded to 4096 characters. Calls without structured chunks remain in the list with `available: false` and `reason: "no_chunk"` or `"invalid_chunk_index"`; selecting them returns `api_call` without a parameter tree. An API EID outside the requested action returns `INVALID_API_EVENT_ID`.
 
@@ -628,19 +664,21 @@ get_action_api_calls(action_event_id=343, api_event_id=341, child_path=[0])
 
 ---
 
-#### `get_draw_call_details`
+#### `get_action_details`
 
-Get detailed information about a specific draw call.
+Get an action's metadata, draw counts, offsets and output resources.
+For associated API calls and parameter trees, use `get_action_api_calls`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | The event ID of the draw call |
+| `action_event_id` | `int` | Yes | The event ID of the action |
 
-**Returns:** Vertex/index counts, resource outputs, and other metadata.
+**Returns:** `action_event_id`, `action_id`, `name`, `flags`, draw counts (`num_indices`, `num_instances`), draw offsets, `outputs` and optional `depth_output`.
+The response identifies the action with `action_event_id`; `action_id` is its separate action ordinal.
 
 **Example:**
 ```
-get_draw_call_details(event_id=123)
+get_action_details(action_event_id=123)
 ```
 
 ---
@@ -651,7 +689,7 @@ Get GPU timing information for actions.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `event_ids` | `list[int]` | No | | Specific event IDs. If omitted, returns all actions. |
+| `action_event_ids` | `list[int]` | No | | Specific event IDs. If omitted, returns all actions. |
 | `marker_filter` | `str` | No | | Only include actions under markers containing this string |
 | `exclude_markers` | `list[str]` | No | | Exclude actions under markers containing these strings |
 
@@ -665,7 +703,7 @@ Get GPU timing information for actions.
 get_action_timings()
 
 # Specific event IDs
-get_action_timings(event_ids=[100, 200, 300])
+get_action_timings(action_event_ids=[100, 200, 300])
 
 # Filter by marker
 get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"])
@@ -677,19 +715,19 @@ get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"
 
 Cross-dimensional queries that orchestrate multiple services on top of atomic tools.
 
-#### `inspect_event`
+#### `inspect_action`
 
-Inspect one event with a compact analysis-oriented bundle. Returns details, timing, shader summaries, pipeline summaries, and mesh summary when the event is a draw call.
+Inspect one action with a compact analysis-oriented bundle. Returns details, timing, shader summaries, pipeline summaries, and mesh summary when the event is a draw call.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | The event ID to inspect |
+| `action_event_id` | `int` | Yes | The event ID to inspect |
 
 **Returns:** Event details, timing, shader summaries, pipeline summaries, mesh summary.
 
 **Example:**
 ```
-inspect_event(event_id=1517)
+inspect_action(action_event_id=1517)
 ```
 
 ---
@@ -704,8 +742,6 @@ Trace how a resource is read, written, and consumed across matching events.
 | `marker_filter` | `str` | No | | Marker-path substring filter |
 | `exclude_markers` | `list[str]` | No | | Marker substrings to exclude |
 | `event_id_range` | `dict` | No | | Event range as `{"min": ..., "max": ...}` |
-| `event_id_min` | `int` | No | | Legacy lower event bound alias |
-| `event_id_max` | `int` | No | | Legacy upper event bound alias |
 | `before_event_id` | `int` | No | | Compute the latest prior writer before this event |
 | `categories` | `list[str]` | No | all | Timeline categories: `read`, `write`, `read_write`, `barrier`, `clear` |
 | `offset` | `int` | No | `0` | Offset after filtering |
@@ -721,7 +757,7 @@ Each event includes `category`; `category_counts` always contains all five keys,
 
 Selections in `categories` are ORed and combined with marker/event filters using AND. Omission selects all; `[]` selects none; invalid categories produce a parameter error. All counts, totals and writer summaries cover records **after all filters, before pagination**. Category counts measure usage records, not distinct EIDs or merged on-screen markers; multiple usages at one EID remain separate.
 
-Original `usage` and `usage_counts` are retained. Legacy `access`, `read_count` and `write_count` keep their existing dependency semantics, independent of Timeline presentation: Clear still counts as a write and GenMips retains access=write. Use `category` and `category_counts` to match the panel.
+Original `usage` and `usage_counts` are retained. `access`, `read_count` and `write_count` describe dependency access semantics, independent of Timeline presentation: Clear still counts as a write and GenMips retains access=write. Use `category` and `category_counts` to match the panel.
 
 Classification reference: [RenderDoc TimelineBar.cpp](https://github.com/baldurk/renderdoc/blob/v1.x/qrenderdoc/Windows/TimelineBar.cpp).
 
@@ -734,37 +770,37 @@ trace_resource_usage(resource_id="ResourceId::2495", marker_filter="Forward", be
 
 ---
 
-#### `trace_event_dependencies`
+#### `trace_action_dependencies`
 
-Trace the immediate resource dependencies of one event.
+Trace the immediate resource dependencies of one action.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id` | `int` | Yes | The event to inspect |
+| `action_event_id` | `int` | Yes | The event to inspect |
 
 **Returns:** Stage-grouped input resources, input-assembly buffers, output resources, and likely producer events for major inputs.
 
 **Example:**
 ```
-trace_event_dependencies(event_id=1517)
+trace_action_dependencies(action_event_id=1517)
 ```
 
 ---
 
-#### `diff_events`
+#### `diff_actions`
 
-Compare two events and report material state differences.
+Compare two actions and report material state differences.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id_a` | `int` | Yes | The first event ID |
-| `event_id_b` | `int` | Yes | The second event ID |
+| `action_event_id_a` | `int` | Yes | The first event ID |
+| `action_event_id_b` | `int` | Yes | The second event ID |
 
 **Returns:** Shader, resource binding, draw parameter, mesh, and timing differences.
 
 **Example:**
 ```
-diff_events(event_id_a=100, event_id_b=200)
+diff_actions(action_event_id_a=100, action_event_id_b=200)
 ```
 
 ---
@@ -828,10 +864,10 @@ Export mesh data to a CSV file, compatible with the [csv_obj](https://github.com
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `event_id` | `int` | Yes | | The event ID of the draw call |
+| `action_event_id` | `int` | Yes | | The event ID of the draw call |
 | `output_path` | `str` | Yes | | Output file path (e.g. `"D:/output/mesh.csv"`) |
 | `stage` | `str` | No | `"VSIn"` | Mesh data stage: `"VSIn"`, `"VSOut"`, `"GSOut"` |
-| `include_attributes` | `list[str]` | No | | Filter to specific attributes. If omitted, all attributes included. |
+| `attributes` | `list[str]` | No | | Filter to specific attributes. If omitted, all attributes included. |
 
 **Returns:** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
 
@@ -843,5 +879,5 @@ Export mesh data to a CSV file, compatible with the [csv_obj](https://github.com
 
 **Example:**
 ```
-export_mesh_csv(event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", include_attributes=["POSITION", "NORMAL", "TEXCOORD"])
+export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", attributes=["POSITION", "NORMAL", "TEXCOORD"])
 ```

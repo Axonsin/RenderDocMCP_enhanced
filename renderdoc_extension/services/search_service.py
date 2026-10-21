@@ -14,9 +14,9 @@ class SearchService:
         self.ctx = ctx
         self._invoke = invoke_fn
 
-    def _search_draws(self, matcher_fn):
+    def _search_actions(self, matcher_fn):
         """
-        Common template for searching draw calls.
+        Common template for searching draw and dispatch actions.
 
         Args:
             matcher_fn: Function(pipe, controller, action, ctx) -> match_reason or None
@@ -46,7 +46,7 @@ class SearchService:
                 match_reason = matcher_fn(pipe, controller, action, self.ctx)
                 if match_reason:
                     result["matches"].append({
-                        "event_id": action.eventId,
+                        "action_event_id": action.eventId,
                         "name": action.GetName(structured_file),
                         "match_reason": match_reason,
                     })
@@ -55,18 +55,18 @@ class SearchService:
         result["total_matches"] = len(result["matches"])
         return result
 
-    def search_draws(self, by, query, stage=None):
-        """Search draw calls by shader, texture, or resource usage."""
+    def search_actions(self, by, query, stage=None):
+        """Search draw and dispatch actions by shader, texture, or resource usage."""
         if by == "shader":
-            return self.find_draws_by_shader(query, stage)
+            return self.find_actions_by_shader(query, stage)
         if by == "texture":
-            return self.find_draws_by_texture(query)
+            return self.find_actions_by_texture(query)
         if by == "resource":
-            return self.find_draws_by_resource(query)
+            return self.find_actions_by_resource(query)
         raise ValueError("INVALID_SEARCH_TYPE: by must be one of shader, texture, resource")
 
-    def find_draws_by_shader(self, shader_name, stage=None):
-        """Find all draw calls using a shader with the given name (partial match)."""
+    def find_actions_by_shader(self, shader_name, stage=None):
+        """Find draw and dispatch actions using a shader with the given name (partial match)."""
         # Determine which stages to check
         if stage:
             stages_to_check = [Parsers.parse_stage(stage)]
@@ -94,10 +94,10 @@ class SearchService:
                         return "%s name: '%s'" % (Parsers.stage_name(s), shader_debug_name)
             return None
 
-        return self._search_draws(matcher)
+        return self._search_actions(matcher)
 
-    def find_draws_by_texture(self, texture_name):
-        """Find all draw calls using a texture with the given name (partial match)."""
+    def find_actions_by_texture(self, texture_name):
+        """Find draw and dispatch actions using a texture with the given name (partial match)."""
         stages_to_check = Helpers.get_all_shader_stages()
 
         def matcher(pipe, controller, action, ctx):
@@ -151,10 +151,10 @@ class SearchService:
 
             return None
 
-        return self._search_draws(matcher)
+        return self._search_actions(matcher)
 
-    def find_draws_by_resource(self, resource_id):
-        """Find all draw calls using a specific resource ID (exact match)."""
+    def find_actions_by_resource(self, resource_id):
+        """Find draw and dispatch actions using a specific resource ID (exact match)."""
         target_rid = Parsers.parse_resource_id(resource_id)
         stages_to_check = Helpers.get_all_shader_stages()
 
@@ -199,4 +199,4 @@ class SearchService:
 
             return None
 
-        return self._search_draws(matcher)
+        return self._search_actions(matcher)

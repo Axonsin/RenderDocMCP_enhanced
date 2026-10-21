@@ -5,7 +5,7 @@
 UnityプロジェクトでRenderDocキャプチャを分析する際、以下の課題がある：
 
 1. **UIノイズ問題**: Unity Editorからキャプチャすると、`GUI.Repaint`や`UIR.DrawChain`などのEditor UI描画が大量に含まれ、実際のゲーム描画（`Camera.Render`配下）を探すのが困難
-2. **レスポンスサイズ問題**: `get_draw_calls(include_children=true)`の結果が70KB超になり、LLMのコンテキストを圧迫
+2. **レスポンスサイズ問題**: `get_actions(include_children=true)`の結果が70KB超になり、LLMのコンテキストを圧迫
 3. **探索の非効率性**: 特定のシェーダーやテクスチャを使用しているドローコールを見つけるのに、全ドローコールを1つずつ確認する必要がある
 
 ## 改善提案
@@ -15,7 +15,7 @@ UnityプロジェクトでRenderDocキャプチャを分析する際、以下の
 特定のマーカー配下のみ、または特定のマーカーを除外して取得する機能。
 
 ```python
-get_draw_calls(
+get_actions(
     include_children=True,
     marker_filter="Camera.Render",  # このマーカー配下のみ取得
     exclude_markers=["GUI.Repaint", "UIR.DrawChain", "UGUI.Rendering"]
@@ -37,9 +37,8 @@ get_draw_calls(
 特定のevent_id範囲のみを取得する機能。
 
 ```python
-get_draw_calls(
-    event_id_min=7372,
-    event_id_max=7600,
+get_actions(
+    action_event_id_range={"min": 7372, "max": 7600},  # action EID 范围
     include_children=True
 )
 ```
@@ -60,21 +59,21 @@ get_draw_calls(
 
 ```python
 # シェーダー名で検索（部分一致）
-find_draws_by_shader(shader_name="Toon")
+find_actions_by_shader(shader_name="Toon")
 
 # テクスチャ名で検索（部分一致）
-find_draws_by_texture(texture_name="CharacterSkin")
+find_actions_by_texture(texture_name="CharacterSkin")
 
 # リソースIDで検索（完全一致）
-find_draws_by_resource(resource_id="ResourceId::12345")
+find_actions_by_resource(resource_id="ResourceId::12345")
 ```
 
 **返り値例**:
 ```json
 {
   "matches": [
-    {"event_id": 7538, "name": "DrawIndexed", "match_reason": "pixel_shader contains 'Toon'"},
-    {"event_id": 7620, "name": "DrawIndexed", "match_reason": "pixel_shader contains 'Toon'"}
+    {"action_event_id": 7538, "name": "DrawIndexed", "match_reason": "fragment_shader contains 'Toon'"},
+    {"action_event_id": 7620, "name": "DrawIndexed", "match_reason": "fragment_shader contains 'Toon'"}
   ],
   "total_matches": 2
 }
@@ -107,10 +106,10 @@ get_frame_summary()
     "copies": 8
   },
   "top_level_markers": [
-    {"name": "WaitForRenderJobs", "event_id": 118},
-    {"name": "CustomRenderTextures.Update", "event_id": 6451},
-    {"name": "Camera.Render", "event_id": 7372},
-    {"name": "UIR.DrawChain", "event_id": 6484}
+    {"name": "WaitForRenderJobs", "action_event_id": 118},
+    {"name": "CustomRenderTextures.Update", "action_event_id": 6451},
+    {"name": "Camera.Render", "action_event_id": 7372},
+    {"name": "UIR.DrawChain", "action_event_id": 6484}
   ],
   "render_targets": [
     {"resource_id": "ResourceId::22573", "name": "MainRT", "resolution": "1920x1080"},
@@ -136,8 +135,8 @@ get_frame_summary()
 マーカー（PushMarker/PopMarker）を除外し、実際の描画コールのみを取得する機能。
 
 ```python
-get_draw_calls(
-    only_actions=True,  # マーカーを除外
+get_actions(
+    exclude_marker_actions=True,  # マーカーを除外
     flags_filter=["Drawcall", "Dispatch"]  # 特定のフラグを持つもののみ
 )
 ```
@@ -153,7 +152,7 @@ get_draw_calls(
 複数のevent_idのパイプラインステートを一度に取得する機能。
 
 ```python
-get_multiple_pipeline_states(event_ids=[7538, 7558, 7450, 7458])
+get_multiple_pipeline_states(action_event_ids=[7538, 7558, 7450, 7458])
 ```
 
 **返り値例**:
@@ -190,7 +189,7 @@ get_multiple_pipeline_states(event_ids=[7538, 7558, 7450, 7458])
 Unity専用のプリセットがあると便利：
 
 ```python
-get_draw_calls(
+get_actions(
     preset="unity_game_rendering"
 )
 ```
@@ -206,11 +205,11 @@ get_draw_calls(
 ### 現状のフロー
 
 ```
-1. get_draw_calls(include_children=true)
+1. get_actions(include_children=true)
    → 76KB のJSONが返る（ファイルに保存される）
 
 2. ファイルを外部ツール（Python等）で解析
-   → Camera.Render の event_id を特定（例: 7372）
+   → Camera.Render の action_event_id を特定（例: 7372）
 
 3. 手動でevent_id範囲を指定して詳細調査
    → get_pipeline_state(7538), get_shader_info(7538, "pixel"), ...
@@ -220,15 +219,15 @@ get_draw_calls(
 
 ```
 1. get_frame_summary()
-   → Camera.Render が event_id: 7372 にあることが分かる
+   → Camera.Render が action_event_id: 7372 にあることが分かる
 
-2. get_draw_calls(marker_filter="Camera.Render", exclude_markers=[...])
+2. get_actions(marker_filter="Camera.Render", exclude_markers=[...])
    → 必要なドローコールのみ取得（数KB）
 
-3. find_draws_by_shader(shader_name="MyShader")
+3. find_actions_by_shader(shader_name="MyShader")
    → 該当するevent_idが直接返る
 
-4. get_pipeline_state(event_id) で詳細確認
+4. get_pipeline_state(action_event_id) で詳細確認
 ```
 
 ---

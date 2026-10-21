@@ -23,7 +23,7 @@ MCP Server 通过 stdio 与 AI 客户端通信，并通过文件 IPC 将请求�
       │  bridge.call("method", params)
       ▼
   mcp_server/bridge/client.py   ← 写入 %TEMP%/renderdoc_mcp/request.json
-      │  (文件 IPC, 轮询 response.json)
+      │  (文件 IPC, 轮询 response_<request_id>.json)
       ▼
   renderdoc_extension/socket_server.py  ← 读取 request.json，派发给 RequestHandler
       │
@@ -128,7 +128,7 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 #### Canonicalization
 同类能力尽量收敛为统一入口，而不是拆分为多个语义相近的 MCP 命令。
 
-例如，将多个 draw 搜索接口合并为 `search_draws`，将资源枚举统一为 `list_resources`，并通过参数区分具体类型与查询维度。
+例如，将多个 draw 搜索接口合并为 `search_actions`，将资源枚举统一为 `list_resources`，并通过参数区分具体类型与查询维度。
 
 #### Shape Consistency
 不同工具应尽量遵循一致的参数风格与返回结构，而不是各自定义一套形态。
@@ -160,8 +160,8 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 #### Action 导航
 
-- `get_draw_calls` - 获取 draw call / action 层级并支持过滤
-- `search_draws` - 按 shader、texture、resource 统一搜索 draw call
+- `get_actions` - 获取 draw call / action 层级并支持过滤
+- `search_actions` - 按 shader、texture、resource 统一搜索 draw call
 
 #### 资源空间浏览
 
@@ -185,6 +185,10 @@ uv tool update-shell  # 将 renderdoc-mcp 添加到 PATH
 
 破坏性变更：`get_pipeline_state` 改用 `action_event_id`，绑定行通过阶段/纹理工具获取。`get_texture_data` 和 `save_texture` 支持可选 `action_event_id`，读取该 action 执行后的内容。新管线查询恢复 UI 对应的 replay 事件；Vulkan 提供更完整的原生细节。
 
+action 接口和返回记录统一使用 `action_event_id`。工具改名、shader 阶段名称、
+`slice_index` 和网格 `attributes` 的迁移见[术语与字段约定](docs/tools_zh.md#术语与字段约定)。
+这些工具和字段直接替换旧名称，不保留旧别名。
+
 Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持原始 GLSL、SPIRV-Cross
 反编译 GLSL 和 spirv-dis 汇编；HLSL / DXBC / DXIL 编辑为 TODO。
 操作与错误处理见 [Shader 会话编辑](docs/tools_zh.md#shader-会话编辑)。
@@ -199,7 +203,7 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 
 #### Action 元信息
 
-- `get_draw_call_details` - 获取特定 draw call 的详细信息
+- `get_action_details` - 获取 action 元数据、绘制计数、偏移及输出资源（参数 `action_event_id`）
 - `get_action_api_calls` - 查看 draw 关联的 API 调用，并按路径展开参数（对应 API Inspector）
 - `get_action_timings` - 获取 action 的 GPU 时间
 
@@ -207,10 +211,10 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 
 跨维度的复合查询，在原子工具之上编排多个服务，帮助快速获得全局视图。
 
-- `inspect_event` - 对单个 event 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要
+- `inspect_action` - 对单个 event 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要
 - `trace_resource_usage` - Timeline 五类分类、计数与 `categories` 筛选，保留原始 usage
-- `trace_event_dependencies` - 追踪单个 event 的直接资源依赖与候选 producer event
-- `diff_events` - 对比两个 event，突出关键状态差异
+- `trace_action_dependencies` - 追踪单个 action 的直接资源依赖与候选 producer event
+- `diff_actions` - 对比两个 event，突出关键状态差异
 - `analyze_pass` - 将一个 marker 子树或 pass 汇总为一个整体工作负载
 
 ### 上层工具能力

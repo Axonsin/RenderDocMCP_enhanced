@@ -15,8 +15,6 @@ from typing import Any
 # IPC directory (must match renderdoc_extension/socket_server.py)
 IPC_DIR = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
 REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
-RESPONSE_FILE = os.path.join(IPC_DIR, "response.json")
-LOCK_FILE = os.path.join(IPC_DIR, "lock")
 CALL_LOCK_FILE = os.path.join(IPC_DIR, "call.lock")
 
 EDIT_METHODS = {"get_shader_edit_context", "replace_shader", "revert_shader",
@@ -32,10 +30,7 @@ class RenderDocBridgeError(Exception):
 class RenderDocBridge:
     """Client for communicating with RenderDoc extension via file-based IPC"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 19876):
-        # host/port are kept for API compatibility but not used
-        self.host = host
-        self.port = port
+    def __init__(self):
         self.timeout = 30.0  # seconds
         self.edit_timeout = 120.0
 
@@ -44,7 +39,6 @@ class RenderDocBridge:
         """OS lock serializes clients, including separate MCP server processes.
 
         Unlike an exclusive-create sentinel, the lock is released if a client dies.
-        This is separate from the legacy short-lived request publication lock.
         `deadline` covers both lock acquisition and response wait so the whole
         call stays within the client-side tool timeout.
         """
@@ -84,7 +78,7 @@ class RenderDocBridge:
         # Check if IPC directory exists
         if not os.path.exists(IPC_DIR):
             raise RenderDocBridgeError(
-                f"Cannot connect to RenderDoc MCP Bridge at {self.host}:{self.port}. "
+                f"Cannot connect to RenderDoc MCP Bridge in {IPC_DIR}. "
                 "Make sure RenderDoc is running with the MCP Bridge extension loaded."
             )
 
@@ -101,7 +95,7 @@ class RenderDocBridge:
         try:
             with self._transaction(deadline):
                 # Never overwrite a request left pending by a timed-out client.
-                while os.path.exists(REQUEST_FILE) or os.path.exists(LOCK_FILE):
+                while os.path.exists(REQUEST_FILE):
                     if time.monotonic() >= deadline:
                         raise RenderDocBridgeError("IPC_BUSY: previous request is still pending; "
                                                   "request was not submitted")
@@ -111,21 +105,15 @@ class RenderDocBridge:
                 os.replace(temporary, REQUEST_FILE)
                 while True:
                     # Per-request replies prevent a late response overwriting the next reply.
-                    for candidate in (response_file, RESPONSE_FILE):
-                        if not os.path.exists(candidate):
-                            continue
-                        try:
-                            with open(candidate, "r", encoding="utf-8") as handle:
-                                response = json.load(handle)
-                        except json.JSONDecodeError:
-                            continue  # Compatibility with the old non-atomic response writer.
-                        os.remove(candidate)
-                        if response.get("id") != request["id"]:
-                            continue
-                        if "error" in response:
-                            error = response["error"]
-                            raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
-                        return response.get("result")
+                    if os.path.exists(response_file):
+                        with open(response_file, "r", encoding="utf-8") as handle:
+                            response = json.load(handle)
+                        os.remove(response_file)
+                        if response.get("id") == request["id"]:
+                            if "error" in response:
+                                error = response["error"]
+                                raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
+                            return response.get("result")
                     if time.monotonic() >= deadline:
                         raise RenderDocBridgeError(
                             "RESULT_PENDING: request %s timed out after submission; result is unknown. "

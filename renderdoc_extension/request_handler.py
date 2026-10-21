@@ -3,6 +3,7 @@ Request Handler for RenderDoc MCP Bridge
 Routes incoming requests to appropriate facade methods.
 """
 
+import inspect
 import traceback
 
 
@@ -14,12 +15,12 @@ class RequestHandler:
         self._methods = {
             "ping": self._handle_ping,
             "get_capture_status": self._handle_get_capture_status,
-            "get_draw_calls": self._handle_get_draw_calls,
+            "get_actions": self._handle_get_actions,
             "get_frame_summary": self._handle_get_frame_summary,
-            "inspect_event": self._handle_inspect_event,
+            "inspect_action": self._handle_inspect_action,
             "summarize_capture": self._handle_summarize_capture,
-            "search_draws": self._handle_search_draws,
-            "get_draw_call_details": self._handle_get_draw_call_details,
+            "search_actions": self._handle_search_actions,
+            "get_action_details": self._handle_get_action_details,
             "get_action_api_calls": self._handle_get_action_api_calls,
             "get_action_timings": self._handle_get_action_timings,
             "get_shader_info": self._handle_get_shader_info,
@@ -41,8 +42,8 @@ class RequestHandler:
             "inspect_pipeline_binding": self._handle_inspect_pipeline_binding,
             "get_action_textures": self._handle_get_action_textures,
             "trace_resource_usage": self._handle_trace_resource_usage,
-            "trace_event_dependencies": self._handle_trace_event_dependencies,
-            "diff_events": self._handle_diff_events,
+            "trace_action_dependencies": self._handle_trace_action_dependencies,
+            "diff_actions": self._handle_diff_actions,
             "analyze_pass": self._handle_analyze_pass,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
@@ -62,6 +63,13 @@ class RequestHandler:
                 return self._error_response(
                     request_id, -32601, "Method not found: %s" % method
                 )
+
+            target = getattr(self.facade, method) if method != "ping" else None
+            allowed = set(inspect.signature(target).parameters) if target else set()
+            unexpected = sorted(set(params) - allowed)
+            if unexpected:
+                raise ValueError("INVALID_REQUEST: unexpected parameter(s): %s" %
+                                 ", ".join(unexpected))
 
             result = self._methods[method](params)
             return {"id": request_id, "result": result}
@@ -86,6 +94,7 @@ class RequestHandler:
             prefix = ""
 
         invalid_prefixes = {
+            "INVALID_REQUEST",
             "INVALID_USAGE_CATEGORIES",
             "INVALID_STAGE",
             "INVALID_ACTION_EVENT_ID",
@@ -145,27 +154,20 @@ class RequestHandler:
         """Handle get_capture_status request"""
         return self.facade.get_capture_status()
 
-    def _handle_get_draw_calls(self, params):
-        """Handle get_draw_calls request"""
+    def _handle_get_actions(self, params):
+        """Handle get_actions request"""
         include_children = params.get("include_children", True)
         marker_filter = params.get("marker_filter")
         exclude_markers = params.get("exclude_markers")
-        event_id_range = params.get("event_id_range")
-        if event_id_range is not None:
-            event_id_min = event_id_range.get("min")
-            event_id_max = event_id_range.get("max")
-        else:
-            event_id_min = params.get("event_id_min")
-            event_id_max = params.get("event_id_max")
-        only_actions = params.get("only_actions", False)
+        action_event_id_range = params.get("action_event_id_range")
+        exclude_marker_actions = params.get("exclude_marker_actions", False)
         flags_filter = params.get("flags_filter")
-        return self.facade.get_draw_calls(
+        return self.facade.get_actions(
             include_children=include_children,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
-            event_id_min=event_id_min,
-            event_id_max=event_id_max,
-            only_actions=only_actions,
+            action_event_id_range=action_event_id_range,
+            exclude_marker_actions=exclude_marker_actions,
             flags_filter=flags_filter,
         )
 
@@ -173,34 +175,34 @@ class RequestHandler:
         """Handle get_frame_summary request"""
         return self.facade.get_frame_summary()
 
-    def _handle_inspect_event(self, params):
-        """Handle inspect_event request."""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.inspect_event(int(event_id))
+    def _handle_inspect_action(self, params):
+        """Handle inspect_action request."""
+        action_event_id = self._require_param(params, "action_event_id")
+        return self.facade.inspect_action(int(action_event_id))
 
     def _handle_summarize_capture(self, params):
         """Handle summarize_capture request."""
         return self.facade.summarize_capture()
 
-    def _handle_search_draws(self, params):
-        """Handle search_draws request."""
+    def _handle_search_actions(self, params):
+        """Handle search_actions request."""
         search_type = self._require_param(params, "by")
         query = self._require_param(params, "query")
         stage = params.get("stage")
-        return self.facade.search_draws(search_type, query, stage)
+        return self.facade.search_actions(search_type, query, stage)
 
-    def _handle_get_draw_call_details(self, params):
-        """Handle get_draw_call_details request"""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.get_draw_call_details(int(event_id))
+    def _handle_get_action_details(self, params):
+        """Handle get_action_details request"""
+        action_event_id = self._require_param(params, "action_event_id")
+        return self.facade.get_action_details(action_event_id=int(action_event_id))
 
     def _handle_get_action_timings(self, params):
         """Handle get_action_timings request"""
-        event_ids = params.get("event_ids")
+        action_event_ids = params.get("action_event_ids")
         marker_filter = params.get("marker_filter")
         exclude_markers = params.get("exclude_markers")
         return self.facade.get_action_timings(
-            event_ids=event_ids,
+            action_event_ids=action_event_ids,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
         )
@@ -276,10 +278,10 @@ class RequestHandler:
         """Handle get_texture_data request"""
         resource_id = self._require_param(params, "resource_id")
         mip = params.get("mip", 0)
-        slice_idx = params.get("slice", 0)
+        slice_index = params.get("slice_index", 0)
         sample = params.get("sample", 0)
         depth_slice = params.get("depth_slice")  # None = full volume
-        return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice, params.get("action_event_id"))
+        return self.facade.get_texture_data(resource_id, mip, slice_index, sample, depth_slice, params.get("action_event_id"))
 
     def _handle_save_texture(self, params):
         """Handle save_texture request"""
@@ -326,35 +328,28 @@ class RequestHandler:
         marker_filter = params.get("marker_filter")
         exclude_markers = params.get("exclude_markers")
         event_id_range = params.get("event_id_range")
-        if event_id_range is not None:
-            event_id_min = event_id_range.get("min")
-            event_id_max = event_id_range.get("max")
-        else:
-            event_id_min = params.get("event_id_min")
-            event_id_max = params.get("event_id_max")
         before_event_id = params.get("before_event_id")
         return self.facade.trace_resource_usage(
             resource_id=resource_id,
             marker_filter=marker_filter,
             exclude_markers=exclude_markers,
-            event_id_min=int(event_id_min) if event_id_min is not None else None,
-            event_id_max=int(event_id_max) if event_id_max is not None else None,
+            event_id_range=event_id_range,
             before_event_id=int(before_event_id) if before_event_id is not None else None,
             offset=params.get("offset", 0),
             limit=params.get("limit", 100),
             categories=params.get("categories"),
         )
 
-    def _handle_trace_event_dependencies(self, params):
-        """Handle trace_event_dependencies request."""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.trace_event_dependencies(int(event_id))
+    def _handle_trace_action_dependencies(self, params):
+        """Handle trace_action_dependencies request."""
+        action_event_id = self._require_param(params, "action_event_id")
+        return self.facade.trace_action_dependencies(int(action_event_id))
 
-    def _handle_diff_events(self, params):
-        """Handle diff_events request."""
-        event_id_a = self._require_param(params, "event_id_a")
-        event_id_b = self._require_param(params, "event_id_b")
-        return self.facade.diff_events(int(event_id_a), int(event_id_b))
+    def _handle_diff_actions(self, params):
+        """Handle diff_actions request."""
+        action_event_id_a = self._require_param(params, "action_event_id_a")
+        action_event_id_b = self._require_param(params, "action_event_id_b")
+        return self.facade.diff_actions(int(action_event_id_a), int(action_event_id_b))
 
     def _handle_analyze_pass(self, params):
         """Handle analyze_pass request."""
@@ -374,35 +369,33 @@ class RequestHandler:
 
     def _handle_get_mesh_summary(self, params):
         """Handle get_mesh_summary request"""
-        event_id = self._require_param(params, "event_id")
-        return self.facade.get_mesh_summary(int(event_id))
+        action_event_id = self._require_param(params, "action_event_id")
+        return self.facade.get_mesh_summary(int(action_event_id))
 
     def _handle_get_mesh_data(self, params):
         """Handle get_mesh_data request"""
-        event_id = self._require_param(params, "event_id")
+        action_event_id = self._require_param(params, "action_event_id")
         stage = params.get("stage", "VSIn")
-        offset = params.get("offset", params.get("start_offset", 0))
-        limit = params.get("limit", params.get("max_vertices", 100))
+        offset = params.get("offset", 0)
+        limit = params.get("limit", 100)
         attributes = params.get("attributes")
         return self.facade.get_mesh_data(
-            event_id=int(event_id),
+            action_event_id=int(action_event_id),
             stage=stage,
             offset=int(offset),
             limit=int(limit),
-            start_offset=int(offset),
-            max_vertices=int(limit),
             attributes=attributes,
         )
 
     def _handle_export_mesh_csv(self, params):
         """Handle export_mesh_csv request"""
-        event_id = self._require_param(params, "event_id")
+        action_event_id = self._require_param(params, "action_event_id")
         output_path = self._require_param(params, "output_path")
         stage = params.get("stage", "VSIn")
-        include_attributes = params.get("include_attributes")
+        attributes = params.get("attributes")
         return self.facade.export_mesh_csv(
-            event_id=int(event_id),
+            action_event_id=int(action_event_id),
             output_path=output_path,
             stage=stage,
-            include_attributes=include_attributes,
+            attributes=attributes,
         )

@@ -4,11 +4,48 @@
 
 [English](tools.md)
 
+## 术语与字段约定
+
+| 术语 / 字段 | 含义 |
+|---|---|
+| `event_id`（EID） | 帧内事件编号，可以指向设置状态的 API event。用于 shader 的 replay 状态查询和资源原始 usage 记录。 |
+| `action_event_id` | 产生该 action 的事件 EID。所有 action 接口的输入和返回记录统一使用此字段，包括嵌套记录、网格、时间和搜索结果。 |
+| `action_id` | 独立的 action 序号，从 1 开始。不能当作 EID 传入。 |
+| `api_event_id` | 指定 action 关联的某条 API event 的 EID，与 `action_event_id` 属于同一套 EID。 |
+| action / draw call | action 包含 draw、dispatch、copy、clear 和 marker 节点；draw call 专指绘制。搜索目前扫描 draw 和 dispatch。 |
+
+action EID 不是把几个 API 调用打包后重新分配的编号。例如 EID 340–343 关联到一个
+draw，其 `action_event_id` 是 343，`action_id` 可以是 12；`api_event_id=341`
+用于选择其中一条 API event。
+资源 usage 和生产者记录保留通用 `event_id`，即使无法解析出对应 action 也能返回。
+shader 查询读取指定事件的 replay 状态，不要求精确 action，因此保留 `event_id`。
+纹理读取/导出可显式指定精确 `action_event_id`；省略时使用 UI 当前 replay 位置。
+返回值在显式指定 action 时使用 `action_event_id`，省略参数时使用 `event_id`，
+因为 UI 当前 replay 位置可能是中间 API event。
+
+shader 阶段统一返回 `vertex`、`tess_control`、`tess_eval`、`geometry`、`fragment`、
+`compute`、`task`、`mesh`（以 RenderDoc 支持为准）。shader 和管线接口接受相同的
+shader 阶段别名，包括 `hull`/`HS`/`TCS`、`domain`/`DS`/`TES`、`pixel`/`PS`/`FS`。
+管线专用的 `vertex_input`、`rasterizer`、`framebuffer` 不属于 shader 阶段。
+网格的 `VSIn`/`VSOut`/`GSOut` 表示数据位置，保持独立。
+
+纹理读取/导出的数组层或立方体面参数及返回字段统一为 `slice_index`；`depth_slice`
+表示 3D 纹理的 Z 切片。网格读取/导出的属性筛选统一为 `attributes`。
+分页统一用 `offset`/`limit`，单位是条目（网格读取为顶点条目）；buffer 的
+`offset`/`length` 表示字节范围。
+
+action 接口使用 `action_event_id`、`action_event_ids`、`action_event_id_range`。
+比较接口参数为 `action_event_id_a`/`action_event_id_b`，返回 `action_a`/`action_b`；
+`analyze_pass` 返回 `action_event_id_range`。
+`exclude_marker_actions` 排除 marker 节点，marker 本身也是 action。
+API 调用上下文的名称字段为 `name`；`inspect_action.timing.action` 是匹配的时间记录。
+接口仅按照当前签名校验参数。
+
 ## 推荐流程
 
 一个典型的分析流程通常遵循以下模式：
 
-`get_capture_status` / `get_frame_summary` -> `get_draw_calls` / `search_draws` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
+`get_capture_status` / `get_frame_summary` -> `get_actions` / `search_actions` -> `get_pipeline_state` / `get_shader_info` / `get_shader_source` / `get_shader_edit_context` / `get_mesh_data`
 
 ---
 
@@ -106,7 +143,7 @@ summarize_capture()
 
 ### Action 导航
 
-#### `get_draw_calls`
+#### `get_actions`
 
 获取 draw call 和 action 的层级结构，支持过滤。
 
@@ -115,48 +152,46 @@ summarize_capture()
 | `include_children` | `bool` | 否 | `true` | 包含子级 action |
 | `marker_filter` | `str` | 否 | | 仅包含标记路径中包含此字符串的 action（部分匹配） |
 | `exclude_markers` | `list[str]` | 否 | | 排除标记路径中包含这些字符串的 action |
-| `event_id_range` | `dict` | 否 | | event ID 范围，格式为 `{"min": ..., "max": ...}` |
-| `event_id_min` | `int` | 否 | | event ID 范围下界的旧版别名 |
-| `event_id_max` | `int` | 否 | | event ID 范围上界的旧版别名 |
-| `only_actions` | `bool` | 否 | `false` | 为 true 时排除 marker action |
+| `action_event_id_range` | `dict` | 否 | | event ID 范围，格式为 `{"min": ..., "max": ...}` |
+| `exclude_marker_actions` | `bool` | 否 | `false` | 为 true 时排除 marker action |
 | `flags_filter` | `list[str]` | 否 | | 仅包含具有这些标志的 action（如 `["Drawcall", "Dispatch"]`） |
 
 **返回值：** 包含 marker、draw call、dispatch 和其他 GPU 事件的层级树结构。
 
 **示例：**
 ```
-# 获取所有 draw call 及其子级
-get_draw_calls(include_children=true)
+# 获取完整 action 树
+get_actions(include_children=true)
 
 # 按 marker 和 event 范围过滤
-get_draw_calls(marker_filter="Camera.Render", event_id_min=7372, event_id_max=7600)
+get_actions(marker_filter="Camera.Render", action_event_id_range={"min": 7372, "max": 7600})
 
 # 仅 draw call，排除 marker
-get_draw_calls(only_actions=true, flags_filter=["Drawcall"])
+get_actions(exclude_marker_actions=true, flags_filter=["Drawcall"])
 
 # 排除特定 marker
-get_draw_calls(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
+get_actions(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
 ```
 
 ---
 
-#### `search_draws`
+#### `search_actions`
 
-按 shader、texture 或 resource 统一搜索 draw call。
+按 shader、texture 或 resource 搜索 draw 和 dispatch action。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `by` | `"shader"` / `"texture"` / `"resource"` | 是 | 搜索模式 |
 | `query` | `str` | 是 | shader 名称、纹理名称或 resource ID |
-| `stage` | `str` | 否 | shader 阶段过滤（`"vertex"`、`"pixel"`、`"compute"` 等）— 仅在 `by="shader"` 时有效 |
+| `stage` | `str` | 否 | shader 阶段过滤（`"vertex"`、`"fragment"`、`"compute"` 等）— 仅在 `by="shader"` 时有效 |
 
 **返回值：** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`
 
 **示例：**
 ```
-search_draws(by="shader", query="Toon", stage="pixel")
-search_draws(by="texture", query="CharacterSkin")
-search_draws(by="resource", query="ResourceId::12345")
+search_actions(by="shader", query="Toon", stage="fragment")
+search_actions(by="texture", query="CharacterSkin")
+search_actions(by="resource", query="ResourceId::12345")
 ```
 
 ---
@@ -244,7 +279,7 @@ get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, chi
 | `list_shader_replacements` | 无 | `items` 列出生效的替换，`sessions` 同时包含准备、失败和冲突的会话 |
 | `export_shader_source` | `edit_id: str, output_path: str` | 以 UTF-8 导出最近提交的文本，已有文件不覆盖 |
 
-`stage` 沿用 `vertex / hull / domain / geometry / pixel / compute`。
+`stage` 统一使用 `vertex / tess_control / tess_eval / geometry / fragment / compute / task / mesh`。
 `mode` 支持 `auto / original / glsl / spirv_asm`：原始 GLSL 直接编辑；SPIR-V 自动优先使用
 SPIRV-Cross → GLSL → 编译器，缺少完整路径时回退到 spirv-dis → 汇编 → spirv-as。
 显式选择模式时不回退。`original` 仅支持捕获中的文本 GLSL；伪代码不是可编译源码。
@@ -253,7 +288,7 @@ SPIRV-Cross → GLSL → 编译器，缺少完整路径时回退到 spirv-dis �
 Settings → Shader Processing 配置，不硬编码。一个资源的多入口编辑暂不支持。
 
 ```python
-edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+edit = get_shader_edit_context(event_id=123, stage="fragment", mode="auto")
 # 根据 edit["source_text"] 修改代码，保留资源绑定与输入输出接口。
 result = replace_shader(edit_id=edit["edit_id"], source_text=modified_source)
 # 应检查 last_attempt_status == "applied"，并读取 log 中的警告/错误。
@@ -369,7 +404,7 @@ Buffer 范围是实际有效字节范围，Vulkan dynamic offset 已包含，不
 get_action_textures(action_event_id=343, direction="all", offset=0, limit=50)
 get_action_textures(action_event_id=343, direction="input", stage="FS")
 get_action_textures(action_event_id=343, direction="output")
-get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice=0)
+get_texture_data(action_event_id=343, resource_id="ResourceId::487", mip=0, slice_index=0)
 save_texture(action_event_id=343, resource_id="ResourceId::487",
              output_path="D:/output/texture.png")
 ```
@@ -388,8 +423,8 @@ Copy/resolve 使用 action 的显式 source/destination 与子资源；clear 返
 `event_phase="after"`。即使纹理标记为 input，像素查询也不代表每次 shader 访问时的历史快照。
 查询成功或失败均恢复 UI 对应的 replay 事件，不改变 UI 选择。
 
-`inspect_event` 改为返回管线总览 `pipeline`、不分页的 `bindings` / `textures` 和
-`fixed_function`。`diff_events` 比较完整绑定位置及范围，包含 buffer/sampler 和固定功能状态，
+`inspect_action` 改为返回管线总览 `pipeline`、不分页的 `bindings` / `textures` 和
+`fixed_function`。`diff_actions` 比较完整绑定位置及范围，包含 buffer/sampler 和固定功能状态，
 忽略 action 专属 token。`get_shader_info` 不再返回常量值和资源绑定集合。
 
 自动验证：`python -m unittest discover -s tests -v`。
@@ -406,13 +441,13 @@ Copy/resolve 使用 action 的显式 source/destination 与子资源；clear 返
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `event_id` | `int` | 是 | event ID |
-| `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
+| `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"tess_control"`、`"tess_eval"`、`"geometry"`、`"fragment"`、`"compute"` |
 
 **返回值：** shader resource ID、入口点、阶段和反汇编。
 
 **示例：**
 ```
-get_shader_info(event_id=123, stage="pixel")
+get_shader_info(event_id=123, stage="fragment")
 ```
 
 ---
@@ -424,13 +459,13 @@ get_shader_info(event_id=123, stage="pixel")
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `event_id` | `int` | 是 | event ID |
-| `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
+| `stage` | `str` | 是 | shader 阶段：`"vertex"`、`"tess_control"`、`"tess_eval"`、`"geometry"`、`"fragment"`、`"compute"` |
 
 **返回值：** shader resource ID、入口点、阶段、编码类型、`source_available`，以及文本编码下的 `source_text`。对于 DXBC / DXIL / 二进制 SPIR-V 等格式，返回元数据和说明原始源码不可直接获得的 `reason`。
 
 **示例：**
 ```
-get_shader_source(event_id=123, stage="pixel")
+get_shader_source(event_id=123, stage="fragment")
 # → {"resource_id": "ResourceId::42", "encoding": "GLSL", "source_available": true, "source_text": "..."}
 ```
 
@@ -443,14 +478,14 @@ get_shader_source(event_id=123, stage="pixel")
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `event_id` | `int` | 是 | | event ID |
-| `stage` | `str` | 是 | | shader 阶段：`"vertex"`、`"hull"`、`"domain"`、`"geometry"`、`"pixel"`、`"compute"` |
+| `stage` | `str` | 是 | | shader 阶段：`"vertex"`、`"tess_control"`、`"tess_eval"`、`"geometry"`、`"fragment"`、`"compute"` |
 | `mode` | `str` | 否 | `"auto"` | 要准备的表示形式：`auto / original / glsl / spirv_asm` |
 
 **返回值：** `edit_id`、`source_text`、`applied_source_text`、入口点、编码、编译器、`revision`、`applied`、`last_attempt_status` 和 `log`。将 `edit_id` 配合 `replace_shader` / `revert_shader` / `export_shader_source` 使用。
 
 **示例：**
 ```
-edit = get_shader_edit_context(event_id=123, stage="pixel", mode="auto")
+edit = get_shader_edit_context(event_id=123, stage="fragment", mode="auto")
 # → {"edit_id": "...", "source_text": "...", "compiler": "...", "applied": false, ...}
 ```
 
@@ -484,7 +519,7 @@ get_texture_info(resource_id="ResourceId::2495")
 | `resource_id` | `str` | 是 | | 资源 ID |
 | `action_event_id` | `int` | 否 | UI 当前事件 | 读取指定 action 执行后的内容，随后恢复 replay |
 | `mip` | `int` | 否 | `0` | 要获取的 mip 级别 |
-| `slice` | `int` | 否 | `0` | 数组切片或立方体贴图面索引（0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-） |
+| `slice_index` | `int` | 否 | `0` | 数组切片或立方体贴图面索引（0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-） |
 | `sample` | `int` | 否 | `0` | MSAA 采样索引 |
 | `depth_slice` | `int` | 否 | | 仅限 3D 纹理，提取特定深度切片。省略时返回完整体积。 |
 
@@ -499,7 +534,7 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::123")
 get_texture_data(action_event_id=123, resource_id="ResourceId::123", mip=2)
 
 # 获取立方体贴图的特定面 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice=3)
+get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice_index=3)
 
 # 获取 3D 纹理的特定深度切片
 get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
@@ -536,13 +571,13 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `event_id` | `int` | 是 | draw call 的 event ID |
+| `action_event_id` | `int` | 是 | draw call 的 event ID |
 
 **返回值：** 拓扑结构、顶点/索引数量、是否使用索引缓冲、顶点属性及其格式、包围盒。
 
 **示例：**
 ```
-get_mesh_summary(event_id=1234)
+get_mesh_summary(action_event_id=1234)
 # → {"topology": "TriangleList", "num_vertices": 3024, "num_indices": 9072, "indexed": true,
 #    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT", "components": 3}, ...],
 #    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]}}
@@ -556,26 +591,24 @@ get_mesh_summary(event_id=1234)
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `event_id` | `int` | 是 | | event ID |
+| `action_event_id` | `int` | 是 | | event ID |
 | `stage` | `str` | 否 | `"VSIn"` | 网格数据阶段：`"VSIn"`（输入）、`"VSOut"`（顶点着色器输出）、`"GSOut"`（几何着色器输出） |
 | `offset` | `int` | 否 | `0` | 分页起始顶点偏移量 |
 | `limit` | `int` | 否 | `100` | 最大返回顶点数（建议：100-500） |
-| `start_offset` | `int` | 否 | `0` | `offset` 的旧版别名 |
-| `max_vertices` | `int` | 否 | `100` | `limit` 的旧版别名 |
 | `attributes` | `list[str]` | 否 | | 过滤特定属性名称（如 `["POSITION", "NORMAL"]`）。省略时包含所有属性。 |
 
-**返回值：** `vertices`、`indices`、`topology`、`attribute_info`、`total_count`、`has_more`、`truncated`。
+**返回值：** `items`、`indices`、`topology`、`attributes`、`total_count`、`has_more`、`truncated`。
 
 **示例：**
 ```
 # 第一页
-get_mesh_data(event_id=1234, offset=0, limit=100)
+get_mesh_data(action_event_id=1234, offset=0, limit=100)
 
 # 下一页
-get_mesh_data(event_id=1234, offset=100, limit=100)
+get_mesh_data(action_event_id=1234, offset=100, limit=100)
 
 # 过滤特定属性
-get_mesh_data(event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMAL", "TEXCOORD"])
+get_mesh_data(action_event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMAL", "TEXCOORD"])
 ```
 
 ---
@@ -594,7 +627,7 @@ get_mesh_data(event_id=1234, offset=0, limit=100, attributes=["POSITION", "NORMA
 | `offset` | `int` | `0` | 调用列表或当前节点可见子节点的分页偏移 |
 | `limit` | `int` | `50` | 每页 1–500 项 |
 
-列表保留 `ActionDescription.events` 的顺序，通过分页可读取全部关联调用：即上一个 action 之后的事件，不代表所有历史状态设置调用。返回 `action_event_id`、`action_name` 和分页 `items`；每项包含 `api_event_id`、`name`、`chunk_index`、`available`，数据可用时包含原始 `child_count`。
+列表保留 `ActionDescription.events` 的顺序，通过分页可读取全部关联调用：即上一个 action 之后的事件，不代表所有历史状态设置调用。返回 `action_event_id`、`name` 和分页 `items`；每项包含 `api_event_id`、`name`、`chunk_index`、`available`，数据可用时包含原始 `child_count`。
 
 指定 `api_event_id` 后返回 `api_call`、`node` 和分页 `children`。参数展开复用资源初始化的序列化逻辑：每次一层，隐藏 Hidden 子节点、保留原始索引路径、展示资源 ID/名称，二进制省略内容，文本预览限制为 4096 字符。没有结构化 chunk 的调用仍保留在列表中，标记 `available: false` 和 `reason: "no_chunk"` 或 `"invalid_chunk_index"`；选中后只返回 `api_call`，不返回参数树。API EID 不属于指定 action 时返回 `INVALID_API_EVENT_ID`。
 
@@ -608,19 +641,21 @@ get_action_api_calls(action_event_id=343, api_event_id=341, child_path=[0])
 
 ---
 
-#### `get_draw_call_details`
+#### `get_action_details`
 
-获取特定 draw call 的详细信息。
+获取 action 的元数据、绘制计数、偏移及输出资源。
+关联 API 调用及参数树请使用 `get_action_api_calls`。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `event_id` | `int` | 是 | draw call 的 event ID |
+| `action_event_id` | `int` | 是 | action 的 event ID |
 
-**返回值：** 顶点/索引数量、资源输出和其他元数据。
+**返回值：** `action_event_id`、`action_id`、`name`、`flags`、绘制计数（`num_indices`、`num_instances`）、绘制偏移、`outputs` 和可选的 `depth_output`。
+返回值使用 `action_event_id` 标识 action 的 EID；`action_id` 是独立的 action 序号。
 
 **示例：**
 ```
-get_draw_call_details(event_id=123)
+get_action_details(action_event_id=123)
 ```
 
 ---
@@ -631,7 +666,7 @@ get_draw_call_details(event_id=123)
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `event_ids` | `list[int]` | 否 | | 指定的 event ID 列表。省略时返回所有 action。 |
+| `action_event_ids` | `list[int]` | 否 | | 指定的 event ID 列表。省略时返回所有 action。 |
 | `marker_filter` | `str` | 否 | | 仅包含标记路径中包含此字符串的 action |
 | `exclude_markers` | `list[str]` | 否 | | 排除标记路径中包含这些字符串的 action |
 
@@ -645,7 +680,7 @@ get_draw_call_details(event_id=123)
 get_action_timings()
 
 # 指定 event ID
-get_action_timings(event_ids=[100, 200, 300])
+get_action_timings(action_event_ids=[100, 200, 300])
 
 # 按 marker 过滤
 get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"])
@@ -657,19 +692,19 @@ get_action_timings(marker_filter="Camera.Render", exclude_markers=["GUI.Repaint"
 
 在原子工具之上编排多个服务的跨维度复合查询，帮助快速获得全局视图。
 
-#### `inspect_event`
+#### `inspect_action`
 
-对单个 event 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要。
+对单个 action 做复合检查，返回紧凑的详情、时间、shader 摘要、管线摘要与网格摘要。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `event_id` | `int` | 是 | 要检查的 event ID |
+| `action_event_id` | `int` | 是 | 要检查的 action EID ID |
 
 **返回值：** event 详情、时间、shader 摘要、管线摘要、网格摘要。
 
 **示例：**
 ```
-inspect_event(event_id=1517)
+inspect_action(action_event_id=1517)
 ```
 
 ---
@@ -684,8 +719,6 @@ inspect_event(event_id=1517)
 | `marker_filter` | `str` | 否 | | marker 路径子串过滤 |
 | `exclude_markers` | `list[str]` | 否 | | 要排除的 marker 子串 |
 | `event_id_range` | `dict` | 否 | | event 范围，格式为 `{"min": ..., "max": ...}` |
-| `event_id_min` | `int` | 否 | | event 范围下界的旧版别名 |
-| `event_id_max` | `int` | 否 | | event 范围上界的旧版别名 |
 | `before_event_id` | `int` | 否 | | 计算此 event 之前的最近写入者 |
 | `categories` | `list[str]` | 否 | 全部 | Timeline 分类多选：`read`、`write`、`read_write`、`barrier`、`clear` |
 | `offset` | `int` | 否 | `0` | 过滤后的分页偏移 |
@@ -714,37 +747,37 @@ trace_resource_usage(resource_id="ResourceId::2495", marker_filter="Forward", be
 
 ---
 
-#### `trace_event_dependencies`
+#### `trace_action_dependencies`
 
-追踪单个 event 的直接资源依赖。
+追踪单个 action 的直接资源依赖。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `event_id` | `int` | 是 | 要检查的 event |
+| `action_event_id` | `int` | 是 | 要检查的 action EID |
 
 **返回值：** 按阶段分组的输入资源、输入装配缓冲区、输出资源、主要输入的候选 producer event。
 
 **示例：**
 ```
-trace_event_dependencies(event_id=1517)
+trace_action_dependencies(action_event_id=1517)
 ```
 
 ---
 
-#### `diff_events`
+#### `diff_actions`
 
-对比两个 event，突出关键状态差异。
+对比两个 action，突出关键状态差异。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `event_id_a` | `int` | 是 | 第一个 event ID |
-| `event_id_b` | `int` | 是 | 第二个 event ID |
+| `action_event_id_a` | `int` | 是 | 第一个 action EID |
+| `action_event_id_b` | `int` | 是 | 第二个 action EID |
 
 **返回值：** shader、资源绑定、绘制参数、网格和时间差异。
 
 **示例：**
 ```
-diff_events(event_id_a=100, event_id_b=200)
+diff_actions(action_event_id_a=100, action_event_id_b=200)
 ```
 
 ---
@@ -808,10 +841,10 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `event_id` | `int` | 是 | | draw call 的 event ID |
+| `action_event_id` | `int` | 是 | | draw call 的 event ID |
 | `output_path` | `str` | 是 | | 输出文件路径（如 `"D:/output/mesh.csv"`） |
 | `stage` | `str` | 否 | `"VSIn"` | 网格数据阶段：`"VSIn"`、`"VSOut"`、`"GSOut"` |
-| `include_attributes` | `list[str]` | 否 | | 过滤特定属性。省略时包含所有属性。 |
+| `attributes` | `list[str]` | 否 | | 过滤特定属性。省略时包含所有属性。 |
 
 **返回值：** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
 
@@ -823,5 +856,5 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 **示例：**
 ```
-export_mesh_csv(event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", include_attributes=["POSITION", "NORMAL", "TEXCOORD"])
+export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", attributes=["POSITION", "NORMAL", "TEXCOORD"])
 ```

@@ -284,7 +284,7 @@ class ShaderEditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "INVALID_EVENT_ID"):
             self.service.get_shader_edit_context(0, "pixel")
         with self.assertRaisesRegex(ValueError, "INVALID_STAGE"):
-            self.service.get_shader_edit_context(12, "fragment")
+            self.service.get_shader_edit_context(12, "framebuffer")
         edit = self.prepare()["edit_id"]
         for source in ("", " ", "void main() {}\x00"):
             with self.assertRaisesRegex(ValueError, "INVALID_SHADER_SOURCE"):
@@ -293,12 +293,19 @@ class ShaderEditTests(unittest.TestCase):
             self.service.export_shader_source(edit, "relative.glsl")
         self.assertFalse(self.ctx.built)
 
+    def test_shader_tools_share_canonical_stage_names_and_aliases(self):
+        pipeline = PIPELINE.PipelineService(self.ctx, self.ctx.invoke)
+        for alias in ("fragment", "pixel", "PS", "FS"):
+            with self.subTest(stage=alias):
+                self.assertEqual(pipeline.get_shader_source(12, alias)["stage"], "fragment")
+                self.assertEqual(self.service.get_shader_edit_context(12, alias)["stage"], "fragment")
+
     def test_immutable_capture_is_rejected(self):
         self.ctx.mutable = False
         with self.assertRaisesRegex(ValueError, "UNSUPPORTED_CAPTURE_FEATURE"):
             self.prepare()
 
-    def test_api_without_legacy_mutability_flag_is_supported(self):
+    def test_api_without_mutability_property_is_supported(self):
         self.ctx.GetAPIProperties = lambda: types.SimpleNamespace(pipelineType="OpenGL", remoteReplay=False)
         self.assertEqual(self.prepare()["compiler"], "Builtin")
 
@@ -533,8 +540,8 @@ class ShaderEditTests(unittest.TestCase):
         self.ctx.GetShader = lambda stage: (ResourceId(7 if self.ctx.replay_event == 1 else 8)
                                            if stage == Stage.Pixel else ResourceId.Null())
         search = SEARCH.SearchService(self.ctx, self.ctx.invoke)
-        result = search.search_draws("resource", "ResourceId::7")
-        self.assertEqual([item["event_id"] for item in result["matches"]], [1])
+        result = search.search_actions("resource", "ResourceId::7")
+        self.assertEqual([item["action_event_id"] for item in result["matches"]], [1])
 
     def test_new_routes_and_error_classification(self):
         handler = HANDLER.RequestHandler(self.service)

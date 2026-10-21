@@ -24,7 +24,7 @@ MCP Server は AI クライアントと stdio 経由で通信し、ファイル�
       │  bridge.call("method", params)
       ▼
   mcp_server/bridge/client.py   ← %TEMP%/renderdoc_mcp/request.json に書き込み
-      │  (ファイルベース IPC, response.json をポーリング)
+      │  (ファイルベース IPC, response_<request_id>.json をポーリング)
       ▼
   renderdoc_extension/socket_server.py  ← request.json を読み取り、RequestHandler にディスパッチ
       │
@@ -133,7 +133,7 @@ uv tool update-shell  # PATH に renderdoc-mcp を追加
 
 類似機能は複数の意味的に近い MCP コマンドに分割するのではなく、統一されたエントリポイントに集約します。
 
-例えば、複数の draw 検索インターフェースを `search_draws` に統合し、リソース列挙を `list_resources` に統一し、パラメータで型とクエリ次元を区別します。
+例えば、複数の draw 検索インターフェースを `search_actions` に統合し、リソース列挙を `list_resources` に統一し、パラメータで型とクエリ次元を区別します。
 
 #### Shape Consistency
 
@@ -168,8 +168,8 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 #### Action ナビゲーション
 
-- `get_draw_calls` - draw call / action 階層をフィルタ付きで取得
-- `search_draws` - shader、texture、resource で draw call を統一検索
+- `get_actions` - draw call / action 階層をフィルタ付きで取得
+- `search_actions` - shader、texture、resource で draw call を統一検索
 
 #### リソース空間閲覧
 
@@ -191,6 +191,10 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 破壊的変更: `get_pipeline_state` は `action_event_id` を使用します。バインディングはステージ／テクスチャツールから取得します。`get_texture_data` と `save_texture` は任意の `action_event_id` によって action 実行後の内容を取得できます。新しいクエリは UI の replay イベントを復元します。Vulkan は詳細なネイティブ情報にも対応します。
 
+action の引数と応答は `action_event_id` に統一しました。ツール名、shader ステージ名、
+`slice_index`、メッシュの `attributes` の変更は [Naming Conventions](docs/tools.md#naming-conventions)
+を参照してください。変更されたツール名とフィールド名に旧名の別名はありません。
+
 #### リソースデータ読み取り
 
 - `get_texture_info` - テクスチャメタデータを取得
@@ -201,7 +205,7 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 #### Action メタ情報
 
-- `get_draw_call_details` - 特定の draw call の詳細情報を取得
+- `get_action_details` - action のメタデータ、描画数、オフセット、出力リソースを取得（引数 `action_event_id`）
 - `get_action_api_calls` - API Inspector に対応する呼び出し一覧とパラメータツリーを取得
 - `get_action_timings` - action の GPU タイミングを取得
 
@@ -209,10 +213,10 @@ MCP ツールセット全体は以下の 3 つの能力階層で構成されて�
 
 原子ツールの上で複数サービスをオーケストレーションする多次元クエリで、素早く全体像を把握できます。
 
-- `inspect_event` - 単一 event を複合的に調査し、詳細、タイミング、shader サマリー、パイプラインサマリー、メッシュサマリーを返す
+- `inspect_action` - 単一 event を複合的に調査し、詳細、タイミング、shader サマリー、パイプラインサマリー、メッシュサマリーを返す
 - `trace_resource_usage` - Timeline に対応した分類・件数と `categories` フィルター（元の usage を保持）
-- `trace_event_dependencies` - 単一 event の直接リソース依存関係と候補 producer event を追跡する
-- `diff_events` - 2 つの event を比較し、重要な状態差分を強調する
+- `trace_action_dependencies` - 単一 event の直接リソース依存関係と候補 producer event を追跡する
+- `diff_actions` - 2 つの event を比較し、重要な状態差分を強調する
 - `analyze_pass` - 1 つの marker サブツリーまたは pass をまとまったワークロードとして要約する
 
 ### 上位ツール能力

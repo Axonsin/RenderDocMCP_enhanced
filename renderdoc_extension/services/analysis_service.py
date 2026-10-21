@@ -30,20 +30,20 @@ class AnalysisService:
         self._resource = resource_service
         self._mesh = mesh_service
 
-    def inspect_event(self, event_id):
-        """Build a compact analysis-oriented inspection bundle for an event."""
+    def inspect_action(self, action_event_id):
+        """Build a compact analysis-oriented inspection bundle for an action."""
         try:
-            return self._inspect_event(event_id)
+            return self._inspect_action(action_event_id)
         finally:
-            # Legacy timing/mesh readers can move replay after the pipeline query.
+            # Timing/mesh readers can move replay after the pipeline query.
             if self.ctx.IsCaptureLoaded():
                 at_event(self.ctx, self._invoke, None, lambda controller, event: None)
 
-    def _inspect_event(self, event_id):
-        details = self._action.get_draw_call_details(event_id)
-        snapshot = self._pipeline.analysis_snapshot(event_id)
+    def _inspect_action(self, action_event_id):
+        details = self._action.get_action_details(action_event_id=action_event_id)
+        snapshot = self._pipeline.analysis_snapshot(action_event_id)
         pipeline = snapshot["overview"]
-        timings = self._action.get_action_timings(event_ids=[event_id])
+        timings = self._action.get_action_timings(action_event_ids=[action_event_id])
 
         timing_summary = {
             "available": bool(timings.get("available")),
@@ -51,17 +51,17 @@ class AnalysisService:
         if timings.get("available"):
             timing_entry = None
             for entry in timings.get("timings", []):
-                if entry.get("event_id") == event_id:
+                if entry.get("action_event_id") == action_event_id:
                     timing_entry = entry
                     break
-            timing_summary["event"] = timing_entry
+            timing_summary["action"] = timing_entry
         else:
             timing_summary["reason"] = timings.get("error", "")
 
         mesh_summary = None
         if "Drawcall" in details.get("flags", []):
             try:
-                mesh_summary = self._mesh.get_mesh_summary(event_id)
+                mesh_summary = self._mesh.get_mesh_summary(action_event_id)
             except ValueError:
                 mesh_summary = None
 
@@ -76,7 +76,7 @@ class AnalysisService:
         pipeline_summary = pipeline
 
         return {
-            "event_id": event_id,
+            "action_event_id": action_event_id,
             "name": details.get("name", ""),
             "action_id": details.get("action_id"),
             "flags": details.get("flags", []),
@@ -110,23 +110,23 @@ class AnalysisService:
             entry_points.append({
                 "type": "marker",
                 "name": marker.get("name", ""),
-                "event_id": marker.get("event_id"),
+                "action_event_id": marker.get("action_event_id"),
                 "reason": "top_level_marker",
             })
-            if marker.get("event_id") is not None:
-                seen_event_ids.add(marker.get("event_id"))
+            if marker.get("action_event_id") is not None:
+                seen_event_ids.add(marker.get("action_event_id"))
 
         for action in hot_actions[:5]:
-            if action.get("event_id") in seen_event_ids:
+            if action.get("action_event_id") in seen_event_ids:
                 continue
             entry_points.append({
                 "type": "hot_action",
                 "name": action.get("name", ""),
-                "event_id": action.get("event_id"),
+                "action_event_id": action.get("action_event_id"),
                 "reason": "high_gpu_duration",
                 "duration_ms": action.get("duration_ms"),
             })
-            seen_event_ids.add(action.get("event_id"))
+            seen_event_ids.add(action.get("action_event_id"))
 
         return {
             "api": summary.get("api"),
@@ -143,8 +143,7 @@ class AnalysisService:
         resource_id,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
+        event_id_range=None,
         before_event_id=None,
         offset=0,
         limit=100,
@@ -182,13 +181,12 @@ class AnalysisService:
                     # Unknown actions still have authoritative EID/usage data.
                     if marker_filter or exclude_markers:
                         continue
-                    action_info = {"event_id": usage.eventId}
+                    action_info = {"action_event_id": usage.eventId}
                 if not self._matches_filters(
                     action_info,
                     marker_filter=marker_filter,
                     exclude_markers=exclude_markers,
-                    event_id_min=event_id_min,
-                    event_id_max=event_id_max,
+                    event_id_range=event_id_range,
                 ):
                     continue
 
@@ -254,19 +252,19 @@ class AnalysisService:
             return result
         return self._resource._query(operation)
 
-    def trace_event_dependencies(self, event_id):
-        """Trace immediate resource dependencies for an event."""
+    def trace_action_dependencies(self, action_event_id):
+        """Trace immediate resource dependencies for an action."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"data": None, "error": None}
 
         def callback(controller):
-            controller.SetFrameEvent(event_id, True)
+            controller.SetFrameEvent(action_event_id, True)
 
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetAction(action_event_id)
             if not action:
-                result["error"] = "INVALID_EVENT_ID: no action at event %d" % event_id
+                result["error"] = "INVALID_ACTION_EVENT_ID: no action at event %d" % action_event_id
                 return
 
             structured_file = controller.GetStructuredFile()
@@ -344,7 +342,7 @@ class AnalysisService:
                         controller,
                         action_index,
                         entry["resource_id"],
-                        event_id,
+                        action_event_id,
                         catalog,
                     )
                     entry["producer_event"] = producer
@@ -358,7 +356,7 @@ class AnalysisService:
                 controller,
                 action_index,
                 catalog,
-                event_id,
+                action_event_id,
             )
 
             for entry in input_assembly:
@@ -393,7 +391,7 @@ class AnalysisService:
                 pass
 
             result["data"] = {
-                "event_id": event_id,
+                "action_event_id": action_event_id,
                 "name": action.GetName(structured_file),
                 "flags": Serializers.serialize_flags(action.flags),
                 "inputs_by_stage": inputs_by_stage,
@@ -409,10 +407,10 @@ class AnalysisService:
             raise ValueError(result["error"])
         return result["data"]
 
-    def diff_events(self, event_id_a, event_id_b):
-        """Compare two events using normalized compact inspection snapshots."""
-        event_a = self.inspect_event(event_id_a)
-        event_b = self.inspect_event(event_id_b)
+    def diff_actions(self, action_event_id_a, action_event_id_b):
+        """Compare two actions using normalized compact inspection snapshots."""
+        event_a = self.inspect_action(action_event_id_a)
+        event_b = self.inspect_action(action_event_id_b)
 
         shader_differences = []
         shader_map_a = self._index_by_key(event_a.get("shaders", []), "stage")
@@ -423,8 +421,8 @@ class AnalysisService:
             if left != right:
                 shader_differences.append({
                     "stage": stage,
-                    "event_a": left,
-                    "event_b": right,
+                    "action_a": left,
+                    "action_b": right,
                 })
 
         def bindings(event, role=None):
@@ -454,8 +452,8 @@ class AnalysisService:
         ):
             if event_a.get("details", {}).get(key) != event_b.get("details", {}).get(key):
                 draw_parameter_differences[key] = {
-                    "event_a": event_a.get("details", {}).get(key),
-                    "event_b": event_b.get("details", {}).get(key),
+                    "action_a": event_a.get("details", {}).get(key),
+                    "action_b": event_b.get("details", {}).get(key),
                 }
 
         mesh_differences = {}
@@ -464,24 +462,24 @@ class AnalysisService:
             right_mesh = (event_b.get("mesh") or {}).get(key)
             if left_mesh != right_mesh:
                 mesh_differences[key] = {
-                    "event_a": left_mesh,
-                    "event_b": right_mesh,
+                    "action_a": left_mesh,
+                    "action_b": right_mesh,
                 }
 
         timing_delta_ms = None
-        timing_a = ((event_a.get("timing") or {}).get("event") or {}).get("duration_ms")
-        timing_b = ((event_b.get("timing") or {}).get("event") or {}).get("duration_ms")
+        timing_a = ((event_a.get("timing") or {}).get("action") or {}).get("duration_ms")
+        timing_b = ((event_b.get("timing") or {}).get("action") or {}).get("duration_ms")
         if timing_a is not None and timing_b is not None:
             timing_delta_ms = timing_b - timing_a
 
         return {
-            "event_a": {
-                "event_id": event_a.get("event_id"),
+            "action_a": {
+                "action_event_id": event_a.get("action_event_id"),
                 "name": event_a.get("name", ""),
                 "flags": event_a.get("flags", []),
             },
-            "event_b": {
-                "event_id": event_b.get("event_id"),
+            "action_b": {
+                "action_event_id": event_b.get("action_event_id"),
                 "name": event_b.get("name", ""),
                 "flags": event_b.get("flags", []),
             },
@@ -508,7 +506,7 @@ class AnalysisService:
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"data": None, "error": None, "event_ids": []}
+        result = {"data": None, "error": None, "action_event_ids": []}
 
         def callback(controller):
             root_actions = controller.GetRootActions()
@@ -525,13 +523,13 @@ class AnalysisService:
                 )
                 and not info.get("is_marker")
             ]
-            selected.sort(key=lambda item: item["event_id"])
+            selected.sort(key=lambda item: item["action_event_id"])
 
             if not selected:
                 result["error"] = "INVALID_MARKER_FILTER: no actions matched marker_filter %s" % marker_filter
                 return
 
-            result["event_ids"] = [info["event_id"] for info in selected]
+            result["action_event_ids"] = [info["action_event_id"] for info in selected]
 
             shader_counts = {}
             render_target_counts = {}
@@ -655,9 +653,9 @@ class AnalysisService:
                     [path for path in marker_paths if path]
                 )[:20],
                 "statistics": stats,
-                "event_range": {
-                    "min": selected[0]["event_id"],
-                    "max": selected[-1]["event_id"],
+                "action_event_id_range": {
+                    "min": selected[0]["action_event_id"],
+                    "max": selected[-1]["action_event_id"],
                 },
                 "main_shaders": sorted(
                     shader_counts.values(),
@@ -683,7 +681,7 @@ class AnalysisService:
         if result["error"]:
             raise ValueError(result["error"])
 
-        timings = self._action.get_action_timings(event_ids=result.get("event_ids") or None)
+        timings = self._action.get_action_timings(action_event_ids=result.get("action_event_ids") or None)
         if timings.get("available"):
             result["data"]["top_timed_actions"] = sorted(
                 timings.get("timings", []),
@@ -693,7 +691,7 @@ class AnalysisService:
         return result["data"]
 
     def _build_action_index(self, actions, structured_file, parent_markers=None, index=None):
-        """Build an event_id keyed action index with marker path context."""
+        """Build an action_event_id keyed action index with marker path context."""
         if parent_markers is None:
             parent_markers = []
         if index is None:
@@ -710,7 +708,7 @@ class AnalysisService:
                 action_marker_path = "/".join(parent_markers + [name]) if parent_markers else name
 
             index[action.eventId] = {
-                "event_id": action.eventId,
+                "action_event_id": action.eventId,
                 "name": name,
                 "flags": Serializers.serialize_flags(action.flags),
                 "marker_path": action_marker_path,
@@ -737,8 +735,7 @@ class AnalysisService:
         action_info,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
+        event_id_range=None,
     ):
         """Match action metadata against optional marker/range filters."""
         if action_info is None:
@@ -754,10 +751,10 @@ class AnalysisService:
                 if exclude.lower() in marker_path_lower:
                     return False
 
-        event_id = action_info.get("event_id")
-        if event_id_min is not None and event_id < event_id_min:
+        event_id = action_info.get("action_event_id")
+        if event_id_range and event_id_range.get("min") is not None and event_id < event_id_range["min"]:
             return False
-        if event_id_max is not None and event_id > event_id_max:
+        if event_id_range and event_id_range.get("max") is not None and event_id > event_id_range["max"]:
             return False
         return True
 
@@ -1054,8 +1051,8 @@ class AnalysisService:
             elif left != right:
                 changed.append({
                     "binding": key,
-                    "event_a": left,
-                    "event_b": right,
+                    "action_a": left,
+                    "action_b": right,
                 })
 
         return {

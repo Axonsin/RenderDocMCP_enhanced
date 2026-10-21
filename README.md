@@ -24,7 +24,7 @@ The MCP Server communicates with the AI client via stdio, and forwards requests 
       │  bridge.call("method", params)
       ▼
   mcp_server/bridge/client.py   ← writes %TEMP%/renderdoc_mcp/request.json
-      │  (file-based IPC, polls response.json)
+      │  (file-based IPC, polls response_<request_id>.json)
       ▼
   renderdoc_extension/socket_server.py  ← reads request.json, dispatches to RequestHandler
       │
@@ -133,7 +133,7 @@ The goal is to cover higher-frequency RenderDoc analysis needs with fewer, more 
 
 Similar capabilities are consolidated into a unified entry point rather than being split into multiple semantically similar MCP commands.
 
-For example, multiple draw search interfaces are merged into `search_draws`, resource enumeration is unified as `list_resources`, and specific types and query dimensions are distinguished through parameters.
+For example, multiple draw search interfaces are merged into `search_actions`, resource enumeration is unified as `list_resources`, and specific types and query dimensions are distinguished through parameters.
 
 #### Shape Consistency
 
@@ -168,8 +168,8 @@ The entire MCP toolset is organized into three capability tiers:
 
 #### Action Navigation
 
-- `get_draw_calls` - Get draw call / action hierarchy with filtering
-- `search_draws` - Unified search for draw calls by shader, texture, or resource
+- `get_actions` - Get draw call / action hierarchy with filtering
+- `search_actions` - Unified search for draw calls by shader, texture, or resource
 
 #### Resource Space Browsing
 
@@ -193,6 +193,10 @@ The entire MCP toolset is organized into three capability tiers:
 
 Breaking change: `get_pipeline_state` now requires `action_event_id`; use the stage/texture tools for binding rows. `get_texture_data` and `save_texture` accept optional `action_event_id` for pixels after that action. All new pipeline reads restore the UI replay event. Native detail support is deepest on Vulkan.
 
+Action tools and records now consistently use `action_event_id`; renamed tools,
+shader-stage names, `slice_index` and mesh `attributes` are listed in
+[Naming Conventions](docs/tools.md#naming-conventions). Only the current interface signatures are supported.
+
 Shader replacement affects every draw using the original resource and does not write the `.rdc` file.
 Original GLSL, SPIRV-Cross GLSL and spirv-dis assembly are supported; HLSL / DXBC / DXIL editing
 is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader-editing).
@@ -207,7 +211,7 @@ is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader
 
 #### Action Metadata
 
-- `get_draw_call_details` - Get detailed information about a specific draw call
+- `get_action_details` - Get action metadata, draw counts, offsets and output resources (`action_event_id`)
 - `get_action_api_calls` - List an action's API calls and expand parameter trees like API Inspector
 - `get_action_timings` - Get GPU timings for actions
 
@@ -215,10 +219,10 @@ is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader
 
 Cross-dimensional queries that orchestrate multiple services on top of atomic tools, providing a quick global view.
 
-- `inspect_event` - Inspect one event with compact details, timing, shader summaries, pipeline summaries, and mesh summary
+- `inspect_action` - Inspect one action with compact details, timing, shader summaries, pipeline summaries, and mesh summary
 - `trace_resource_usage` - Timeline-aligned categories/counts and optional `categories` filtering; raw usage is retained
-- `trace_event_dependencies` - Trace the immediate resource dependencies and likely producer events of one event
-- `diff_events` - Compare two events and highlight meaningful state differences
+- `trace_action_dependencies` - Trace the immediate resource dependencies and likely producer events of one action
+- `diff_actions` - Compare two actions and highlight meaningful state differences
 - `analyze_pass` - Summarize one marker subtree or pass as a coherent workload
 
 ### Upper-level Tools

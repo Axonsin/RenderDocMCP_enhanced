@@ -8,7 +8,6 @@ from typing import Literal
 from fastmcp import FastMCP
 
 from .bridge.client import RenderDocBridge, RenderDocBridgeError
-from .config import settings
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -16,7 +15,7 @@ mcp = FastMCP(
 )
 
 # RenderDoc bridge client
-bridge = RenderDocBridge(host=settings.renderdoc_host, port=settings.renderdoc_port)
+bridge = RenderDocBridge()
 
 
 def _optional_param(params: dict[str, object], name: str, value: object | None) -> None:
@@ -35,27 +34,23 @@ def get_capture_status() -> dict:
 
 
 @mcp.tool
-def get_draw_calls(
+def get_actions(
     include_children: bool = True,
     marker_filter: str | None = None,
     exclude_markers: list[str] | None = None,
-    event_id_range: dict[str, int] | None = None,
-    event_id_min: int | None = None,
-    event_id_max: int | None = None,
-    only_actions: bool = False,
+    action_event_id_range: dict[str, int] | None = None,
+    exclude_marker_actions: bool = False,
     flags_filter: list[str] | None = None,
 ) -> dict:
     """
-    Get the list of all draw calls and actions in the current capture.
+    Get the action tree, including draws, dispatches, copies, clears and markers.
 
     Args:
         include_children: Include child actions in the hierarchy (default: True)
         marker_filter: Only include actions under markers containing this string (partial match)
         exclude_markers: Exclude actions under markers containing these strings (list of partial matches)
-        event_id_range: Optional event_id range as {"min": ..., "max": ...}
-        event_id_min: Legacy lower bound alias for event_id range
-        event_id_max: Legacy upper bound alias for event_id range
-        only_actions: If True, exclude marker actions (PushMarker/PopMarker/SetMarker)
+        action_event_id_range: Optional action_event_id range as {"min": ..., "max": ...}
+        exclude_marker_actions: If True, exclude marker actions (PushMarker/PopMarker/SetMarker)
         flags_filter: Only include actions with these flags (list of flag names, e.g. ["Drawcall", "Dispatch"])
 
     Returns a hierarchical tree of actions including markers, draw calls,
@@ -64,15 +59,11 @@ def get_draw_calls(
     params: dict[str, object] = {"include_children": include_children}
     _optional_param(params, "marker_filter", marker_filter)
     _optional_param(params, "exclude_markers", exclude_markers)
-    if event_id_range is not None:
-        params["event_id_range"] = event_id_range
-    else:
-        _optional_param(params, "event_id_min", event_id_min)
-        _optional_param(params, "event_id_max", event_id_max)
-    if only_actions:
-        params["only_actions"] = only_actions
+    _optional_param(params, "action_event_id_range", action_event_id_range)
+    if exclude_marker_actions:
+        params["exclude_marker_actions"] = exclude_marker_actions
     _optional_param(params, "flags_filter", flags_filter)
-    return bridge.call("get_draw_calls", params)
+    return bridge.call("get_actions", params)
 
 
 @mcp.tool
@@ -91,17 +82,17 @@ def get_frame_summary() -> dict:
 
 
 @mcp.tool
-def inspect_event(event_id: int) -> dict:
+def inspect_action(action_event_id: int) -> dict:
     """
-    Inspect one event using a compact analysis-oriented bundle.
+    Inspect one action using a compact analysis-oriented bundle.
 
     Args:
-        event_id: The event ID to inspect
+        action_event_id: The exact action EID to inspect
 
     Returns event details, timing, shader summaries, pipeline summaries,
     and mesh summary when the event is a draw call.
     """
-    return bridge.call("inspect_event", {"event_id": event_id})
+    return bridge.call("inspect_action", {"action_event_id": action_event_id})
 
 
 @mcp.tool
@@ -116,24 +107,24 @@ def summarize_capture() -> dict:
 
 
 @mcp.tool
-def search_draws(
+def search_actions(
     by: Literal["shader", "texture", "resource"],
     query: str,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"] | None = None,
+    stage: str | None = None,
 ) -> dict:
     """
-    Search draw calls using a canonical search interface.
+    Search draw and dispatch actions by shader, texture or resource.
 
     Args:
         by: Search mode - shader, texture, or resource
         query: Shader name, texture name, or resource ID query
-        stage: Optional shader stage filter for shader searches
+        stage: Optional shader stage filter; uses the same canonical names/aliases as Pipeline State
 
     Returns a search result with matches, total_matches, and scanned_count.
     """
     params: dict[str, object] = {"by": by, "query": query}
     _optional_param(params, "stage", stage)
-    return bridge.call("search_draws", params)
+    return bridge.call("search_actions", params)
 
 
 @mcp.tool
@@ -141,7 +132,7 @@ def get_action_api_calls(
     action_event_id: int, api_event_id: int | None = None,
     child_path: list[int] | None = None, offset: int = 0, limit: int = 50,
 ) -> dict:
-    """Read a draw/dispatch action's associated API calls, like API Inspector.
+    """Read an action's associated API calls, like API Inspector.
 
     action_event_id must identify an action. Omit api_event_id to list its API events
     in capture order with EID, API name, chunk index and parameter availability.
@@ -162,21 +153,19 @@ def get_action_api_calls(
 
 
 @mcp.tool
-def get_draw_call_details(event_id: int) -> dict:
-    """
-    Get detailed information about a specific draw call.
+def get_action_details(action_event_id: int) -> dict:
+    """Get an action's metadata, draw counts, offsets and output resources.
 
-    Args:
-        event_id: The event ID of the draw call to inspect
-
-    Includes vertex/index counts, resource outputs, and other metadata.
+    action_event_id identifies the action to inspect and is also returned.
+    action_id is the separate action ordinal. Use get_action_api_calls for
+    associated API calls and their parameter trees.
     """
-    return bridge.call("get_draw_call_details", {"event_id": event_id})
+    return bridge.call("get_action_details", {"action_event_id": action_event_id})
 
 
 @mcp.tool
 def get_action_timings(
-    event_ids: list[int] | None = None,
+    action_event_ids: list[int] | None = None,
     marker_filter: str | None = None,
     exclude_markers: list[str] | None = None,
 ) -> dict:
@@ -184,7 +173,7 @@ def get_action_timings(
     Get GPU timing information for actions (draw calls, dispatches, etc.).
 
     Args:
-        event_ids: Optional list of specific event IDs to get timings for.
+        action_event_ids: Optional list of specific event IDs to get timings for.
                    If not specified, returns timings for all actions.
         marker_filter: Only include actions under markers containing this string (partial match).
         exclude_markers: Exclude actions under markers containing these strings.
@@ -192,15 +181,15 @@ def get_action_timings(
     Returns timing data including:
     - available: Whether GPU timing counters are supported
     - unit: Time unit (typically "seconds")
-    - timings: List of {event_id, name, duration_seconds, duration_ms}
+    - timings: List of {action_event_id, name, duration_seconds, duration_ms}
     - total_duration_ms: Sum of all durations
     - count: Number of timing entries
 
     Note: GPU timing counters may not be available on all hardware/drivers.
     """
     params: dict[str, object] = {}
-    if event_ids is not None:
-        params["event_ids"] = event_ids
+    if action_event_ids is not None:
+        params["action_event_ids"] = action_event_ids
     if marker_filter is not None:
         params["marker_filter"] = marker_filter
     if exclude_markers is not None:
@@ -211,14 +200,15 @@ def get_action_timings(
 @mcp.tool
 def get_shader_info(
     event_id: int,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    stage: str,
 ) -> dict:
     """
     Get shader information for a specific stage at a given event.
 
     Args:
         event_id: The event ID to inspect the shader at
-        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
+        stage: Canonical shader stage (vertex, tess_control, tess_eval, geometry, fragment,
+            compute, task, mesh); aliases such as VS/HS/DS/PS/FS/pixel are accepted
 
     Returns shader identity, entry point and disassembly. Use get_pipeline_stage
     and inspect_pipeline_binding for bindings and constant values.
@@ -229,14 +219,15 @@ def get_shader_info(
 @mcp.tool
 def get_shader_source(
     event_id: int,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    stage: str,
 ) -> dict:
     """
     Get original shader source text for a specific stage at a given event.
 
     Args:
         event_id: The event ID to inspect the shader at
-        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
+        stage: Canonical shader stage (vertex, tess_control, tess_eval, geometry, fragment,
+            compute, task, mesh); aliases such as VS/HS/DS/PS/FS/pixel are accepted
 
     Returns source_text for text-backed shader encodings and metadata-only
     responses when the capture only contains binary shader payloads.
@@ -247,10 +238,12 @@ def get_shader_source(
 @mcp.tool
 def get_shader_edit_context(
     event_id: int,
-    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    stage: str,
     mode: Literal["auto", "original", "glsl", "spirv_asm"] = "auto",
 ) -> dict:
     """Prepare editable GLSL/SPIR-V text and its compilation path for an event/stage.
+
+    stage uses the same canonical shader names and aliases as get_pipeline_stage.
 
     Auto prefers original GLSL, otherwise decompiled GLSL with an assembly fallback.
     Returns edit_id, source_text, compiler, entry points, logs and replacement state.
@@ -410,7 +403,7 @@ def get_texture_info(resource_id: str) -> dict:
 def get_texture_data(
     resource_id: str,
     mip: int = 0,
-    slice: int = 0,
+    slice_index: int = 0,
     sample: int = 0,
     depth_slice: int | None = None,
     action_event_id: int | None = None,
@@ -421,7 +414,7 @@ def get_texture_data(
     Args:
         resource_id: The resource ID of the texture to read
         mip: Mip level to retrieve (default: 0)
-        slice: Array slice or cube face index (default: 0)
+        slice_index: Array slice or cube face index (default: 0)
                For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
         sample: MSAA sample index (default: 0)
         depth_slice: For 3D textures only, extract a specific depth slice (default: None = full volume)
@@ -430,7 +423,7 @@ def get_texture_data(
     Returns texture pixel data as base64-encoded bytes along with metadata
     including dimensions at the requested mip level and format information.
     """
-    params = {"resource_id": resource_id, "mip": mip, "slice": slice, "sample": sample,
+    params = {"resource_id": resource_id, "mip": mip, "slice_index": slice_index, "sample": sample,
               "action_event_id": action_event_id}
     if depth_slice is not None:
         params["depth_slice"] = depth_slice
@@ -552,8 +545,6 @@ def trace_resource_usage(
     marker_filter: str | None = None,
     exclude_markers: list[str] | None = None,
     event_id_range: dict[str, int] | None = None,
-    event_id_min: int | None = None,
-    event_id_max: int | None = None,
     before_event_id: int | None = None,
     offset: int = 0,
     limit: int = 100,
@@ -567,61 +558,55 @@ def trace_resource_usage(
         marker_filter: Optional marker-path substring filter
         exclude_markers: Optional marker substrings to exclude
         event_id_range: Optional event range as {"min": ..., "max": ...}
-        event_id_min: Legacy lower event bound alias
-        event_id_max: Legacy upper event bound alias
         before_event_id: Optional event ID used to compute the latest prior writer
         offset: First usage record to return after filtering.
         limit: Page size, from 1 to 500 (default 100).
         categories: Optional Timeline categories, combined with OR. None selects all;
             [] selects none. Other event/marker filters are combined with AND.
 
-    Returns raw usage, Timeline category, and legacy inferred access per record.
+    Returns raw usage, Timeline category, and inferred access per record.
     category_counts contains all five categories, including zeros. GenMips/Copy/Resolve
     are read_write; Discard/Clear are clear, matching the RenderDoc Timeline.
     Counts and writer summaries cover records matching ALL filters before pagination.
     Counts are usage records, not distinct EIDs or merged visual timeline markers.
-    Legacy access/read_count/write_count remain independent from Timeline categories.
+    Inferred access/read_count/write_count remain independent from Timeline categories.
     Non-texture/buffer objects report unavailable usage rather than a missing ID.
     """
     params: dict[str, object] = {"resource_id": resource_id, "offset": offset, "limit": limit}
     _optional_param(params, "marker_filter", marker_filter)
     _optional_param(params, "exclude_markers", exclude_markers)
     _optional_param(params, "categories", categories)
-    if event_id_range is not None:
-        params["event_id_range"] = event_id_range
-    else:
-        _optional_param(params, "event_id_min", event_id_min)
-        _optional_param(params, "event_id_max", event_id_max)
+    _optional_param(params, "event_id_range", event_id_range)
     _optional_param(params, "before_event_id", before_event_id)
     return bridge.call("trace_resource_usage", params)
 
 
 @mcp.tool
-def trace_event_dependencies(event_id: int) -> dict:
+def trace_action_dependencies(action_event_id: int) -> dict:
     """
-    Trace the immediate resource dependencies of one event.
+    Trace the immediate resource dependencies of one action.
 
     Args:
-        event_id: The event to inspect
+        action_event_id: The exact action EID to inspect
 
     Returns stage-grouped input resources, input-assembly buffers, output resources,
     and likely producer events for major inputs.
     """
-    return bridge.call("trace_event_dependencies", {"event_id": event_id})
+    return bridge.call("trace_action_dependencies", {"action_event_id": action_event_id})
 
 
 @mcp.tool
-def diff_events(event_id_a: int, event_id_b: int) -> dict:
+def diff_actions(action_event_id_a: int, action_event_id_b: int) -> dict:
     """
-    Compare two events and report material state differences.
+    Compare two actions and report material state differences.
 
     Args:
-        event_id_a: The first event ID
-        event_id_b: The second event ID
+        action_event_id_a: The first event ID
+        action_event_id_b: The second event ID
 
     Returns shader, resource binding, draw parameter, mesh, and timing differences.
     """
-    return bridge.call("diff_events", {"event_id_a": event_id_a, "event_id_b": event_id_b})
+    return bridge.call("diff_actions", {"action_event_id_a": action_event_id_a, "action_event_id_b": action_event_id_b})
 
 
 @mcp.tool
@@ -673,12 +658,12 @@ def open_capture(capture_path: str) -> dict:
 
 
 @mcp.tool
-def get_mesh_summary(event_id: int) -> dict:
+def get_mesh_summary(action_event_id: int) -> dict:
     """
     Get a summary of mesh data for a specific draw call event.
 
     Args:
-        event_id: The event ID of the draw call to inspect
+        action_event_id: The event ID of the draw call to inspect
 
     Returns mesh information including:
     - topology: Primitive topology (TriangleList, LineList, etc.)
@@ -688,17 +673,15 @@ def get_mesh_summary(event_id: int) -> dict:
     - attributes: List of vertex attributes with their formats
     - bounding_box: Min/max bounds if position attribute available
     """
-    return bridge.call("get_mesh_summary", {"event_id": event_id})
+    return bridge.call("get_mesh_summary", {"action_event_id": action_event_id})
 
 
 @mcp.tool
 def get_mesh_data(
-    event_id: int,
+    action_event_id: int,
     stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
     offset: int = 0,
     limit: int = 100,
-    start_offset: int = 0,
-    max_vertices: int = 100,
     attributes: list[str] | None = None,
 ) -> dict:
     """
@@ -708,42 +691,33 @@ def get_mesh_data(
     Recommended: Request 100-500 vertices per call, use offset/limit for pagination.
 
     Args:
-        event_id: The event ID of the draw call to inspect
+        action_event_id: The event ID of the draw call to inspect
         stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
         offset: Canonical starting vertex offset for pagination (default: 0)
         limit: Canonical maximum number of vertices to return (default: 100, max recommended: 500)
-        start_offset: Legacy alias for offset
-        max_vertices: Legacy alias for limit
         attributes: Optional list of attribute names to include (e.g., ["POSITION", "NORMAL", "TEXCOORD"])
                    If None, all attributes are included.
 
     Returns mesh data including:
-    - vertices: List of vertex data, each vertex is a dict of attribute_name -> values
+    - items: List of vertex data, each vertex is a dict of attribute_name -> values
     - indices: Index buffer data (empty for non-indexed draws)
     - topology: Primitive topology
-    - attribute_info: Metadata about each attribute
+    - attributes: Metadata about each attribute
     - total_count: Total number of vertices in the mesh
     - has_more: Whether more vertices are available
     - truncated: Whether data was truncated
 
     Example pagination usage:
         # First page
-        result = get_mesh_data(event_id=123, start_offset=0, max_vertices=100)
+        result = get_mesh_data(action_event_id=123, offset=0, limit=100)
         # Next page
-        result = get_mesh_data(event_id=123, start_offset=100, max_vertices=100)
+        result = get_mesh_data(action_event_id=123, offset=100, limit=100)
     """
-    if offset == 0 and start_offset != 0:
-        offset = start_offset
-    if limit == 100 and max_vertices != 100:
-        limit = max_vertices
-
     params: dict[str, object] = {
-        "event_id": event_id,
+        "action_event_id": action_event_id,
         "stage": stage,
         "offset": offset,
         "limit": limit,
-        "start_offset": offset,
-        "max_vertices": limit,
     }
     _optional_param(params, "attributes", attributes)
     return bridge.call("get_mesh_data", params)
@@ -751,19 +725,19 @@ def get_mesh_data(
 
 @mcp.tool
 def export_mesh_csv(
-    event_id: int,
+    action_event_id: int,
     output_path: str,
     stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
-    include_attributes: list[str] | None = None,
+    attributes: list[str] | None = None,
 ) -> dict:
     """
     Export mesh data to a CSV file.
 
     Args:
-        event_id: The event ID of the draw call to export
+        action_event_id: The event ID of the draw call to export
         output_path: Output file path (e.g. "D:/output/mesh.csv")
         stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
-        include_attributes: Optional list of attributes to include
+        attributes: Optional list of attributes to include
                            If None, all available attributes are included.
 
     Returns success status and mesh info including:
@@ -779,12 +753,12 @@ def export_mesh_csv(
     - Index file (.idx): remapped triangle stream
     """
     params: dict[str, object] = {
-        "event_id": event_id,
+        "action_event_id": action_event_id,
         "output_path": output_path,
         "stage": stage,
     }
-    if include_attributes is not None:
-        params["include_attributes"] = include_attributes
+    if attributes is not None:
+        params["attributes"] = attributes
     return bridge.call("export_mesh_csv", params)
 
 

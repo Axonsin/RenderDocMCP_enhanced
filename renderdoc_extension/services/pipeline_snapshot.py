@@ -33,6 +33,8 @@ def stage_name(value):
     name = ALIASES.get(name, name)
     if name not in dict(STAGES):
         raise ValueError("INVALID_STAGE: %s" % value)
+    if dict(STAGES)[name] is not None:
+        return Parsers.parse_stage_name(name)
     return name
 
 
@@ -520,7 +522,7 @@ class Snapshot:
             pipeline = stage.get("shader", {}).get("pipeline")
             if pipeline and pipeline not in pipelines:
                 pipelines.append(pipeline)
-        action = {"event_id": self.event_id, "flags": enum_name(self.action.flags)}
+        action = {"action_event_id": self.event_id, "flags": enum_name(self.action.flags)}
         try:
             action["name"] = self.action.GetName(self.ctx.GetStructuredFile())
         except Exception as exc:

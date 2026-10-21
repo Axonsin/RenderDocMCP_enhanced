@@ -10,29 +10,29 @@ class Parsers:
 
     _STAGE_MAP = {
         "vertex": rd.ShaderStage.Vertex,
-        "hull": rd.ShaderStage.Hull,
-        "domain": rd.ShaderStage.Domain,
+        "tess_control": rd.ShaderStage.Hull,
+        "tess_eval": rd.ShaderStage.Domain,
         "geometry": rd.ShaderStage.Geometry,
-        "pixel": rd.ShaderStage.Pixel,
+        "fragment": rd.ShaderStage.Pixel,
         "compute": rd.ShaderStage.Compute,
     }
 
-    _STAGE_NAMES = {
-        rd.ShaderStage.Vertex: "vertex",
-        rd.ShaderStage.Hull: "hull",
-        rd.ShaderStage.Domain: "domain",
-        rd.ShaderStage.Geometry: "geometry",
-        rd.ShaderStage.Pixel: "pixel",
-        rd.ShaderStage.Compute: "compute",
+    for _name, _enum in (("task", "Task"), ("mesh", "Mesh")):
+        if hasattr(rd.ShaderStage, _enum):
+            _STAGE_MAP[_name] = getattr(rd.ShaderStage, _enum)
+    _STAGE_NAMES = {value: name for name, value in _STAGE_MAP.items()}
+    _STAGE_ALIASES = {
+        "vs": "vertex", "hs": "tess_control", "tcs": "tess_control",
+        "hull": "tess_control", "ds": "tess_eval", "tes": "tess_eval",
+        "domain": "tess_eval", "gs": "geometry", "ps": "fragment",
+        "fs": "fragment", "pixel": "fragment", "cs": "compute",
+        "as": "task", "ts": "task", "ms": "mesh",
     }
 
     @staticmethod
     def parse_stage(stage_str):
         """Convert stage string to ShaderStage enum"""
-        stage_lower = stage_str.lower()
-        if stage_lower not in Parsers._STAGE_MAP:
-            raise ValueError("INVALID_STAGE: unknown shader stage: %s" % stage_str)
-        return Parsers._STAGE_MAP[stage_lower]
+        return Parsers._STAGE_MAP[Parsers.parse_stage_name(stage_str)]
 
     @staticmethod
     def stage_name(stage_value):
@@ -44,7 +44,8 @@ class Parsers:
     @staticmethod
     def parse_stage_name(stage_str):
         """Normalize stage string to canonical lowercase name"""
-        stage_lower = stage_str.lower()
+        stage_lower = str(stage_str).lower()
+        stage_lower = Parsers._STAGE_ALIASES.get(stage_lower, stage_lower)
         if stage_lower not in Parsers._STAGE_MAP:
             raise ValueError("INVALID_STAGE: unknown shader stage: %s" % stage_str)
         return stage_lower

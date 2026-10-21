@@ -298,6 +298,9 @@ class PipelineTests(unittest.TestCase):
 
     def test_overview_and_fixed_function(self):
         result = self.service.get_pipeline_state(343)
+        self.assertEqual(result["action_event_id"], 343)
+        self.assertEqual(result["action"]["action_event_id"], 343)
+        self.assertNotIn("event_id", result["action"])
         self.assertNotIn("input_textures", result)
         self.assertNotIn("shaders", result)
         stages = {s["stage"]: s for s in result["stages"]}
@@ -310,6 +313,19 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(multi["data"]["rasterSamples"], 4)
         self.assertEqual(self.controller.event, 99)
         json.dumps(result, allow_nan=False)
+
+    def test_shader_stage_aliases_match_pipeline_and_shader_parsers(self):
+        parsers = MODULES["pipeline_snapshot"].Parsers
+        for canonical, aliases in {
+            "fragment": ("fragment", "pixel", "PS", "FS"),
+            "tess_control": ("tess_control", "hull", "HS", "TCS"),
+            "tess_eval": ("tess_eval", "domain", "DS", "TES"),
+            "task": ("task", "AS", "TS"), "mesh": ("mesh", "MS"),
+        }.items():
+            for alias in aliases:
+                with self.subTest(stage=alias):
+                    self.assertEqual(parsers.parse_stage_name(alias), canonical)
+                    self.assertEqual(self.service.get_pipeline_stage(343, alias)["stage"], canonical)
 
     def test_identity_indices_ranges_and_no_eager_decode(self):
         rows = self.stage("constant_buffers")["items"]
@@ -462,10 +478,10 @@ class PipelineTests(unittest.TestCase):
         self.assertNotEqual(rows[0]["binding_key"], rows[1]["binding_key"])
         self.assertEqual(rows[1]["location"]["set_or_space"], 1)
 
-    def test_inspect_event_keeps_shader_without_resources_and_restores_mesh(self):
+    def test_inspect_action_keeps_shader_without_resources_and_restores_mesh(self):
         pipe = self.controller.pipe
         pipe.readonly, pipe.readwrite, pipe.samplers, pipe.constants = [], [], [], []
-        actions = NS(get_draw_call_details=lambda event: {"name": "draw", "flags": ["Drawcall"]},
+        actions = NS(get_action_details=lambda action_event_id: {"name": "draw", "flags": ["Drawcall"]},
                      get_action_timings=lambda **args: {"available": False})
         def mesh_query(event):
             self.controller.SetFrameEvent(event, True)
@@ -473,7 +489,9 @@ class PipelineTests(unittest.TestCase):
         analysis = MODULES["analysis_service"].AnalysisService(
             self.ctx, self.ctx.invoke, actions, self.service, None,
             NS(get_mesh_summary=mesh_query))
-        result = analysis.inspect_event(343)
+        result = analysis.inspect_action(343)
+        self.assertEqual(result["action_event_id"], 343)
+        self.assertNotIn("event_id", result)
         self.assertTrue(any(s["stage"] == "fragment" for s in result["shaders"]))
         self.assertEqual(self.controller.event, 99)
 
@@ -483,13 +501,16 @@ class PipelineTests(unittest.TestCase):
         self.assertGreater(len(snap["textures"]), 140)
         analysis = MODULES["analysis_service"].AnalysisService(
             self.ctx, self.ctx.invoke, None, self.service, None, None)
-        event = {"shaders": [], "bindings": snap["bindings"], "textures": snap["textures"],
+        event = {"action_event_id": 1, "shaders": [], "bindings": snap["bindings"], "textures": snap["textures"],
                  "fixed_function": snap["fixed_function"], "details": {}}
         other = json.loads(json.dumps(event))
+        other["action_event_id"] = 2
         for row in other["bindings"]:
             row["binding_id"] = "other_action_token"
-        analysis.inspect_event = lambda event_id: event if event_id == 1 else other
-        result = analysis.diff_events(1, 2)
+        analysis.inspect_action = lambda event_id: event if event_id == 1 else other
+        result = analysis.diff_actions(1, 2)
+        self.assertEqual(result["action_a"]["action_event_id"], 1)
+        self.assertEqual(result["action_b"]["action_event_id"], 2)
         self.assertFalse(result["differences"]["binding_changes"]["changed"])
 
     def test_texture_pixels_and_export_use_explicit_action_and_restore(self):
@@ -503,12 +524,15 @@ class PipelineTests(unittest.TestCase):
         self.controller.SaveTexture = lambda save, path: (
             calls.append((self.controller.event, save.mip, save.slice.sliceIndex))
             or NS(OK=lambda: True))
-        data = service.get_texture_data("11", mip=1, slice=3, action_event_id=343)
+        data = service.get_texture_data("11", mip=1, slice_index=3, action_event_id=343)
         self.assertEqual(data["action_event_id"], 343)
+        self.assertEqual(data["slice_index"], 3)
+        self.assertNotIn("slice", data)
         self.assertEqual(data["content_base64"], "Vw==")
         self.assertEqual(self.controller.event, 99)
         current = service.get_texture_data("11")
-        self.assertEqual(current["action_event_id"], 99)
+        self.assertEqual(current["event_id"], 99)
+        self.assertNotIn("action_event_id", current)
         with tempfile.TemporaryDirectory() as directory:
             result = service.save_texture("11", str(Path(directory) / "texture.png"),
                                           mip=1, slice_index=3, action_event_id=343)

@@ -54,16 +54,14 @@ class BridgeTests(unittest.TestCase):
         directory = self.directory.name
         self.patches = []
         for module in (CLIENT, SERVER):
-            paths = {"IPC_DIR": directory, "REQUEST_FILE": os.path.join(directory, "request.json"),
-                     "RESPONSE_FILE": os.path.join(directory, "response.json"),
-                     "LOCK_FILE": os.path.join(directory, "lock")}
+            paths = {"IPC_DIR": directory, "REQUEST_FILE": os.path.join(directory, "request.json")}
             if module is CLIENT:
                 paths["CALL_LOCK_FILE"] = os.path.join(directory, "call.lock")
             current = patch.multiple(module, **paths)
             current.start()
             self.patches.append(current)
         self.handler = Handler()
-        self.server = SERVER.MCPBridgeServer("", 0, self.handler)
+        self.server = SERVER.MCPBridgeServer(self.handler)
         self.server._running = True
         self.stop = threading.Event()
         self.thread = None
@@ -138,9 +136,13 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(list(Path(self.directory.name).glob("response_*.json")))
 
     def test_response_id_is_checked(self):
-        Path(CLIENT.RESPONSE_FILE).write_text(json.dumps({"id": "stale", "result": "wrong"}), encoding="utf-8")
+        self.server.handler = types.SimpleNamespace(handle=lambda request: {
+            "id": "wrong-id", "result": "wrong"})
         self.start_server()
-        self.assertEqual(CLIENT.RenderDocBridge().call("ping", {"marker": "right"}), {"marker": "right"})
+        client = CLIENT.RenderDocBridge()
+        client.timeout = 0.15
+        with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "RESULT_PENDING"):
+            client.call("ping")
 
     def test_pending_request_is_not_overwritten_after_timeout(self):
         pending = {"id": "pending", "method": "slow"}
@@ -169,12 +171,6 @@ class BridgeTests(unittest.TestCase):
         response = Path(self.directory.name) / ("response_%s.json" % request["id"])
         self.assertEqual(json.loads(response.read_text(encoding="utf-8"))["result"], "first")
         self.assertFalse(Path(str(response) + ".tmp").exists())
-
-    def test_server_supports_legacy_client(self):
-        request = {"id": "legacy-id", "method": "ping", "params": {}}
-        Path(CLIENT.REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
-        self.server._poll_request()
-        self.assertEqual(json.loads(Path(CLIENT.RESPONSE_FILE).read_text(encoding="utf-8"))["id"], "legacy-id")
 
     def test_error_reply_is_not_a_success(self):
         self.server.handler = types.SimpleNamespace(handle=lambda request: {

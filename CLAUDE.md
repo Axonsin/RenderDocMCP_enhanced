@@ -41,21 +41,26 @@ RenderDocMCP/
 
 ## MCP 工具
 
+action 的 EID 统一为 `action_event_id`，独立序号为 `action_id`，关联 API event 为
+`api_event_id`；shader 查询和原始 usage 的通用 EID 保留 `event_id`。
+shader 阶段、纹理 `slice_index`、网格 `attributes` 及接口改名规则见
+docs/tools_zh.md 的“术语与字段约定”。
+
 | 工具名 | 说明 |
 |---------|------|
 | `list_captures` | 获取指定目录内的 .rdc 文件列表 |
 | `open_capture` | 打开捕获文件（现有捕获会自动关闭） |
 | `get_capture_status` | 确认捕获加载状态 |
-| `get_draw_calls` | Draw call 列表（支持层级结构、过滤） |
+| `get_actions` | action 列表（含 marker/draw/dispatch/copy/clear，支持层级与过滤） |
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
-| `search_draws` | 按 shader/texture/resource 搜索 draw call |
-| `get_draw_call_details` | 特定 draw call 的详情 |
+| `search_actions` | 按 shader/texture/resource 搜索 draw 和 dispatch action |
+| `get_action_details` | action 的元数据、绘制计数、偏移及输出资源（参数 action_event_id） |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
-| `inspect_event` | 单个 event 的紧凑详情（时间、shader、管线、网格摘要） |
+| `inspect_action` | 单个 action 的紧凑详情（时间、shader、管线、网格摘要） |
 | `summarize_capture` | 捕获整体摘要 |
 | `trace_resource_usage` | 追踪资源在各 event 中的读取/写入/消费 |
-| `trace_event_dependencies` | 追踪单个 event 的直接资源依赖与生产者 |
-| `diff_events` | 比较两个 event 的状态差异 |
+| `trace_action_dependencies` | 追踪单个 action 的直接资源依赖与生产者 |
+| `diff_actions` | 比较两个 action 的状态差异 |
 | `analyze_pass` | 将一个 marker 子树/pass 汇总为整体工作负载 |
 | `get_shader_info` | 着色器反汇编/常量缓冲区/资源绑定 |
 | `get_shader_source` | 获取 RenderDoc Edit/View 可见的原始 shader 源码（文本编码时） |
@@ -113,8 +118,8 @@ renderdoc-mcp
 基于文件的 IPC:
 - IPC 目录: `%TEMP%/renderdoc_mcp/`
 - `request.json`: 请求（MCP 服务器 → RenderDoc）
-- `response.json`: 响应（RenderDoc → MCP 服务器）
-- `lock`: 写入中的锁文件
+- `response_<request_id>.json`: 响应（RenderDoc → MCP 服务器）
+- `call.lock`: MCP 客户端间的 OS 事务锁；request/response 通过临时文件原子发布
 - 轮询间隔: 100ms（RenderDoc 端）
 
 ## 开发注意事项

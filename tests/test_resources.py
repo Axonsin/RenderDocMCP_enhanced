@@ -1,8 +1,11 @@
 """Resource Inspector contracts without a RenderDoc installation or GPU."""
 
 import enum
+import asyncio
 import importlib.util
 import json
+import struct
+import tempfile
 from pathlib import Path
 import sys
 import types
@@ -269,7 +272,7 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result["total_count"], 1)
         self.assertEqual(result["events"][0]["view_resource_id"], "ResourceId::201")
         self.assertEqual(result["events"][0]["marker_path"], "Compute Pass #1")
-        self.assertEqual(self.analysis.trace_resource_usage("86983", event_id_min=25)["total_count"], 1)
+        self.assertEqual(self.analysis.trace_resource_usage("86983", event_id_range={"min": 25})["total_count"], 1)
         self.assertEqual(self.analysis.trace_resource_usage("86983", exclude_markers=["compute"])["total_count"], 0)
 
     def test_multiple_usages_at_one_event_have_distinct_record_and_event_counts(self):
@@ -313,7 +316,7 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result["events"][0]["access"], "other")
         self.assertEqual(result["events"][0]["view_resource_id"], "ResourceId::201")
         result = self.analysis.trace_resource_usage(
-            "86983", categories=["clear", "barrier", "clear"], event_id_min=20,
+            "86983", categories=["clear", "barrier", "clear"], event_id_range={"min": 20},
             before_event_id=31, limit=1)
         self.assertEqual(result["category_counts"], {
             "read": 0, "write": 0, "read_write": 0, "barrier": 1, "clear": 1})
@@ -325,7 +328,7 @@ class ResourceTests(unittest.TestCase):
             "86983", categories=["read_write"], marker_filter="compute")
         self.assertEqual(result["events"][0]["usage"], "GenMips")
         self.assertEqual(result["events"][0]["category"], "read_write")
-        self.assertEqual(result["events"][0]["access"], "write")  # legacy semantics unchanged
+        self.assertEqual(result["events"][0]["access"], "write")  # dependency access classification
         result = self.analysis.trace_resource_usage("86983", categories=[])
         self.assertTrue(result["available"])
         self.assertEqual(result["total_count"], 0)
@@ -479,10 +482,191 @@ class ResourceTests(unittest.TestCase):
         self.ctx.GetAction = lambda eid: action if eid == 343 else None
         return action
 
+    def test_action_details_schema_and_real_file_ipc(self):
+        from test_bridge import BridgeTests, CLIENT
+        from mcp_server import server
+
+        tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+        self.assertEqual(len(tools), 36)
+        for old in ("get_draw_call_details", "get_draw_calls", "search_draws",
+                    "inspect_event", "diff_events", "trace_event_dependencies"):
+            self.assertNotIn(old, tools)
+        for name in ("get_action_details", "inspect_action", "trace_action_dependencies",
+                     "get_mesh_summary", "get_mesh_data", "export_mesh_csv"):
+            properties = tools[name].parameters["properties"]
+            self.assertIn("action_event_id", properties)
+            self.assertNotIn("event_id", properties)
+        self.assertIn("action_event_ids", tools["get_action_timings"].parameters["properties"])
+        self.assertEqual(set(tools["get_actions"].parameters["properties"]), {
+            "include_children", "marker_filter", "exclude_markers", "action_event_id_range",
+            "exclude_marker_actions", "flags_filter"})
+        self.assertEqual(set(tools["get_mesh_data"].parameters["properties"]), {
+            "action_event_id", "stage", "offset", "limit", "attributes"})
+        self.assertEqual(set(tools["trace_resource_usage"].parameters["properties"]), {
+            "resource_id", "marker_filter", "exclude_markers", "event_id_range",
+            "before_event_id", "offset", "limit", "categories"})
+        self.assertIn("exclude_marker_actions", tools["get_actions"].parameters["properties"])
+        self.assertIn("event_id", tools["get_shader_info"].parameters["properties"])
+        self.assertIn("event_id_range", tools["trace_resource_usage"].parameters["properties"])
+        self.assertIn("slice_index", tools["get_texture_data"].parameters["properties"])
+        self.assertNotIn("slice", tools["get_texture_data"].parameters["properties"])
+        self.assertIn("attributes", tools["export_mesh_csv"].parameters["properties"])
+        self.assertNotIn("include_attributes", tools["export_mesh_csv"].parameters["properties"])
+        schema = tools["get_action_details"].parameters
+        self.assertEqual(schema["required"], ["action_event_id"])
+        self.assertEqual(set(schema["properties"]), {"action_event_id"})
+
+        action = self.prepare_api_action()
+        action.actionId, action.flags = 12, 0
+        action.numIndices, action.numInstances = 29835, 2
+        action.baseVertex, action.vertexOffset = -2, 3
+        action.instanceOffset, action.indexOffset = 4, 5
+        action.outputs = [ResourceId(202), ResourceId.Null()]
+        action.depthOut = ResourceId(203)
+        selected = []
+        self.controller.SetFrameEvent = lambda eid, force: selected.append(eid)
+
+        fixture = BridgeTests("test_concurrent_clients_are_serialized")
+        fixture.setUp()
+        try:
+            fixture.server.handler = self.handler
+            fixture.start_server()
+            with patch.object(server, "bridge", CLIENT.RenderDocBridge()):
+                result = server.get_action_details(action_event_id=343)
+                self.assertEqual(result, {
+                    "action_event_id": 343, "action_id": 12,
+                    "name": "vkCmdDrawIndexed(29835, 1)", "flags": [],
+                    "num_indices": 29835, "num_instances": 2,
+                    "base_vertex": -2, "vertex_offset": 3,
+                    "instance_offset": 4, "index_offset": 5,
+                    "outputs": [{"index": 0, "resource_id": "202"}],
+                    "depth_output": "203",
+                })
+                self.assertEqual(selected, [343])
+                self.loaded = False
+                with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "CAPTURE_NOT_LOADED"):
+                    server.get_action_details(action_event_id=343)
+        finally:
+            fixture.tearDown()
+
+    def test_handler_uses_current_signatures_for_parameter_validation(self):
+        for method, params, code in [
+            ("unknown_tool", {}, -32601),
+            ("get_action_details", {}, -32602),
+            ("get_action_timings", {"unknown_argument": [343]}, -32602),
+            ("get_actions", {"unknown_argument": True}, -32602),
+        ]:
+            with self.subTest(method=method, params=params):
+                result = self.handler.handle({"id": 1, "method": method, "params": params})
+                self.assertEqual(result["error"]["code"], code)
+                if params:
+                    self.assertIn("unexpected parameter(s)", result["error"]["message"])
+
+    def test_action_tree_timings_and_summary_use_action_eids(self):
+        from mcp_server import server
+
+        rd = ACTION.rd
+        flags = enum.IntFlag("ActionFlags", {name: 1 << i for i, name in enumerate(
+            "Drawcall Dispatch Clear PushMarker PopMarker SetMarker Present Copy Resolve GenMips "
+            "PassBoundary Indexed Instanced Auto Indirect ClearColor ClearDepthStencil BeginPass EndPass".split())})
+        with patch.dict(sys.modules, {"renderdoc": rd}):
+            serializers = load("action_serializers_under_test", "renderdoc_extension/utils/serializers.py")
+        draw = NS(eventId=343, actionId=12, flags=flags.Drawcall, numIndices=3,
+                  numInstances=1, children=[], GetName=lambda _: "Draw")
+        root = NS(eventId=1, actionId=1, flags=flags.PushMarker, numIndices=0,
+                  numInstances=0, children=[draw], GetName=lambda _: "Pass")
+        self.controller.GetRootActions = lambda: [root]
+        self.controller.GetAPIProperties = lambda: NS(pipelineType="Vulkan")
+        self.controller.EnumerateCounters = lambda: [7]
+        self.controller.DescribeCounter = lambda _: NS(unit="Seconds")
+        self.controller.FetchCounters = lambda _: [NS(eventId=343, counter=7, value=NS(d=0.001))]
+
+        def call(method, params=None):
+            response = self.handler.handle({"id": 1, "method": method, "params": params or {}})
+            self.assertNotIn("error", response)
+            return response["result"]
+
+        with patch.object(rd, "ActionFlags", flags), \
+                patch.object(rd, "GPUCounter", NS(EventGPUDuration=7), create=True), \
+                patch.object(ACTION, "Serializers", serializers.Serializers), \
+                patch.object(ACTION, "Helpers", NS(count_children=lambda _: 1)), \
+                patch.object(ANALYSIS, "Helpers", NS(get_all_shader_stages=lambda: [])), \
+                patch.object(server.bridge, "call", call):
+            result = server.get_actions(exclude_marker_actions=True,
+                                        action_event_id_range={"min": 343, "max": 343})
+            self.assertEqual(result["total_count"], 1)
+            self.assertEqual(result["items"][0]["action_event_id"], 343)
+            self.assertEqual(result["items"][0]["action_id"], 12)
+            self.assertNotIn("event_id", result["items"][0])
+            timing = server.get_action_timings(action_event_ids=[343])["timings"][0]
+            self.assertEqual(timing["action_event_id"], 343)
+            self.assertNotIn("event_id", timing)
+            self.facade._analysis._action = self.facade._action
+            summary = server.summarize_capture()
+            self.assertEqual(summary["top_level_markers"][0]["action_event_id"], 1)
+            self.assertEqual(summary["hot_actions"][0]["action_event_id"], 343)
+            self.assertEqual(summary["suggested_entry_points"][-1]["action_event_id"], 343)
+            self.controller.GetPipelineState = lambda: NS()
+            self.ctx.GetAction = lambda eid: draw if eid == 343 else None
+            self.controller.SetFrameEvent = lambda *args: None
+            dependencies = server.trace_action_dependencies(action_event_id=343)
+            self.assertEqual(dependencies["action_event_id"], 343)
+            self.assertNotIn("event_id", dependencies)
+            workload = server.analyze_pass(marker_filter="Pass")
+            self.assertEqual(workload["action_event_id_range"], {"min": 343, "max": 343})
+            self.assertEqual(workload["top_timed_actions"][0]["action_event_id"], 343)
+
+    def test_mesh_read_and_export_share_action_eid_contract(self):
+        from mcp_server import server
+
+        with patch.dict(sys.modules, {"renderdoc": ACTION.rd}):
+            module = load("mesh_under_test", "renderdoc_extension/services/mesh_service.py")
+        mesh = module.MeshService(self.ctx, self.invoke)
+        self.facade._mesh = mesh
+        action = NS(eventId=343, flags=3, numIndices=3)
+        self.ctx.GetAction = lambda _: action
+        self.controller.SetFrameEvent = lambda *args: None
+        fmt = NS(Name=lambda: "R32G32B32_FLOAT", compCount=3, Special=lambda: False)
+        attribute = NS(name="POSITION", format=fmt, topology="TriangleList",
+                       vertexResourceId=ResourceId(86983), vertexByteOffset=0, vertexByteStride=12)
+        mesh._get_mesh_inputs = lambda *_: [attribute]
+        mesh._get_indices = lambda *_: [0, 1, 2]
+        mesh._batch_get_buffer_data = lambda *_: {attribute.vertexResourceId: struct.pack(
+            "<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)}
+        mesh._unpack_vertex_data = lambda fmt, data, offset: struct.unpack_from("<3f", data, offset)
+
+        def call(method, params):
+            response = self.handler.handle({"id": 1, "method": method, "params": params})
+            self.assertNotIn("error", response)
+            return response["result"]
+
+        with patch.object(ACTION.rd, "ActionFlags", NS(Drawcall=1, Indexed=2)), \
+                patch.object(server.bridge, "call", call), tempfile.TemporaryDirectory() as directory:
+            summary = server.get_mesh_summary(action_event_id=343)
+            self.assertEqual(summary["action_event_id"], 343)
+            page = server.get_mesh_data(action_event_id=343, offset=1, limit=1)
+            self.assertEqual(page["action_event_id"], 343)
+            self.assertEqual(page["items"], [{"POSITION": [1.0, 0.0, 0.0]}])
+            self.assertNotIn("event_id", page)
+            exported = server.export_mesh_csv(action_event_id=343,
+                                               output_path=str(Path(directory) / "mesh.csv"),
+                                               attributes=["POSITION"])
+            self.assertEqual(exported["action_event_id"], 343)
+            self.assertEqual(Path(exported["index_path"]).read_text().splitlines(), ["0", "1", "2"])
+
+    def test_action_details_rejects_an_intermediate_api_eid(self):
+        action = self.prepare_api_action()
+        # Some adapters may resolve an intermediate EID to its enclosing action.
+        self.ctx.GetAction = lambda _: action
+        with self.assertRaisesRegex(ValueError, "INVALID_ACTION_EVENT_ID"):
+            self.facade.get_action_details(action_event_id=341)
+
     def test_api_inspector_list_pagination_and_parameter_expansion(self):
         self.prepare_api_action()
         service = self.facade._action
         calls = service.get_action_api_calls(343)
+        self.assertEqual(calls["name"], "vkCmdDrawIndexed(29835, 1)")
+        self.assertNotIn("action_name", calls)
         self.assertEqual([e["api_event_id"] for e in calls["items"]], [340, 341, 342, 343])
         self.assertEqual(calls["items"][0]["name"], "vkCmdBindPipeline")
         page = service.get_action_api_calls(343, offset=2, limit=1)

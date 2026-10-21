@@ -79,9 +79,8 @@ class Serializers:
         include_children,
         marker_filter=None,
         exclude_markers=None,
-        event_id_min=None,
-        event_id_max=None,
-        only_actions=False,
+        action_event_id_range=None,
+        exclude_marker_actions=False,
         flags_filter=None,
         _in_matching_marker=False,
     ):
@@ -94,9 +93,7 @@ class Serializers:
             include_children: Include child actions in hierarchy
             marker_filter: Only include actions under markers containing this string
             exclude_markers: Exclude actions under markers containing these strings
-            event_id_min: Only include actions with event_id >= this value
-            event_id_max: Only include actions with event_id <= this value
-            only_actions: Exclude marker actions (PushMarker/PopMarker/SetMarker)
+            exclude_marker_actions: Exclude marker actions (PushMarker/PopMarker/SetMarker)
             flags_filter: Only include actions with these flags
             _in_matching_marker: Internal flag for marker_filter recursion
         """
@@ -128,17 +125,17 @@ class Serializers:
                 if is_push_marker and marker_filter in name:
                     in_matching = True
 
-            # 3. Determine if action passes event_id range filter
+            # 3. Determine if action passes action_event_id range filter
             # For markers with children, we check children even if marker is outside range
             in_range = True
             if not is_marker:
-                if event_id_min is not None and action.eventId < event_id_min:
+                if action_event_id_range and action_event_id_range.get("min") is not None and action.eventId < action_event_id_range["min"]:
                     in_range = False
-                if event_id_max is not None and action.eventId > event_id_max:
+                if action_event_id_range and action_event_id_range.get("max") is not None and action.eventId > action_event_id_range["max"]:
                     in_range = False
 
-            # 4. only_actions check - skip markers but process their children
-            if only_actions and is_marker:
+            # 4. exclude_marker_actions check - skip markers but process their children
+            if exclude_marker_actions and is_marker:
                 if include_children and action.children:
                     child_actions = Serializers.serialize_actions(
                         action.children,
@@ -146,9 +143,8 @@ class Serializers:
                         include_children,
                         marker_filter=marker_filter,
                         exclude_markers=exclude_markers,
-                        event_id_min=event_id_min,
-                        event_id_max=event_id_max,
-                        only_actions=only_actions,
+                        action_event_id_range=action_event_id_range,
+                        exclude_marker_actions=exclude_marker_actions,
                         flags_filter=flags_filter,
                         _in_matching_marker=in_matching,
                     )
@@ -174,9 +170,8 @@ class Serializers:
                     include_children,
                     marker_filter=marker_filter,
                     exclude_markers=exclude_markers,
-                    event_id_min=event_id_min,
-                    event_id_max=event_id_max,
-                    only_actions=only_actions,
+                    action_event_id_range=action_event_id_range,
+                    exclude_marker_actions=exclude_marker_actions,
                     flags_filter=flags_filter,
                     _in_matching_marker=in_matching,
                 )
@@ -196,7 +191,7 @@ class Serializers:
             if should_include:
                 flag_names = Serializers.serialize_flags(flags)
                 item = {
-                    "event_id": action.eventId,
+                    "action_event_id": action.eventId,
                     "action_id": action.actionId,
                     "name": name,
                     "flags": flag_names,
