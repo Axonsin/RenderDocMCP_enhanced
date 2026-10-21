@@ -837,7 +837,7 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 #### `export_mesh_csv`
 
-将网格数据导出为 CSV 文件，与 [csv_obj](https://github.com/nicbarker/csv_obj) 项目兼容。
+将网格数据导出为 CSV 文件。
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
