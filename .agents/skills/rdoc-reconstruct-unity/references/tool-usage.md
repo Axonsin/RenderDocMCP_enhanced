@@ -30,6 +30,12 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 
 ## 4. 术语与字段约定
 
+- `ResourceId`：捕获内**所有** API 对象的统一标识，规范形式 `ResourceId::数字`——
+  不只纹理/缓冲区，还包括 Device、Shader、View、Sampler、Memory、管线等全部类型，
+  与 RenderDoc Resource Inspector 的对象目录同源。需要统计/枚举全部资源时用资源
+  目录工具（默认全类型，支持类型与名称过滤、排序、分页）；单对象的详情、父/派生
+  关系与初始化调用用资源检查类工具。注意 usage/Timeline 追踪只对纹理和缓冲区有
+  意义，其他类型会返回不支持。`ResourceId::0` 是空绑定哨兵，表示"该槽位无绑定"。
 - `action_event_id`：action 的事件编号（EID），绝大多数 action 类接口的统一入参；
   列表与范围用复数形式；关联的单条 API 调用用 `api_event_id`；独立的 action 序号是
   `action_id`，**不能**当 EID 使用。少数直接查询回放状态的接口用通用 `event_id`。
