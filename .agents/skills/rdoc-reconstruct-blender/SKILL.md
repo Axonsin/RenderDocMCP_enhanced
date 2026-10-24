@@ -67,9 +67,3 @@ Skill）、需要先分析管线才知道取舍的（可先用管线分析 Skill
 | `references/reconstruction.md` | 开始步骤 3 前（坐标/实例/相机/材质方法与 Blender MCP 交接） |
 | `references/evidence-contract.md` | 记录证据、判定可疑数据、长程 checkpoint 时 |
 | `references/job-layout.md` | 建工作目录与报告时 |
-| `references/benchmark-contract.md` | 仅当外部配置显式声明 benchmark 模式时 |
-
-## 模式
-
-默认 practice。benchmark 模式下按 `references/benchmark-contract.md`：固定输出契约、
-独立目录、不引入 MCP 之外的补取。

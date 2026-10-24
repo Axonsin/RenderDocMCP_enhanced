@@ -68,9 +68,3 @@ description: >
 | `references/performance-method.md` | 开始步骤 3 前（瓶颈类别取证方法与假设模板） |
 | `references/evidence-contract.md` | 记录证据、判定可疑数据、长程 checkpoint 时 |
 | `references/job-layout.md` | 交付诊断报告与 A/B 方案时 |
-| `references/benchmark-contract.md` | 仅当外部配置显式声明 benchmark 模式时 |
-
-## 模式
-
-默认 practice。benchmark 模式按 `references/benchmark-contract.md`：计时与对比条件
-以运行契约为准，本地与远端回放的计时不混算，不自行生成正式跑分结论。

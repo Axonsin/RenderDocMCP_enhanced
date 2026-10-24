@@ -64,9 +64,3 @@ description: >
 | `references/pipeline-analysis.md` | 开始步骤 3 前（层级分析方法、工具组合次序、图模板） |
 | `references/evidence-contract.md` | 需要记录证据、遇到可疑空结果、或长程任务需要 checkpoint 时 |
 | `references/job-layout.md` | 任务跨多阶段、用户要求产出目录与报告时 |
-| `references/benchmark-contract.md` | 仅当外部配置显式声明 benchmark 模式时 |
-
-## 模式
-
-默认 practice：为用户的理解目标服务。只有外部运行配置显式锁定 benchmark 时才按
-`references/benchmark-contract.md` 的约束执行；两种模式都不得把推断写成事实。

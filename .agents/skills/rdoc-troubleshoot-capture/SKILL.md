@@ -63,9 +63,3 @@ description: >
 | `references/troubleshooting.md` | 开始第 4 步分类前（故障树、已知失败模式、恢复手段） |
 | `references/evidence-contract.md` | 记录失败证据与状态恢复时 |
 | `references/job-layout.md` | 排障过程需要交付复现包/报告时 |
-| `references/benchmark-contract.md` | 仅当外部配置显式声明 benchmark 模式时 |
-
-## 模式
-
-默认 practice。benchmark 模式下的排障仍要记录完整日志供裁判复核，但修复动作以
-运行配置允许范围为限。

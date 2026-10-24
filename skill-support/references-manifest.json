@@ -1,13 +1,4 @@
 {
-  "benchmark-contract.md": {
-    "source": "skill-support/shared-references/benchmark-contract.md",
-    "targets": [
-      {
-        "path": ".agents/skills/rdoc-troubleshoot-capture/references/benchmark-contract.md",
-        "sha256": "42a4b8c70b031438e4a4df7759cbf7aaa3a48f1fb232e6b86321640b54934fc4"
-      }
-    ]
-  },
   "evidence-contract.md": {
     "source": "skill-support/shared-references/evidence-contract.md",
     "targets": [
@@ -22,7 +13,7 @@
     "targets": [
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/job-layout.md",
-        "sha256": "cee46885b951776ed3ddb9742a07b2228171dea21ef19f174b1e9d5018190562"
+        "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
       }
     ]
   },
@@ -31,7 +22,7 @@
     "targets": [
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
-        "sha256": "c1c5b68b20782ce03af962537e34d7aea70e79cf806faf71b3f26be99ef34392"
+        "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
       }
     ]
   }

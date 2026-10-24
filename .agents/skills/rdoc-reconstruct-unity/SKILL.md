@@ -64,9 +64,3 @@ description: >
 | `references/reconstruction.md` | 开始步骤 4 前（结构规划、材质拟合、Pass 移植方法） |
 | `references/evidence-contract.md` | 记录证据、判定可疑数据、长程 checkpoint 时 |
 | `references/job-layout.md` | 建工作目录、组织工程产出与报告时 |
-| `references/benchmark-contract.md` | 仅当外部配置显式声明 benchmark 模式时 |
-
-## 模式
-
-默认 practice。benchmark 模式按 `references/benchmark-contract.md`：固定版本与输出
-契约，不因结果调整渲染设置或转换域。
