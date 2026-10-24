@@ -1,0 +1,15 @@
+{
+  "skill_name": "rdoc-reconstruct-unity",
+  "note": "Trigger eval set (should_trigger expected behavior). For later live/description-optimization use; contains no per-capture answers.",
+  "evals": [
+    {"query": "把这个溶解特效在 URP 里复刻一下，我要一个能跑的工程", "should_trigger": true},
+    {"query": "帮我把捕获里这一帧的场景还原成 Unity URP 工程", "should_trigger": true},
+    {"query": "Recreate this captured sky and fog in my URP project — I'll give you the project path", "should_trigger": true},
+    {"query": "这个角色的卡通着色在捕获里是这么实现的，帮我在 URP 里做个等效 shader 和材质", "should_trigger": true},
+    {"query": "把捕获里的这个后处理 pass 做成 Renderer Feature，效果要对齐", "should_trigger": true},
+    {"query": "怎么在 URP 里添加一个 Renderer Feature？", "should_trigger": false},
+    {"query": "帮我写一个 Unity 的背包系统", "should_trigger": false},
+    {"query": "导出成 .blend 给我", "should_trigger": false},
+    {"query": "这一帧哪个 pass 最贵？", "should_trigger": false}
+  ]
+}

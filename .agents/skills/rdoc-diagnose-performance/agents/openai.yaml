@@ -1,0 +1,9 @@
+# Codex display/call metadata. Claude Code reads only SKILL.md frontmatter.
+name: rdoc-diagnose-performance
+display_name: RenderDoc 性能诊断
+description: >
+  基于 RenderDoc MCP 的单帧性能诊断：定位昂贵 Pass/Draw、排查过绘制、采样冗余、
+  带宽与状态冗余，提出带证据与反证检查的可证伪优化假设，并给出优先级与 A/B 验证方案。
+  Locate expensive passes/draws, overdraw, bandwidth and state waste in a captured
+  frame, and produce falsifiable optimization hypotheses with evidence.
+category: graphics-debugging

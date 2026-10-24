@@ -1,0 +1,16 @@
+{
+  "skill_name": "rdoc-reconstruct-blender",
+  "note": "Trigger eval set (should_trigger expected behavior). For later live/description-optimization use; contains no per-capture answers.",
+  "evals": [
+    {"query": "把这个角色从 rdc 里导出来做成 .blend，只要模型不用材质", "should_trigger": true},
+    {"query": "帮我把捕获里的整个场景恢复到 Blender，相机也按捕获摆好", "should_trigger": true},
+    {"query": "I want to inspect this captured mesh in Blender — export it with its textures and set up a camera matching the capture view", "should_trigger": true},
+    {"query": "这个特效有三十个实例，能不能在 Blender 里按实例摆好让我逐个检查", "should_trigger": true},
+    {"query": "把这一帧的地面和建筑恢复出来，材质尽量接近，交付 .blend", "should_trigger": true},
+    {"query": "恢复场景的时候顺便还原捕获相机，我要在 Blender 里复现同样的镜头", "should_trigger": true},
+    {"query": "教我在 Blender 里做一个卡通材质节点", "should_trigger": false},
+    {"query": "帮我在 Blender 里把这个模型减面优化一下", "should_trigger": false},
+    {"query": "把这个场景还原进 Unity URP 工程", "should_trigger": false},
+    {"query": "看看这张纹理整帧里被谁读写", "should_trigger": false}
+  ]
+}

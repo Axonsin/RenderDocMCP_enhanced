@@ -1,0 +1,15 @@
+{
+  "skill_name": "rdoc-diagnose-performance",
+  "note": "Trigger eval set (should_trigger expected behavior). For later live/description-optimization use; contains no per-capture answers.",
+  "evals": [
+    {"query": "这一帧为什么这么卡？哪个 pass 最贵？", "should_trigger": true},
+    {"query": "帮我看看有没有过绘制，透明物体排队是不是太多了", "should_trigger": true},
+    {"query": "GPU timing 显示这个 pass 特别贵，帮我分析是填充率、带宽还是几何瓶颈", "should_trigger": true},
+    {"query": "Why is this captured frame slow on mobile? Find the top GPU hotspots and give me falsifiable hypotheses", "should_trigger": true},
+    {"query": "后处理链好像重复采样了好几张全屏纹理，帮我确认一下并估算带宽开销", "should_trigger": true},
+    {"query": "给一份优化优先级清单，按预期收益排序，标注哪些需要 A/B 验证", "should_trigger": true},
+    {"query": "讲讲这一帧每个 pass 都在干什么", "should_trigger": false},
+    {"query": "把这个特效复刻进 URP", "should_trigger": false},
+    {"query": "打开捕获失败了，报 driver not loaded", "should_trigger": false}
+  ]
+}

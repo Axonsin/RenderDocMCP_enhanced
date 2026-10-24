@@ -1,0 +1,9 @@
+# Codex display/call metadata. Claude Code reads only SKILL.md frontmatter.
+name: rdoc-troubleshoot-capture
+display_name: RenderDoc 故障诊断
+description: >
+  诊断 RenderDoc MCP 工作流故障：捕获打不开、查询返回空/占位数据、导出全零、版本或
+  协议不一致、回放断连、替换不生效；给出有证据的分类结论与恢复验证。
+  Diagnose broken RDC captures and suspicious MCP results, classify root causes,
+  and verify recovery — before retrying the same request.
+category: graphics-debugging

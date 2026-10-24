@@ -1,0 +1,8 @@
+# Codex display/call metadata. Claude Code reads only SKILL.md frontmatter.
+name: rdoc-reconstruct-unity
+display_name: RenderDoc → Unity URP 重建
+description: >
+  用 RenderDoc MCP 取证并还原进 Unity URP：把捕获中的场景、物体或特效重建为可编译、
+  可运行、可渲染对照的工程/场景，覆盖几何、材质拟合、观测 Shader 分支与自定义 Pass。
+  Recreate captured scenes, objects, or effects inside Unity URP from an RDC capture.
+category: graphics-debugging

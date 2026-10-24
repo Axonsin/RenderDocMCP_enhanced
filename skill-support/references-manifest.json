@@ -1,0 +1,38 @@
+{
+  "benchmark-contract.md": {
+    "source": "skill-support/shared-references/benchmark-contract.md",
+    "targets": [
+      {
+        "path": ".agents/skills/rdoc-troubleshoot-capture/references/benchmark-contract.md",
+        "sha256": "42a4b8c70b031438e4a4df7759cbf7aaa3a48f1fb232e6b86321640b54934fc4"
+      }
+    ]
+  },
+  "evidence-contract.md": {
+    "source": "skill-support/shared-references/evidence-contract.md",
+    "targets": [
+      {
+        "path": ".agents/skills/rdoc-troubleshoot-capture/references/evidence-contract.md",
+        "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
+      }
+    ]
+  },
+  "job-layout.md": {
+    "source": "skill-support/shared-references/job-layout.md",
+    "targets": [
+      {
+        "path": ".agents/skills/rdoc-troubleshoot-capture/references/job-layout.md",
+        "sha256": "cee46885b951776ed3ddb9742a07b2228171dea21ef19f174b1e9d5018190562"
+      }
+    ]
+  },
+  "tool-usage.md": {
+    "source": "skill-support/shared-references/tool-usage.md",
+    "targets": [
+      {
+        "path": ".agents/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
+        "sha256": "c1c5b68b20782ce03af962537e34d7aea70e79cf806faf71b3f26be99ef34392"
+      }
+    ]
+  }
+}

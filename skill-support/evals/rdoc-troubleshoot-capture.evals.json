@@ -1,0 +1,17 @@
+{
+  "skill_name": "rdoc-troubleshoot-capture",
+  "note": "Trigger eval set (should_trigger expected behavior). For later live/description-optimization use; contains no per-capture answers.",
+  "evals": [
+    {"query": "renderdoc-mcp 的查询全都没有响应了，get_capture_status 也超时，怎么办", "should_trigger": true},
+    {"query": "导出来的深度图全是 0，是工具坏了吗？还能不能用作真值？", "should_trigger": true},
+    {"query": "get_capture_status 里 replay_healthy 变成 false 了，还带了个 error 消息", "should_trigger": true},
+    {"query": "打开这个 rdc 直接报 driver not loaded，昨晚还是好的", "should_trigger": true},
+    {"query": "替换了 shader 之后画面没有任何变化，revert 也不管用了", "should_trigger": true},
+    {"query": "MCP 服务器和扩展显示的版本/协议对不上，会不会影响查询结果？", "should_trigger": true},
+    {"query": "constant buffer 读出来是空的，但反汇编里明明在用这个槽位，怎么排查", "should_trigger": true},
+    {"query": "After a disconnect every mesh query returns empty attributes — help me figure out what's wrong and which earlier conclusions I should distrust", "should_trigger": true},
+    {"query": "帮我分析这一帧的 pass 结构，出一张管线图", "should_trigger": false},
+    {"query": "游戏这一帧很卡，帮我看看哪个 pass 最贵", "should_trigger": false},
+    {"query": "把这个场景还原进 Unity URP", "should_trigger": false}
+  ]
+}

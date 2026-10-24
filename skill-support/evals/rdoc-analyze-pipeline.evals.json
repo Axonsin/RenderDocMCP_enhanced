@@ -1,0 +1,17 @@
+{
+  "skill_name": "rdoc-analyze-pipeline",
+  "note": "Trigger eval set (should_trigger expected behavior). For later live/description-optimization use; contains no per-capture answers.",
+  "evals": [
+    {"query": "这个 RDC 里帮我理一下从 opaque 到后处理的流程，最后出一张管线图", "should_trigger": true},
+    {"query": "查一下 shadowmap 这张纹理整帧里被谁写、被谁读", "should_trigger": true},
+    {"query": "画面里这个物体的颜色不对，帮我看看它在哪个 pass 被画出来、绘制顺序是什么", "should_trigger": true},
+    {"query": "把 Camera.Render 这个 marker 下面每个 draw 用的 render target 列出来", "should_trigger": true},
+    {"query": "Explain how this captured frame composites the UI on top of the 3D scene, pass by pass", "should_trigger": true},
+    {"query": "这个 dispatch 在整帧的资源依赖里处于什么位置？它读的数据是谁生产的？", "should_trigger": true},
+    {"query": "给这一帧画一个 pass 结构图，标注每个 pass 的输入输出资源", "should_trigger": true},
+    {"query": "看看 renderpass 的划分，UI 是在 3D 场景之前还是之后画的？", "should_trigger": true},
+    {"query": "这一帧为什么这么卡？哪个 pass 最耗时？", "should_trigger": false},
+    {"query": "把这个角色导出成 .blend 给我，模型就行", "should_trigger": false},
+    {"query": "打开捕获之后查询一直没反应，get_capture_status 也超时了", "should_trigger": false}
+  ]
+}
