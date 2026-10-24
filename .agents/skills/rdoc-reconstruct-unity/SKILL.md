@@ -2,8 +2,9 @@
 name: rdoc-reconstruct-unity
 description: >
   用 RenderDoc MCP 取证并还原进 Unity URP：把捕获中的场景、物体或特效重建为可编译、
-  可运行、可渲染对照的 Unity 工程/场景，覆盖几何导入、材质 Principled 拟合、观测
-  Shader 分支整理、Renderer Feature 与自定义 Pass 的按需使用。Use this whenever the
+  可运行、可渲染对照的 Unity 工程/场景，覆盖几何导入、URP 材质与自定义 Shader 参数
+  拟合、观测 Shader 分支整理、Renderer Feature 与自定义 Pass 的按需使用。Use this
+  whenever the
   user wants to recreate a captured scene/object/effect inside Unity (URP) from an
   RDC capture — "把这个特效在 URP 里复刻一下", "把这一帧的场景还原成 Unity 工程" —
   including cases where they only name a single effect or object. 不适用于：与捕获
@@ -45,7 +46,8 @@ description: >
 
 ## 硬性约束
 
-- 还原以"观测行为等价"为目标：外部表现对齐，不要求内部实现与原引擎一致。
+- 还原目标是与捕获的外部表现一致；实现精度分级：有可靠 shader 源码或可读反编译
+  表达时优先逐段保留计算与分支语义，证据不足或用户明确允许近似时才按观测行为拟合。
 - Shader 分支按观测到的活跃路径实现；未观测分支标注为推断/未验证。
 - 不把捕获中的引擎私有资产格式直接塞进工程；一切导入走 Unity 可读路径。
 

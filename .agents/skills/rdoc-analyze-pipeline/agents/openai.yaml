@@ -1,9 +1,5 @@
 # Codex display/call metadata. Claude Code reads only SKILL.md frontmatter.
 name: rdoc-analyze-pipeline
-display_name: RenderDoc 管线分析
-description: >
-  通过 RenderDoc MCP 检查捕获帧的渲染管线：讲清一帧如何从几何走到最终输出、追踪资源
-  读写与依赖、解释 Pass/Draw 的阶段与绑定，产出可核验的管线说明与管线图。
-  Understand how a captured frame renders, trace resource usage, and produce
-  verifiable pipeline explanations and diagrams from an RDC capture.
-category: graphics-debugging
+interface:
+  display_name: RenderDoc 管线分析
+  short_description: 讲清捕获帧的渲染流程、追踪资源读写与依赖，产出可核验的管线说明与图。

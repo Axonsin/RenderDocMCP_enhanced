@@ -1,9 +1,5 @@
 # Codex display/call metadata. Claude Code reads only SKILL.md frontmatter.
 name: rdoc-reconstruct-blender
-display_name: RenderDoc → Blender 重建
-description: >
-  用 RenderDoc MCP 取证、用 Blender MCP 重建：把捕获中的人物、场景或特效恢复成可
-  打开、可渲染的 .blend，覆盖网格、坐标/轴向/单位、实例与去重、相机、纹理与材质。
-  Reconstruct captured meshes, scenes, or effects from an RDC into a verifiable
-  .blend deliverable.
-category: graphics-debugging
+interface:
+  display_name: RenderDoc → Blender 重建
+  short_description: 从捕获重建网格、实例、相机与材质到可打开、可渲染对照的 .blend。

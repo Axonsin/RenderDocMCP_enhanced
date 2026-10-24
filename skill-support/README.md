@@ -24,7 +24,14 @@ python skill-support/sync_references.py --check   # 只检查漂移（有差异�
 python skill-support/sync_references.py --force   # 覆盖本地改动的目标
 ```
 
-目标文件被本地修改过时默认跳过并列出冲突，不静默覆盖。
+判定规则（依据上次同步的 manifest 哈希）：
+
+- 只更新了共享源 → 目标自动刷新，**不需要** `--force`；
+- 目标与源、与上次同步哈希都不一致 → 视为本地修改，报冲突跳过，`--force` 才覆盖；
+- 目标缺失 → `--check` 判为漂移，同步时直接补齐；
+- 源文件被删除 → 其旧目标经哈希校验后自动清理。
+
+回归测试见 `tests/test_skill_sync.py`（`python -m unittest discover -s tests`）。
 
 ## 安装到目标工程
 

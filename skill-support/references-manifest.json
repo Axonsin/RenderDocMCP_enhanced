@@ -3,6 +3,22 @@
     "source": "skill-support/shared-references/evidence-contract.md",
     "targets": [
       {
+        "path": ".agents/skills/rdoc-analyze-pipeline/references/evidence-contract.md",
+        "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
+      },
+      {
+        "path": ".agents/skills/rdoc-diagnose-performance/references/evidence-contract.md",
+        "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-blender/references/evidence-contract.md",
+        "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-unity/references/evidence-contract.md",
+        "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
+      },
+      {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/evidence-contract.md",
         "sha256": "e4df76ae1e1780fd6e8d8f86a781fa19577d478e513c09a43a5634865529be09"
       }
@@ -12,6 +28,22 @@
     "source": "skill-support/shared-references/job-layout.md",
     "targets": [
       {
+        "path": ".agents/skills/rdoc-analyze-pipeline/references/job-layout.md",
+        "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
+      },
+      {
+        "path": ".agents/skills/rdoc-diagnose-performance/references/job-layout.md",
+        "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-blender/references/job-layout.md",
+        "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-unity/references/job-layout.md",
+        "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
+      },
+      {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/job-layout.md",
         "sha256": "e07995702970eb3d9abbce1f78ee81d2a8a611d5ab440919949333ebf1de5e67"
       }
@@ -20,6 +52,22 @@
   "tool-usage.md": {
     "source": "skill-support/shared-references/tool-usage.md",
     "targets": [
+      {
+        "path": ".agents/skills/rdoc-analyze-pipeline/references/tool-usage.md",
+        "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
+      },
+      {
+        "path": ".agents/skills/rdoc-diagnose-performance/references/tool-usage.md",
+        "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-blender/references/tool-usage.md",
+        "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
+      },
+      {
+        "path": ".agents/skills/rdoc-reconstruct-unity/references/tool-usage.md",
+        "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
+      },
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
         "sha256": "4bd775658b2170ffbb99fcfc5628a43638686a48984972c2d924ccbad49a6fea"
