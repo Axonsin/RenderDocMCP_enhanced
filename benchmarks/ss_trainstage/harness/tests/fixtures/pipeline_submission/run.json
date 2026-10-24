@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "run_id": "NONOFFICIAL-fixture-pipeline",
+  "task": "pipeline",
+  "role": "candidate",
+  "experiment_id": "NONOFFICIAL-synthetic-fixture",
+  "condition_id": "fixture-only",
+  "protocol_id": "fixture-v1",
+  "repetition": 1,
+  "capture_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "model": {"name": "SYNTHETIC-NOT-A-MODEL", "version": null},
+  "started_at": "2026-01-01T00:00:00Z",
+  "artifacts": {"report": "answer.md", "evidence": "evidence.json"},
+  "telemetry": null
+}

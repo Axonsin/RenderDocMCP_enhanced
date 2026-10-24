@@ -1,0 +1,9 @@
+__pycache__/
+.venv/
+cache/
+*.rdc
+test-results.*
+calibration/
+runs/
+reports/
+tests/visual-check-*/

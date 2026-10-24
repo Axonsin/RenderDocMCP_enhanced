@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "case_id": "ss_trainstage_frame2925",
+  "dataset_version": "0.1.0-rc1",
+  "capture": "com.alpha.ssgame_2026.10.23_20.14_frame2925.rdc",
+  "sha256": "1f711f8848478ee3724cedd8aa96adb251bba30daf9ee95d8900a77a08671e59",
+  "source_access": "referee_only",
+  "scope": "single captured frame; observable 3D geometry, instances, captured pose, material appearance and rendering dataflow",
+  "primary_tasks": [
+    "blender",
+    "unity",
+    "pipeline",
+    "optimization"
+  ],
+  "ui_score": "separate 0-10, not part of primary mean",
+  "official_results": false,
+  "freeze_status": "reference_snapshot_frozen_with_documented_gaps",
+  "downstream": {
+    "unity": "2022.3.62f2",
+    "urp": "14.0.12",
+    "blender": "5.1.2",
+    "blender_transport": "Blender MCP"
+  },
+  "replay_policy": "Fixed verified Local or remote context per condition; record GPU/driver/loading; do not mix timings",
+  "protocol_id": "rdoc-ss-frame2925-v2",
+  "rubric_version": "rdoc-ss-frame2925-v2",
+  "official_run_ready": false,
+  "required_before_official_run": [
+    "Independently enforce and verify contestant isolation across every tool backend",
+    "Health-check the fixed Local or remote replay condition using the tested MCP version"
+  ],
+  "frozen_utc": "2026-10-23T15:16:40.361112+00:00"
+}

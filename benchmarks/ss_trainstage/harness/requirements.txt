@@ -1,0 +1,5 @@
+numpy>=2.0
+Pillow>=10.0
+matplotlib>=3.8
+# Optional LPIPS: install torch, torchvision and lpips separately. Pre-cache
+# official AlexNet/LPIPS weights yourself. The harness never downloads weights.
