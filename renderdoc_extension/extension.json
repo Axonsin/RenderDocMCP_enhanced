@@ -1,7 +1,7 @@
 {
     "extension_api": 1,
     "name": "RenderDocMCP_Enhanced Bridge",
-    "version": "1.0.1a1",
+    "version": "1.1.0",
     "minimum_renderdoc": "1.20",
     "description": "Provides MCP server bridge for AI-assisted graphics debugging",
     "author": "Axonsin",
