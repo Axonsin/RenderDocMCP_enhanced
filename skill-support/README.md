@@ -42,6 +42,14 @@ python skill-support/sync_references.py --force   # 覆盖本地改动的目标
 2. 不同客户端的加载行为与权限不假定完全相同；`agents/openai.yaml` 是 Codex 展示
    元数据，Claude Code 只读 `SKILL.md` frontmatter。
 
+在本仓库重新生成 `.claude/skills/`（从 `.agents/skills/` 规范源，排除 Codex 元数据）：
+
+```bash
+rm -rf .claude/skills && for s in .agents/skills/*/; do \
+  n=$(basename "$s"); mkdir -p ".claude/skills/$n/references"; \
+  cp "$s/SKILL.md" ".claude/skills/$n/"; cp "$s"/references/*.md ".claude/skills/$n/references/"; done
+```
+
 ## 当前状态
 
 - 2026-10-24：五个 Skill 首版成稿，**静态验证通过**（结构、红线、触发用例集）。
