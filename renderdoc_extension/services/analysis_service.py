@@ -6,7 +6,7 @@ import renderdoc as rd
 
 from ..utils import Helpers, Parsers, Serializers
 from .resource_catalog import build_catalog, identity, paginate, query_usage, resolve_resource, validate_page
-from .replay_query import at_event
+from .replay_query import at_event, record_restore_failure
 
 
 class AnalysisService:
@@ -254,19 +254,8 @@ class AnalysisService:
 
     def trace_action_dependencies(self, action_event_id):
         """Trace immediate resource dependencies for an action."""
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
-
-        result = {"data": None, "error": None}
-
-        def callback(controller):
-            controller.SetFrameEvent(action_event_id, True)
-
+        def operation(controller, target):
             action = self.ctx.GetAction(action_event_id)
-            if not action:
-                result["error"] = "INVALID_ACTION_EVENT_ID: no action at event %d" % action_event_id
-                return
-
             structured_file = controller.GetStructuredFile()
             action_index = self._build_action_index(
                 controller.GetRootActions(), structured_file
@@ -390,7 +379,7 @@ class AnalysisService:
             except Exception:
                 pass
 
-            result["data"] = {
+            return {
                 "action_event_id": action_event_id,
                 "name": action.GetName(structured_file),
                 "flags": Serializers.serialize_flags(action.flags),
@@ -401,11 +390,7 @@ class AnalysisService:
                 "output_resource_count": len(output_resources),
             }
 
-        self._invoke(callback)
-
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["data"]
+        return at_event(self.ctx, self._invoke, action_event_id, operation)
 
     def diff_actions(self, action_event_id_a, action_event_id_b):
         """Compare two actions using normalized compact inspection snapshots."""
@@ -507,179 +492,207 @@ class AnalysisService:
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
         result = {"data": None, "error": None, "action_event_ids": []}
+        restore_event = self.ctx.CurEvent()
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
-            structured_file = controller.GetStructuredFile()
-            action_index = self._build_action_index(root_actions, structured_file)
-            catalog = self._build_resource_catalog(controller)
+            try:
+                root_actions = controller.GetRootActions()
+                structured_file = controller.GetStructuredFile()
+                action_index = self._build_action_index(root_actions, structured_file)
+                catalog = self._build_resource_catalog(controller)
 
-            selected = [
-                info for info in action_index.values()
-                if self._matches_filters(
-                    info,
-                    marker_filter=marker_filter,
-                    exclude_markers=exclude_markers,
-                )
-                and not info.get("is_marker")
-            ]
-            selected.sort(key=lambda item: item["action_event_id"])
-
-            if not selected:
-                result["error"] = "INVALID_MARKER_FILTER: no actions matched marker_filter %s" % marker_filter
-                return
-
-            result["action_event_ids"] = [info["action_event_id"] for info in selected]
-
-            shader_counts = {}
-            render_target_counts = {}
-            input_resource_counts = {}
-            marker_paths = set()
-            stats = {
-                "action_count": len(selected),
-                "draw_count": 0,
-                "dispatch_count": 0,
-            }
-
-            for info in selected:
-                action = info["action"]
-                marker_paths.add(info.get("marker_path", ""))
-
-                if action.flags & rd.ActionFlags.Drawcall:
-                    stats["draw_count"] += 1
-                if action.flags & rd.ActionFlags.Dispatch:
-                    stats["dispatch_count"] += 1
-
-                controller.SetFrameEvent(action.eventId, False)
-                pipe = controller.GetPipelineState()
-
-                for stage in Helpers.get_all_shader_stages():
-                    shader = pipe.GetShader(stage)
-                    if shader == rd.ResourceId.Null():
-                        continue
-                    key = Parsers.stage_name(stage)
-                    entry_point = ""
-                    try:
-                        entry_point = pipe.GetShaderEntryPoint(stage)
-                    except Exception:
-                        pass
-                    shader_key = "%s|%s|%s" % (
-                        key,
-                        Parsers.canonical_resource_id(shader),
-                        entry_point,
+                selected = [
+                    info for info in action_index.values()
+                    if self._matches_filters(
+                        info,
+                        marker_filter=marker_filter,
+                        exclude_markers=exclude_markers,
                     )
-                    if shader_key not in shader_counts:
-                        shader_counts[shader_key] = {
-                            "stage": key,
-                            "resource_id": Parsers.canonical_resource_id(shader),
-                            "entry_point": entry_point,
-                            "count": 0,
-                        }
-                    shader_counts[shader_key]["count"] += 1
+                    and not info.get("is_marker")
+                ]
+                selected.sort(key=lambda item: item["action_event_id"])
+
+                if not selected:
+                    raise ValueError(
+                        "INVALID_MARKER_FILTER: no actions matched marker_filter %s"
+                        % marker_filter
+                    )
+
+                result["action_event_ids"] = [info["action_event_id"] for info in selected]
+
+                shader_counts = {}
+                render_target_counts = {}
+                input_resource_counts = {}
+                marker_paths = set()
+                stats = {
+                    "action_count": len(selected),
+                    "draw_count": 0,
+                    "dispatch_count": 0,
+                }
+                failures = [0, None]  # count, first message
+
+                for info in selected:
+                    action = info["action"]
+                    marker_paths.add(info.get("marker_path", ""))
+
+                    if action.flags & rd.ActionFlags.Drawcall:
+                        stats["draw_count"] += 1
+                    if action.flags & rd.ActionFlags.Dispatch:
+                        stats["dispatch_count"] += 1
 
                     try:
-                        for srv in pipe.GetReadOnlyResources(stage, False):
-                            rid = srv.descriptor.resource
-                            if rid == rd.ResourceId.Null():
+                        controller.SetFrameEvent(action.eventId, False)
+                        pipe = controller.GetPipelineState()
+                    except Exception as exc:
+                        # One unreadable action must not abort the whole pass,
+                        # but a full-scan failure must not look like an empty pass.
+                        failures[0] += 1
+                        if failures[1] is None:
+                            failures[1] = str(exc)
+                        continue
+
+                    for stage in Helpers.get_all_shader_stages():
+                        shader = pipe.GetShader(stage)
+                        if shader == rd.ResourceId.Null():
+                            continue
+                        key = Parsers.stage_name(stage)
+                        entry_point = ""
+                        try:
+                            entry_point = pipe.GetShaderEntryPoint(stage)
+                        except Exception:
+                            pass
+                        shader_key = "%s|%s|%s" % (
+                            key,
+                            Parsers.canonical_resource_id(shader),
+                            entry_point,
+                        )
+                        if shader_key not in shader_counts:
+                            shader_counts[shader_key] = {
+                                "stage": key,
+                                "resource_id": Parsers.canonical_resource_id(shader),
+                                "entry_point": entry_point,
+                                "count": 0,
+                            }
+                        shader_counts[shader_key]["count"] += 1
+
+                        try:
+                            for srv in pipe.GetReadOnlyResources(stage, False):
+                                rid = srv.descriptor.resource
+                                if rid == rd.ResourceId.Null():
+                                    continue
+                                res_key = Parsers.canonical_resource_id(rid)
+                                if res_key not in input_resource_counts:
+                                    input_resource_counts[res_key] = self._make_binding_entry(
+                                        rid,
+                                        catalog,
+                                        binding_type="input_resource",
+                                        stage=key,
+                                        slot=srv.access.index,
+                                    )
+                                    input_resource_counts[res_key]["count"] = 0
+                                input_resource_counts[res_key]["count"] += 1
+                        except Exception:
+                            pass
+
+                    try:
+                        for index, rt in enumerate(pipe.GetOutputTargets()):
+                            if rt.resource == rd.ResourceId.Null():
                                 continue
-                            res_key = Parsers.canonical_resource_id(rid)
-                            if res_key not in input_resource_counts:
-                                input_resource_counts[res_key] = self._make_binding_entry(
-                                    rid,
+                            res_key = "%s:%d" % (Parsers.canonical_resource_id(rt.resource), index)
+                            if res_key not in render_target_counts:
+                                render_target_counts[res_key] = self._make_binding_entry(
+                                    rt.resource,
                                     catalog,
-                                    binding_type="input_resource",
-                                    stage=key,
-                                    slot=srv.access.index,
+                                    binding_type="render_target",
+                                    slot=index,
                                 )
-                                input_resource_counts[res_key]["count"] = 0
-                            input_resource_counts[res_key]["count"] += 1
+                                render_target_counts[res_key]["write_count"] = 0
+                            render_target_counts[res_key]["write_count"] += 1
                     except Exception:
                         pass
 
+                    try:
+                        depth = pipe.GetDepthTarget()
+                        if depth.resource != rd.ResourceId.Null():
+                            res_key = "%s:depth" % Parsers.canonical_resource_id(depth.resource)
+                            if res_key not in render_target_counts:
+                                render_target_counts[res_key] = self._make_binding_entry(
+                                    depth.resource,
+                                    catalog,
+                                    binding_type="depth_target",
+                                )
+                                render_target_counts[res_key]["write_count"] = 0
+                            render_target_counts[res_key]["write_count"] += 1
+                    except Exception:
+                        pass
+
+                if selected and failures[0] == len(selected):
+                    raise RuntimeError(
+                        "RESOURCE_QUERY_FAILED: all %d actions failed to scan: %s"
+                        % (len(selected), failures[1])
+                    )
+                warnings = []
+                repeated_targets = [
+                    target for target in render_target_counts.values()
+                    if target.get("write_count", 0) >= 5
+                ]
+                if repeated_targets:
+                    warnings.append({
+                        "type": "repeated_target_writes",
+                        "message": "One or more output targets are written repeatedly within the pass.",
+                        "targets": repeated_targets[:5],
+                    })
+
+                if len(render_target_counts) >= 4:
+                    warnings.append({
+                        "type": "target_churn",
+                        "message": "Multiple output targets are touched within the selected pass subtree.",
+                        "target_count": len(render_target_counts),
+                    })
+
+                result["data"] = {
+                    "marker_filter": marker_filter,
+                    "matched_marker_paths": sorted(
+                        [path for path in marker_paths if path]
+                    )[:20],
+                    "statistics": stats,
+                    "scan_failures": failures[0],
+                    "scan_error": failures[1],
+                    "action_event_id_range": {
+                        "min": selected[0]["action_event_id"],
+                        "max": selected[-1]["action_event_id"],
+                    },
+                    "main_shaders": sorted(
+                        shader_counts.values(),
+                        key=lambda item: item["count"],
+                        reverse=True,
+                    )[:10],
+                    "render_targets_written": sorted(
+                        render_target_counts.values(),
+                        key=lambda item: item.get("write_count", 0),
+                        reverse=True,
+                    )[:10],
+                    "representative_input_resources": sorted(
+                        input_resource_counts.values(),
+                        key=lambda item: item.get("count", 0),
+                        reverse=True,
+                    )[:10],
+                    "top_timed_actions": [],
+                    "warnings": warnings,
+                }
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
+            finally:
                 try:
-                    for index, rt in enumerate(pipe.GetOutputTargets()):
-                        if rt.resource == rd.ResourceId.Null():
-                            continue
-                        res_key = "%s:%d" % (Parsers.canonical_resource_id(rt.resource), index)
-                        if res_key not in render_target_counts:
-                            render_target_counts[res_key] = self._make_binding_entry(
-                                rt.resource,
-                                catalog,
-                                binding_type="render_target",
-                                slot=index,
-                            )
-                            render_target_counts[res_key]["write_count"] = 0
-                        render_target_counts[res_key]["write_count"] += 1
-                except Exception:
-                    pass
-
-                try:
-                    depth = pipe.GetDepthTarget()
-                    if depth.resource != rd.ResourceId.Null():
-                        res_key = "%s:depth" % Parsers.canonical_resource_id(depth.resource)
-                        if res_key not in render_target_counts:
-                            render_target_counts[res_key] = self._make_binding_entry(
-                                depth.resource,
-                                catalog,
-                                binding_type="depth_target",
-                            )
-                            render_target_counts[res_key]["write_count"] = 0
-                        render_target_counts[res_key]["write_count"] += 1
-                except Exception:
-                    pass
-
-            warnings = []
-            repeated_targets = [
-                target for target in render_target_counts.values()
-                if target.get("write_count", 0) >= 5
-            ]
-            if repeated_targets:
-                warnings.append({
-                    "type": "repeated_target_writes",
-                    "message": "One or more output targets are written repeatedly within the pass.",
-                    "targets": repeated_targets[:5],
-                })
-
-            if len(render_target_counts) >= 4:
-                warnings.append({
-                    "type": "target_churn",
-                    "message": "Multiple output targets are touched within the selected pass subtree.",
-                    "target_count": len(render_target_counts),
-                })
-
-            result["data"] = {
-                "marker_filter": marker_filter,
-                "matched_marker_paths": sorted(
-                    [path for path in marker_paths if path]
-                )[:20],
-                "statistics": stats,
-                "action_event_id_range": {
-                    "min": selected[0]["action_event_id"],
-                    "max": selected[-1]["action_event_id"],
-                },
-                "main_shaders": sorted(
-                    shader_counts.values(),
-                    key=lambda item: item["count"],
-                    reverse=True,
-                )[:10],
-                "render_targets_written": sorted(
-                    render_target_counts.values(),
-                    key=lambda item: item.get("write_count", 0),
-                    reverse=True,
-                )[:10],
-                "representative_input_resources": sorted(
-                    input_resource_counts.values(),
-                    key=lambda item: item.get("count", 0),
-                    reverse=True,
-                )[:10],
-                "top_timed_actions": [],
-                "warnings": warnings,
-            }
+                    controller.SetFrameEvent(restore_event, True)
+                except Exception as exc:
+                    record_restore_failure(result, exc)
 
         self._invoke(callback)
 
-        if result["error"]:
-            raise ValueError(result["error"])
+        if result["error"] is not None:
+            raise result["error"]
 
         timings = self._action.get_action_timings(action_event_ids=result.get("action_event_ids") or None)
         if timings.get("available"):

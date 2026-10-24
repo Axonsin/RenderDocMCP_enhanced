@@ -4,6 +4,8 @@ Provides a file IPC server for external MCP server communication.
 """
 
 import importlib
+import json
+import os
 
 from . import socket_server
 from . import request_handler
@@ -63,7 +65,7 @@ def register(version, ctx):
     _reload_child_modules()
 
     # Create facade and handler
-    facade = renderdoc_facade.RenderDocFacade(ctx)
+    facade = renderdoc_facade.RenderDocFacade(ctx, _runtime_info(version))
     _facade = facade
     handler = request_handler.RequestHandler(facade)
 
@@ -82,6 +84,28 @@ def register(version, ctx):
 
     print("[MCP Bridge] Extension loaded (RenderDoc %s)" % version)
     print("[MCP Bridge] File IPC server ready")
+
+
+def _extension_version():
+    """Read the extension version from the manifest next to this package."""
+    try:
+        manifest_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "extension.json"
+        )
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+        return manifest.get("version")
+    except Exception:
+        return None
+
+
+def _runtime_info(renderdoc_version):
+    """Version/protocol info reported by get_capture_status and ping."""
+    return {
+        "extension_version": _extension_version(),
+        "renderdoc_version": renderdoc_version,
+        "ipc_version": socket_server.IPC_VERSION,
+    }
 
 
 def unregister():

@@ -7,7 +7,7 @@ import renderdoc as rd
 from ..utils import Serializers, Helpers
 from .resource_catalog import build_catalog, paginate, validate_page
 from .structured_data import read_node
-from .replay_query import require_action
+from .replay_query import at_event
 
 
 class ActionService:
@@ -32,21 +32,25 @@ class ActionService:
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"items": []}
+        result = {"items": [], "error": None}
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
-            structured_file = controller.GetStructuredFile()
-            result["items"] = Serializers.serialize_actions(
-                root_actions,
-                structured_file,
-                include_children,
-                marker_filter=marker_filter,
-                exclude_markers=exclude_markers,
-                action_event_id_range=action_event_id_range,
-                exclude_marker_actions=exclude_marker_actions,
-                flags_filter=flags_filter,
-            )
+            try:
+                root_actions = controller.GetRootActions()
+                structured_file = controller.GetStructuredFile()
+                result["items"] = Serializers.serialize_actions(
+                    root_actions,
+                    structured_file,
+                    include_children,
+                    marker_filter=marker_filter,
+                    exclude_markers=exclude_markers,
+                    action_event_id_range=action_event_id_range,
+                    exclude_marker_actions=exclude_marker_actions,
+                    flags_filter=flags_filter,
+                )
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
 
         def count_items(items):
             total = 0
@@ -56,6 +60,8 @@ class ActionService:
             return total
 
         self._invoke(callback)
+        if result["error"] is not None:
+            raise result["error"]
         return {
             "items": result["items"],
             "total_count": count_items(result["items"]),
@@ -68,93 +74,86 @@ class ActionService:
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"summary": None}
+        result = {"summary": None, "error": None}
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
-            structured_file = controller.GetStructuredFile()
-            api = controller.GetAPIProperties().pipelineType
+            try:
+                root_actions = controller.GetRootActions()
+                structured_file = controller.GetStructuredFile()
+                api = controller.GetAPIProperties().pipelineType
 
-            # Statistics counters
-            stats = {
-                "draw_calls": 0,
-                "dispatches": 0,
-                "clears": 0,
-                "copies": 0,
-                "presents": 0,
-                "markers": 0,
-            }
-            total_actions = [0]
+                # Statistics counters
+                stats = {
+                    "draw_calls": 0,
+                    "dispatches": 0,
+                    "clears": 0,
+                    "copies": 0,
+                    "presents": 0,
+                    "markers": 0,
+                }
+                total_actions = [0]
 
-            def count_actions(actions):
-                for action in actions:
-                    total_actions[0] += 1
-                    flags = action.flags
+                def count_actions(actions):
+                    for action in actions:
+                        total_actions[0] += 1
+                        flags = action.flags
 
-                    if flags & rd.ActionFlags.Drawcall:
-                        stats["draw_calls"] += 1
-                    if flags & rd.ActionFlags.Dispatch:
-                        stats["dispatches"] += 1
-                    if flags & rd.ActionFlags.Clear:
-                        stats["clears"] += 1
-                    if flags & rd.ActionFlags.Copy:
-                        stats["copies"] += 1
-                    if flags & rd.ActionFlags.Present:
-                        stats["presents"] += 1
-                    if flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker):
-                        stats["markers"] += 1
+                        if flags & rd.ActionFlags.Drawcall:
+                            stats["draw_calls"] += 1
+                        if flags & rd.ActionFlags.Dispatch:
+                            stats["dispatches"] += 1
+                        if flags & rd.ActionFlags.Clear:
+                            stats["clears"] += 1
+                        if flags & rd.ActionFlags.Copy:
+                            stats["copies"] += 1
+                        if flags & rd.ActionFlags.Present:
+                            stats["presents"] += 1
+                        if flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker):
+                            stats["markers"] += 1
 
-                    if action.children:
-                        count_actions(action.children)
+                        if action.children:
+                            count_actions(action.children)
 
-            count_actions(root_actions)
+                count_actions(root_actions)
 
-            # Top-level markers
-            top_markers = []
-            for action in root_actions:
-                if action.flags & rd.ActionFlags.PushMarker:
-                    child_count = Helpers.count_children(action)
-                    top_markers.append({
-                        "name": action.GetName(structured_file),
-                        "action_event_id": action.eventId,
-                        "child_count": child_count,
-                    })
+                # Top-level markers
+                top_markers = []
+                for action in root_actions:
+                    if action.flags & rd.ActionFlags.PushMarker:
+                        child_count = Helpers.count_children(action)
+                        top_markers.append({
+                            "name": action.GetName(structured_file),
+                            "action_event_id": action.eventId,
+                            "child_count": child_count,
+                        })
 
-            # Resource counts
-            textures = controller.GetTextures()
-            buffers = controller.GetBuffers()
+                # Resource counts
+                textures = controller.GetTextures()
+                buffers = controller.GetBuffers()
 
-            result["summary"] = {
-                "api": str(api),
-                "total_actions": total_actions[0],
-                "statistics": stats,
-                "top_level_markers": top_markers,
-                "resource_counts": {
-                    "textures": len(textures),
-                    "buffers": len(buffers),
-                },
-            }
+                result["summary"] = {
+                    "api": str(api),
+                    "total_actions": total_actions[0],
+                    "statistics": stats,
+                    "top_level_markers": top_markers,
+                    "resource_counts": {
+                        "textures": len(textures),
+                        "buffers": len(buffers),
+                    },
+                }
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
 
         self._invoke(callback)
+        if result["error"] is not None:
+            raise result["error"]
         return result["summary"]
 
     def get_action_details(self, action_event_id):
         """Get metadata, draw counts, offsets and output resources for an action."""
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
-        require_action(self.ctx, action_event_id)
-
-        result = {"details": None, "error": None}
-
-        def callback(controller):
-            # Move to the event
-            controller.SetFrameEvent(action_event_id, True)
-
+        def operation(controller, target):
             action = self.ctx.GetAction(action_event_id)
-            if not action:
-                result["error"] = "INVALID_ACTION_EVENT_ID: no action at event %d" % action_event_id
-                return
-
             structured_file = controller.GetStructuredFile()
 
             details = {
@@ -180,13 +179,9 @@ class ActionService:
             if action.depthOut != rd.ResourceId.Null():
                 details["depth_output"] = str(action.depthOut)
 
-            result["details"] = details
+            return details
 
-        self._invoke(callback)
-
-        if result["error"]:
-            raise ValueError(result["error"])
-        return result["details"]
+        return at_event(self.ctx, self._invoke, action_event_id, operation)
 
     def get_action_api_calls(self, action_event_id, api_event_id=None, child_path=None,
                              offset=0, limit=50):
@@ -284,112 +279,118 @@ class ActionService:
         result = {"data": None, "error": None}
 
         def callback(controller):
-            # Check if EventGPUDuration counter is available
-            counters = controller.EnumerateCounters()
-            if rd.GPUCounter.EventGPUDuration not in counters:
-                result["data"] = {
-                    "available": False,
-                    "error": "GPU timing counters not supported on this capture",
-                }
-                return
+            try:
+                # Check if EventGPUDuration counter is available
+                counters = controller.EnumerateCounters()
+                if rd.GPUCounter.EventGPUDuration not in counters:
+                    result["data"] = {
+                        "available": False,
+                        "error": "GPU timing counters not supported on this capture",
+                    }
+                    return
 
-            # Get counter description
-            counter_desc = controller.DescribeCounter(rd.GPUCounter.EventGPUDuration)
+                # Get counter description
+                counter_desc = controller.DescribeCounter(rd.GPUCounter.EventGPUDuration)
 
-            # Fetch timing data
-            counter_results = controller.FetchCounters([rd.GPUCounter.EventGPUDuration])
+                # Fetch timing data
+                counter_results = controller.FetchCounters([rd.GPUCounter.EventGPUDuration])
 
-            # Build action_event_id to timing map
-            timing_map = {}
-            target_counter = int(rd.GPUCounter.EventGPUDuration)
-            for r in counter_results:
-                if r.counter == target_counter:
-                    # EventGPUDuration typically returns double
-                    # Try to get the value in the most appropriate way
-                    val = r.value.d  # double is the standard for duration
-                    timing_map[r.eventId] = val
+                # Build action_event_id to timing map
+                timing_map = {}
+                target_counter = int(rd.GPUCounter.EventGPUDuration)
+                for r in counter_results:
+                    if r.counter == target_counter:
+                        # EventGPUDuration typically returns double
+                        # Try to get the value in the most appropriate way
+                        val = r.value.d  # double is the standard for duration
+                        timing_map[r.eventId] = val
 
-            # Get structured file for action names
-            structured_file = controller.GetStructuredFile()
-            root_actions = controller.GetRootActions()
+                # Get structured file for action names
+                structured_file = controller.GetStructuredFile()
+                root_actions = controller.GetRootActions()
 
-            # Collect actions to report timings for
-            timings = []
-            total_duration = [0.0]
+                # Collect actions to report timings for
+                timings = []
+                total_duration = [0.0]
 
-            def collect_timings(actions, parent_markers=None):
-                if parent_markers is None:
-                    parent_markers = []
+                def collect_timings(actions, parent_markers=None):
+                    if parent_markers is None:
+                        parent_markers = []
 
-                for action in actions:
-                    action_name = action.GetName(structured_file)
-                    current_markers = parent_markers[:]
+                    for action in actions:
+                        action_name = action.GetName(structured_file)
+                        current_markers = parent_markers[:]
 
-                    # Track marker hierarchy
-                    is_marker = bool(action.flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker))
-                    if is_marker:
-                        current_markers.append(action_name)
+                        # Track marker hierarchy
+                        is_marker = bool(
+                            action.flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker)
+                        )
+                        if is_marker:
+                            current_markers.append(action_name)
 
-                    # Apply marker filter
-                    if marker_filter:
-                        marker_path = "/".join(current_markers)
-                        if marker_filter.lower() not in marker_path.lower():
-                            # Still recurse into children
-                            if action.children:
-                                collect_timings(action.children, current_markers)
-                            continue
+                        # Apply marker filter
+                        if marker_filter:
+                            marker_path = "/".join(current_markers)
+                            if marker_filter.lower() not in marker_path.lower():
+                                # Still recurse into children
+                                if action.children:
+                                    collect_timings(action.children, current_markers)
+                                continue
 
-                    # Apply exclude filter
-                    if exclude_markers:
-                        skip = False
-                        for exclude in exclude_markers:
-                            for m in current_markers:
-                                if exclude.lower() in m.lower():
-                                    skip = True
+                        # Apply exclude filter
+                        if exclude_markers:
+                            skip = False
+                            for exclude in exclude_markers:
+                                for m in current_markers:
+                                    if exclude.lower() in m.lower():
+                                        skip = True
+                                        break
+                                if skip:
                                     break
                             if skip:
-                                break
-                        if skip:
-                            if action.children:
-                                collect_timings(action.children, current_markers)
-                            continue
+                                if action.children:
+                                    collect_timings(action.children, current_markers)
+                                continue
 
-                    # Check if we should include this event
-                    action_event_id = action.eventId
-                    include = True
-                    if action_event_ids is not None:
-                        include = action_event_id in action_event_ids
+                        # Check if we should include this event
+                        action_event_id = action.eventId
+                        include = True
+                        if action_event_ids is not None:
+                            include = action_event_id in action_event_ids
 
-                    if include and action_event_id in timing_map:
-                        duration_sec = timing_map[action_event_id]
-                        duration_ms = duration_sec * 1000.0
-                        timings.append({
-                            "action_event_id": action_event_id,
-                            "name": action_name,
-                            "duration_seconds": duration_sec,
-                            "duration_ms": duration_ms,
-                        })
-                        total_duration[0] += duration_ms
+                        if include and action_event_id in timing_map:
+                            duration_sec = timing_map[action_event_id]
+                            duration_ms = duration_sec * 1000.0
+                            timings.append({
+                                "action_event_id": action_event_id,
+                                "name": action_name,
+                                "duration_seconds": duration_sec,
+                                "duration_ms": duration_ms,
+                            })
+                            total_duration[0] += duration_ms
 
-                    # Recurse into children
-                    if action.children:
-                        collect_timings(action.children, current_markers)
+                        # Recurse into children
+                        if action.children:
+                            collect_timings(action.children, current_markers)
 
-            collect_timings(root_actions)
+                collect_timings(root_actions)
 
-            # Sort by action_event_id
-            timings.sort(key=lambda x: x["action_event_id"])
+                # Sort by action_event_id
+                timings.sort(key=lambda x: x["action_event_id"])
 
-            result["data"] = {
-                "available": True,
-                "unit": str(counter_desc.unit),
-                "timings": timings,
-                "total_duration_ms": total_duration[0],
-                "count": len(timings),
-            }
+                result["data"] = {
+                    "available": True,
+                    "unit": str(counter_desc.unit),
+                    "timings": timings,
+                    "total_duration_ms": total_duration[0],
+                    "count": len(timings),
+                }
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
 
         self._invoke(callback)
 
-        if result["error"]:
-            raise ValueError(result["error"])
+        if result["error"] is not None:
+            raise result["error"]
         return result["data"]

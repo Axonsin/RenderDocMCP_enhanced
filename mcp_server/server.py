@@ -28,7 +28,8 @@ def _optional_param(params: dict[str, object], name: str, value: object | None) 
 def get_capture_status() -> dict:
     """
     Check if a capture is currently loaded in RenderDoc.
-    Returns the capture status and API type if loaded.
+    Returns the capture status, API type, extension/renderdoc/IPC versions,
+    and replay health (replay_healthy/replay_error) when loaded.
     """
     return bridge.call("get_capture_status")
 
@@ -658,12 +659,13 @@ def open_capture(capture_path: str) -> dict:
 
 
 @mcp.tool
-def get_mesh_summary(action_event_id: int) -> dict:
+def get_mesh_summary(action_event_id: int, instance: int = 0) -> dict:
     """
     Get a summary of mesh data for a specific draw call event.
 
     Args:
         action_event_id: The event ID of the draw call to inspect
+        instance: Instance index for instanced attributes and post-VS data (default: 0)
 
     Returns mesh information including:
     - topology: Primitive topology (TriangleList, LineList, etc.)
@@ -673,7 +675,9 @@ def get_mesh_summary(action_event_id: int) -> dict:
     - attributes: List of vertex attributes with their formats
     - bounding_box: Min/max bounds if position attribute available
     """
-    return bridge.call("get_mesh_summary", {"action_event_id": action_event_id})
+    return bridge.call(
+        "get_mesh_summary", {"action_event_id": action_event_id, "instance": instance}
+    )
 
 
 @mcp.tool
@@ -683,6 +687,7 @@ def get_mesh_data(
     offset: int = 0,
     limit: int = 100,
     attributes: list[str] | None = None,
+    instance: int = 0,
 ) -> dict:
     """
     Get mesh vertex and index data for a specific draw call (with pagination).
@@ -697,6 +702,7 @@ def get_mesh_data(
         limit: Canonical maximum number of vertices to return (default: 100, max recommended: 500)
         attributes: Optional list of attribute names to include (e.g., ["POSITION", "NORMAL", "TEXCOORD"])
                    If None, all attributes are included.
+        instance: Instance index for instanced attributes and post-VS data (default: 0)
 
     Returns mesh data including:
     - items: List of vertex data, each vertex is a dict of attribute_name -> values
@@ -718,6 +724,7 @@ def get_mesh_data(
         "stage": stage,
         "offset": offset,
         "limit": limit,
+        "instance": instance,
     }
     _optional_param(params, "attributes", attributes)
     return bridge.call("get_mesh_data", params)
@@ -729,6 +736,7 @@ def export_mesh_csv(
     output_path: str,
     stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
     attributes: list[str] | None = None,
+    instance: int = 0,
 ) -> dict:
     """
     Export mesh data to a CSV file.
@@ -739,6 +747,7 @@ def export_mesh_csv(
         stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
         attributes: Optional list of attributes to include
                            If None, all available attributes are included.
+        instance: Instance index for instanced attributes and post-VS data (default: 0)
 
     Returns success status and mesh info including:
     - output_path: Path to the exported CSV file
@@ -747,7 +756,7 @@ def export_mesh_csv(
     - index_count: Number of indices
     - format: Export format (always "CSV")
 
-    The CSV format is compatible with csv_obj project:
+    The CSV format:
     - First row: VTX, IDX, attribute columns
     - Subsequent rows: vertex data with deduplication
     - Index file (.idx): remapped triangle stream
@@ -756,6 +765,7 @@ def export_mesh_csv(
         "action_event_id": action_event_id,
         "output_path": output_path,
         "stage": stage,
+        "instance": instance,
     }
     if attributes is not None:
         params["attributes"] = attributes

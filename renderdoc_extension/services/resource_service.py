@@ -287,7 +287,13 @@ class ResourceService:
                 "discard": rd.AlphaMapping.Discard,
                 "blend_to_black": rd.AlphaMapping.BlendToColor,
             }
-            tex_save.alpha = alpha_map.get(alpha_mode.lower(), rd.AlphaMapping.Preserve)
+            alpha_key = (alpha_mode or "").lower()
+            if alpha_key not in alpha_map:
+                raise ValueError(
+                    "INVALID_ALPHA_MODE: %s (must be preserve, discard, or blend_to_black)"
+                    % alpha_mode
+                )
+            tex_save.alpha = alpha_map[alpha_key]
 
             # Set output format
             format_map = {
@@ -300,7 +306,13 @@ class ResourceService:
                 "DDS": rd.FileType.DDS,
                 "HDR": rd.FileType.HDR,
             }
-            tex_save.destType = format_map.get(format_type.upper(), rd.FileType.PNG)
+            format_key = (format_type or "").upper()
+            if format_key not in format_map:
+                raise ValueError(
+                    "INVALID_FORMAT_TYPE: %s (must be PNG, JPG, BMP, TGA, EXR, DDS, or HDR)"
+                    % format_type
+                )
+            tex_save.destType = format_map[format_key]
 
             # Ensure output directory exists
             output_dir = os.path.dirname(output_path)
@@ -315,11 +327,26 @@ class ResourceService:
             result["success"] = True
             result["output_path"] = output_path
             result["resource_id"] = Parsers.canonical_resource_id(resource_id)
-            result["format"] = format_type.upper()
+            result["format"] = format_key
             result["width"] = tex_desc.width
             result["height"] = tex_desc.height
             result["mip"] = mip
+            if mip < 0:
+                # RenderDoc writes every mip only for DDS; other formats fall
+                # back to mip 0, so report the mip that was actually saved.
+                if format_key == "DDS":
+                    result["mip_selection"] = "all"
+                else:
+                    result["mip_selection"] = 0
+                    result["mip_note"] = (
+                        "mip=-1 saves all mips only for DDS; saved mip 0"
+                    )
             result["slice_index"] = slice_index
+            result["color_space"] = (
+                "srgb"
+                if tex_desc.format.compType == rd.CompType.UNormSRGB
+                else "linear"
+            )
 
         def scoped(controller, event):
             callback(controller)
@@ -339,6 +366,10 @@ class ResourceService:
         """Get buffer data"""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("INVALID_PAGINATION: offset must be a non-negative byte offset")
+        if type(length) is not int or length < 0:
+            raise ValueError("INVALID_PAGINATION: length must be a non-negative byte count")
 
         result = {"data": None, "error": None}
 
@@ -350,20 +381,25 @@ class ResourceService:
                 result["error"] = "INVALID_RESOURCE_ID: %s" % resource_id
                 return
 
-            # Find buffer
-            buf_desc = None
-            for buf in controller.GetBuffers():
-                if buf.resourceId == rid:
-                    buf_desc = buf
-                    break
+            try:
+                # Find buffer
+                buf_desc = None
+                for buf in controller.GetBuffers():
+                    if buf.resourceId == rid:
+                        buf_desc = buf
+                        break
 
-            if not buf_desc:
-                result["error"] = "BUFFER_NOT_FOUND: %s" % resource_id
+                if not buf_desc:
+                    result["error"] = "BUFFER_NOT_FOUND: %s" % resource_id
+                    return
+
+                # Get data
+                actual_length = length if length > 0 else buf_desc.length
+                data = controller.GetBufferData(rid, offset, actual_length)
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = "RESOURCE_QUERY_FAILED: failed to get buffer data: %s" % str(exc)
                 return
-
-            # Get data
-            actual_length = length if length > 0 else buf_desc.length
-            data = controller.GetBufferData(rid, offset, actual_length)
 
             result["data"] = {
                 "resource_id": Parsers.canonical_resource_id(rid),
@@ -499,6 +535,23 @@ class ResourceService:
                 data = data[slice_start:slice_end]
                 output_depth = 1
 
+            # Data diagnostics: zero-length indicates an unreadable subresource;
+            # all-zero bytes can be legitimate (cleared resource) but is worth flagging.
+            warnings = []
+            all_zero = False
+            if len(data) == 0:
+                warnings.append(
+                    "Texture data returned 0 bytes; the subresource may be unreadable "
+                    "(replay or driver issue)."
+                )
+            else:
+                all_zero = not any(data)
+                if all_zero:
+                    warnings.append(
+                        "All data bytes are zero. This can be legitimate (cleared resource) "
+                        "or a symptom of a replay problem; verify against the texture viewer."
+                    )
+
             result["data"] = {
                 "resource_id": Parsers.canonical_resource_id(tex_desc.resourceId),
                 "width": mip_width,
@@ -512,9 +565,17 @@ class ResourceService:
                 "dimension": str(tex_desc.type),
                 "is_3d": is_3d,
                 "total_depth": mip_depth if is_3d else 1,
+                "color_space": (
+                    "srgb"
+                    if tex_desc.format.compType == rd.CompType.UNormSRGB
+                    else "linear"
+                ),
                 "data_length": len(data),
+                "all_zero": all_zero,
                 "content_base64": base64.b64encode(data).decode("ascii"),
             }
+            if warnings:
+                result["data"]["warnings"] = warnings
 
         def scoped(controller, event):
             callback(controller)

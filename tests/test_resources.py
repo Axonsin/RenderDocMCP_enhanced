@@ -187,7 +187,8 @@ class ResourceTests(unittest.TestCase):
         self.loaded = True
         self.invokes = 0
         self.in_callback = False
-        self.ctx = NS(IsCaptureLoaded=lambda: self.loaded, GetResourceName=self.name)
+        self.ctx = NS(IsCaptureLoaded=lambda: self.loaded, GetResourceName=self.name,
+                      CurEvent=lambda: 1)
         self.service = RESOURCE.ResourceService(self.ctx, self.invoke)
         self.analysis = ANALYSIS.AnalysisService(self.ctx, self.invoke, None, None, self.service, None)
         self.facade = FACADE.RenderDocFacade.__new__(FACADE.RenderDocFacade)
@@ -501,7 +502,7 @@ class ResourceTests(unittest.TestCase):
             "include_children", "marker_filter", "exclude_markers", "action_event_id_range",
             "exclude_marker_actions", "flags_filter"})
         self.assertEqual(set(tools["get_mesh_data"].parameters["properties"]), {
-            "action_event_id", "stage", "offset", "limit", "attributes"})
+            "action_event_id", "stage", "offset", "limit", "attributes", "instance"})
         self.assertEqual(set(tools["trace_resource_usage"].parameters["properties"]), {
             "resource_id", "marker_filter", "exclude_markers", "event_id_range",
             "before_event_id", "offset", "limit", "categories"})
@@ -542,7 +543,9 @@ class ResourceTests(unittest.TestCase):
                     "outputs": [{"index": 0, "resource_id": "202"}],
                     "depth_output": "203",
                 })
-                self.assertEqual(selected, [343])
+                # SetFrameEvent(target) then SetFrameEvent(restore): the query
+                # must move replay to the action and restore the UI position.
+                self.assertEqual(selected, [343, 1])
                 self.loaded = False
                 with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "CAPTURE_NOT_LOADED"):
                     server.get_action_details(action_event_id=343)
@@ -619,8 +622,15 @@ class ResourceTests(unittest.TestCase):
     def test_mesh_read_and_export_share_action_eid_contract(self):
         from mcp_server import server
 
-        with patch.dict(sys.modules, {"renderdoc": ACTION.rd}):
-            module = load("mesh_under_test", "renderdoc_extension/services/mesh_service.py")
+        packages = {"renderdoc": ACTION.rd}
+        for name in ("renderdoc_extension", "renderdoc_extension.services"):
+            packages[name] = types.ModuleType(name)
+            packages[name].__path__ = []
+        with patch.dict(sys.modules, packages):
+            load("renderdoc_extension.services.replay_query",
+                 "renderdoc_extension/services/replay_query.py")
+            module = load("renderdoc_extension.services.mesh_service",
+                          "renderdoc_extension/services/mesh_service.py")
         mesh = module.MeshService(self.ctx, self.invoke)
         self.facade._mesh = mesh
         action = NS(eventId=343, flags=3, numIndices=3)
@@ -646,6 +656,7 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual(summary["action_event_id"], 343)
             page = server.get_mesh_data(action_event_id=343, offset=1, limit=1)
             self.assertEqual(page["action_event_id"], 343)
+            self.assertEqual(page["instance"], 0)
             self.assertEqual(page["items"], [{"POSITION": [1.0, 0.0, 0.0]}])
             self.assertNotIn("event_id", page)
             exported = server.export_mesh_csv(action_event_id=343,
@@ -653,6 +664,19 @@ class ResourceTests(unittest.TestCase):
                                                attributes=["POSITION"])
             self.assertEqual(exported["action_event_id"], 343)
             self.assertEqual(Path(exported["index_path"]).read_text().splitlines(), ["0", "1", "2"])
+
+    def test_buffer_read_failures_propagate_and_validate(self):
+        with self.assertRaisesRegex(ValueError, "INVALID_PAGINATION"):
+            self.service.get_buffer_contents("86983", offset=-1)
+        with self.assertRaisesRegex(ValueError, "INVALID_PAGINATION"):
+            self.service.get_buffer_contents("86983", length=-1)
+
+        def boom(rid, offset, length):
+            raise RuntimeError("read failed")
+
+        self.controller.GetBufferData = boom
+        with self.assertRaisesRegex(ValueError, "RESOURCE_QUERY_FAILED"):
+            self.service.get_buffer_contents("86983")
 
     def test_action_details_rejects_an_intermediate_api_eid(self):
         action = self.prepare_api_action()

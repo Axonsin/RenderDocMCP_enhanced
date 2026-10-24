@@ -26,7 +26,8 @@ Stage = enum.IntEnum("ShaderStage", "Vertex Hull Domain Geometry Pixel Compute T
 ActionFlags = enum.IntFlag("ActionFlags", {
     "Drawcall": 1, "Dispatch": 2, "Copy": 4, "Resolve": 8, "Clear": 16,
     "Indexed": 32, "MeshDispatch": 64})
-VarType = enum.IntEnum("VarType", "Float UInt Struct")
+VarType = enum.IntEnum("VarType", "Float Int UInt Bool Struct")
+CompType = enum.IntEnum("CompType", "Typeless Float UNorm SNorm UInt SInt Depth UNormSRGB")
 
 
 def load(name, path):
@@ -40,6 +41,7 @@ def load(name, path):
 def modules():
     rd = types.ModuleType("renderdoc")
     rd.ResourceId, rd.ShaderStage, rd.ActionFlags = ResourceId, Stage, ActionFlags
+    rd.CompType = CompType
     qrd = types.ModuleType("qrenderdoc")
     qrd.CaptureViewer = object
     packages = {"renderdoc": rd, "qrenderdoc": qrd}
@@ -63,7 +65,7 @@ def modules():
 
 MODULES, HANDLER, RD = modules()
 SERVICE = MODULES["pipeline_service"].PipelineService
-FMT = NS(Name=lambda: "R8G8B8A8_UNORM")
+FMT = NS(Name=lambda: "R8G8B8A8_UNORM", compType=CompType.UNorm)
 
 
 def descriptor(rid=0, offset=0, size=512):
@@ -87,6 +89,11 @@ def declaration(name, binding, space=0, size=0, texture=False, backed=True, vari
 def variable(name, value=1.5, members=()):
     return NS(name=name, type=VarType.Struct if members else VarType.Float,
               rows=1, columns=1, value=NS(f32v=[value]), members=list(members))
+
+
+def typed_variable(name, type_name, field, values):
+    return NS(name=name, type=VarType[type_name], rows=1, columns=1,
+              value=NS(**{field: list(values)}), members=[])
 
 
 def layout(name, members=(), elements=1):
@@ -545,6 +552,49 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "INVALID_SAMPLE"):
             service.get_texture_data("11", sample=1, action_event_id=343)
 
+    def test_texture_data_diagnostics_report_color_space_and_zero_fill(self):
+        service = MODULES["resource_service"].ResourceService(self.ctx, self.ctx.invoke)
+        RD.Subresource = NS
+        self.controller.GetTextureData = lambda rid, sub: b"\x00" * 16
+        srgb_fmt = NS(Name=lambda: "R8G8B8A8_UNORM_SRGB", compType=CompType.UNormSRGB)
+        original_textures = self.controller.GetTextures
+        self.controller.GetTextures = lambda: [NS(
+            resourceId=ResourceId(11), width=4, height=4, depth=1, arraysize=1,
+            mips=1, msSamp=1, format=srgb_fmt, cubemap=False, type="Texture2D")]
+        data = service.get_texture_data("11")
+        self.assertEqual(data["color_space"], "srgb")
+        self.assertTrue(data["all_zero"])
+        self.assertTrue(any("zero" in warning for warning in data["warnings"]))
+
+        self.controller.GetTextures = original_textures
+        self.controller.GetTextureData = lambda rid, sub: b"\x01\x00\x00\x00"
+        linear = service.get_texture_data("11")
+        self.assertEqual(linear["color_space"], "linear")
+        self.assertFalse(linear["all_zero"])
+        self.assertNotIn("warnings", linear)
+
+    def test_save_texture_rejects_unknown_format_and_alpha(self):
+        service = MODULES["resource_service"].ResourceService(self.ctx, self.ctx.invoke)
+        RD.Subresource = NS
+        RD.TextureSave = lambda: NS(slice=NS())
+        RD.AlphaMapping = NS(Preserve=0, Discard=1, BlendToColor=2)
+        RD.FileType = NS(**{n: n for n in ("PNG", "JPG", "BMP", "TGA", "EXR", "DDS", "HDR")})
+        self.controller.SaveTexture = lambda save, path: NS(OK=lambda: True)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "INVALID_FORMAT_TYPE"):
+                service.save_texture("11", str(Path(directory) / "out.xyz"), format_type="XYZ")
+            with self.assertRaisesRegex(ValueError, "INVALID_ALPHA_MODE"):
+                service.save_texture("11", str(Path(directory) / "out.png"), alpha_mode="keep")
+            # RenderDoc only writes all mips for DDS; other formats save mip 0.
+            png_all = service.save_texture("11", str(Path(directory) / "all.mips"), mip=-1)
+            self.assertEqual(png_all["mip_selection"], 0)
+            self.assertIn("DDS", png_all["mip_note"])
+            self.assertEqual(png_all["format"], "PNG")
+            self.assertEqual(png_all["color_space"], "linear")
+            dds_all = service.save_texture("11", str(Path(directory) / "all.dds"),
+                                           mip=-1, format_type="DDS")
+            self.assertEqual(dds_all["mip_selection"], "all")
+
     def test_array_variables_bounded_expansion_and_nonfinite(self):
         adapter = MODULES["shader_variables"].read_variables
         arrays = [variable("lights", members=[variable("[%s]" % i, float("inf")) for i in range(5)])]
@@ -557,6 +607,26 @@ class PipelineTests(unittest.TestCase):
         json.dumps(result, allow_nan=False)
         with self.assertRaisesRegex(ValueError, "INVALID_CHILD_PATH"):
             adapter(arrays, decl, [True], 0, 50)
+
+    def test_integer_bool_and_nested_values_decode(self):
+        adapter = MODULES["shader_variables"].read_variables
+        scalars = [
+            typed_variable("count", "Int", "s32v", [-7]),
+            typed_variable("mask", "UInt", "u32v", [4294967295]),
+            typed_variable("visible", "Bool", "u32v", [1]),
+        ]
+        result = adapter(scalars, [layout("count"), layout("mask"), layout("visible")],
+                         [], 0, 10)
+        values = {item["name"]: item.get("value") for item in result["children"]["items"]}
+        self.assertEqual(values["count"], [-7])
+        self.assertEqual(values["mask"], [4294967295])
+        self.assertEqual(values["visible"], [1])
+
+        nested = [variable("pair", members=[typed_variable("size", "Int", "s32v", [-2])])]
+        decl = [layout("pair", members=[layout("size")])]
+        result = adapter(nested, decl, [0], 0, 10)
+        self.assertEqual(result["children"]["items"][0]["value"], [-2])
+        json.dumps(result, allow_nan=False)
 
     def test_public_tools_real_file_ipc_and_schema(self):
         try:

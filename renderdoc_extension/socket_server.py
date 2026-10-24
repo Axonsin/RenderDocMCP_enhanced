@@ -15,6 +15,7 @@ from PySide2.QtCore import QObject, QTimer
 # IPC directory
 IPC_DIR = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
 REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
+IPC_VERSION = 2
 
 
 class MCPBridgeServer(QObject):
@@ -89,7 +90,7 @@ class MCPBridgeServer(QObject):
             os.remove(REQUEST_FILE)
 
             request_id = str(uuid.UUID(request["id"]))
-            if request["ipc_version"] != 2:
+            if request["ipc_version"] != IPC_VERSION:
                 raise ValueError("Invalid IPC protocol version")
 
             # Process request

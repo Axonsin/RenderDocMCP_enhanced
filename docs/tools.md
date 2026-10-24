@@ -93,13 +93,20 @@ list_captures(directory="D:/captures")
 
 #### `get_capture_status`
 
-Check if a capture is currently loaded in RenderDoc. Returns the capture status and API type if loaded.
+Check if a capture is currently loaded in RenderDoc, and report runtime versions, the IPC
+protocol version and replay health.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | *(none)* | | | |
 
-**Returns:** `{"loaded": true, "api": "D3D11"}` or `{"loaded": false}`
+**Returns:** `{"loaded": true, "api": "D3D11", "filename": "...", "remote_replay": false,
+"replay_healthy": true, "replay_error": null, "extension_version": "...",
+"renderdoc_version": "...", "ipc_version": 2}`. `replay_healthy` is a replay-controller
+probe (`GetAPIProperties` + `GetFatalErrorStatus` round-trip); it becomes `false` with a
+`replay_error` message when the driver/device is gone. When no capture is loaded,
+`replay_healthy` is `null` while the version fields are still reported, so clients can
+verify which extension and protocol they are talking to.
 
 **Example:**
 ```
@@ -188,7 +195,10 @@ Search draw and dispatch actions by shader, texture, or resource.
 | `query` | `str` | Yes | Shader name, texture name, or resource ID |
 | `stage` | `str` | No | Shader stage filter (`"vertex"`, `"fragment"`, `"compute"`, etc.) — only for `by="shader"` |
 
-**Returns:** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`
+**Returns:** `{"matches": [...], "total_matches": 3, "scanned_count": 150}` plus
+`scan_failures` (actions that could not be read) and `scan_error` (first failure reason).
+When every action fails to scan the tool raises `RESOURCE_QUERY_FAILED`; a failed
+replay-position restore raises `REPLAY_RESTORE_FAILED`.
 
 **Examples:**
 ```
@@ -546,7 +556,11 @@ Read the pixel data of a texture resource. Returns base64-encoded bytes.
 | `sample` | `int` | No | `0` | MSAA sample index |
 | `depth_slice` | `int` | No | | For 3D textures only, extract a specific depth slice. If omitted, returns full volume. |
 
-**Returns:** Base64-encoded pixel data with metadata (dimensions, format).
+**Returns:** Base64-encoded pixel data with metadata (dimensions, format). `color_space`
+states the stored color space of the source data (`srgb`/`linear`, derived from the format
+compType); `all_zero` flags all-zero bytes (legitimate for cleared resources, but also a
+possible replay fault — verify against the texture viewer); `warnings` carries diagnostics
+when the data length is 0 or all bytes are zero.
 
 **Examples:**
 ```
@@ -567,7 +581,9 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 #### `get_buffer_contents`
 
-Read the contents of a buffer resource. Returns base64-encoded bytes.
+Read the contents of a buffer resource. Returns base64-encoded bytes. `offset`/`length`
+must be non-negative byte values (`INVALID_PAGINATION` otherwise); replay read failures
+raise `RESOURCE_QUERY_FAILED` instead of silently returning no data.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -592,9 +608,10 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 
 Get a summary of mesh data for a specific draw call event.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `action_event_id` | `int` | Yes | The event ID of the draw call |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `action_event_id` | `int` | Yes | | The event ID of the draw call |
+| `instance` | `int` | No | `0` | Instance index for per-instance attributes and post-VS data selection |
 
 **Returns:** Topology, vertex/index counts, whether indexed, vertex attributes with formats, bounding box.
 
@@ -619,8 +636,24 @@ Get mesh vertex and index data for a specific draw call with pagination support.
 | `offset` | `int` | No | `0` | Starting vertex offset for pagination |
 | `limit` | `int` | No | `100` | Max vertices to return (recommended: 100-500) |
 | `attributes` | `list[str]` | No | | Filter to specific attribute names (e.g. `["POSITION", "NORMAL"]`). If omitted, all attributes included. |
+| `instance` | `int` | No | `0` | Instance index. VSIn per-instance attributes are addressed at `instance * byteStride` (honoring instanceRate); VSOut/GSOut read the matching instance's post-VS data. |
 
 **Returns:** `items`, `indices`, `topology`, `attributes`, `total_count`, `has_more`, `truncated`.
+
+VSOut/GSOut attribute names and layout come from the producing shader stage's output
+signature (VSOut: Vertex; GSOut: by actual binding — Geometry when a geometry shader is
+bound, otherwise the Domain/tessellation output; the MeshFormat returned by
+`GetPostVSData` carries no per-attribute names). Byte offsets follow the native mesh
+viewer rules: signature entries are filtered by the rasterized stream (multi-stream
+geometry outputs), SV_Position/gl_Position is hoisted to the front unconditionally (D3D
+pads Position to a full float4), every component is stored expanded to 32 bits (64-bit
+types take 8 bytes), and std430 vec4 alignment applies only when `HasAlignedPostVSData`
+is true (e.g. Vulkan VSOut compute-built buffers). The computed layout is validated
+against the reported `vertexByteStride` — a mismatch raises
+`MESH_SIGNATURE_UNAVAILABLE` instead of decoding misaligned data. The per-instance base
+offset (`vertexByteOffset`) is already included in each attribute address. An empty
+signature raises `MESH_SIGNATURE_UNAVAILABLE`; missing post-VS data raises
+`RESOURCE_NOT_FOUND`.
 
 **Examples:**
 ```
@@ -814,7 +847,7 @@ Summarize one marker subtree or pass as a coherent workload.
 | `marker_filter` | `str` | Yes | | Marker-path substring selecting the pass subtree |
 | `exclude_markers` | `list[str]` | No | | Marker substrings to exclude |
 
-**Returns:** Action counts, main shaders, representative resources, top timed actions, and conservative workload warnings.
+**Returns:** Action counts, main shaders, representative resources, top timed actions, conservative workload warnings, plus `scan_failures`/`scan_error` when some actions could not be read.
 
 **Example:**
 ```
@@ -837,12 +870,16 @@ Save a texture to an image file. Handles format conversion automatically.
 | `resource_id` | `str` | Yes | | The resource ID (e.g. `"ResourceId::2495"`) |
 | `action_event_id` | `int` | No | current UI event | Read after this exact action; restore replay afterwards |
 | `output_path` | `str` | Yes | | Output file path (e.g. `"D:/output/texture.png"`) |
-| `format_type` | `str` | No | `"PNG"` | Output format: `"PNG"`, `"JPG"`, `"BMP"`, `"TGA"`, `"EXR"`, `"DDS"`, `"HDR"` |
-| `mip` | `int` | No | `0` | Mip level to save (`-1` = all mips) |
+| `format_type` | `str` | No | `"PNG"` | Output format: `"PNG"`, `"JPG"`, `"BMP"`, `"TGA"`, `"EXR"`, `"DDS"`, `"HDR"`; unknown values raise `INVALID_FORMAT_TYPE` instead of silently falling back to PNG |
+| `mip` | `int` | No | `0` | Mip level to save (`-1` = all mips; **only DDS actually writes every mip** — other formats make RenderDoc save mip 0, and the response reports the actually saved range via `mip_selection` plus `mip_note`) |
 | `slice_index` | `int` | No | `0` | Array slice or cube face index (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-) |
-| `alpha_mode` | `str` | No | `"preserve"` | Alpha handling: `"preserve"`, `"discard"`, `"blend_to_black"` |
+| `alpha_mode` | `str` | No | `"preserve"` | Alpha handling: `"preserve"`, `"discard"`, `"blend_to_black"`; unknown values raise `INVALID_ALPHA_MODE` |
 
 **Returns:** `{"success": true, "dimensions": [1920, 1080], "output_path": "D:/output/texture.png"}`
+plus `color_space` (describes the **source** texture's stored color space: `srgb`/`linear`).
+The value domain inside the exported file depends on the output format and conversion
+path — some formats (e.g. DDS) keep the source format and encoding, so never assume the
+file is uniformly "already decoded" or "raw"; handle it per the actual export format.
 
 **Examples:**
 ```
@@ -860,7 +897,7 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 #### `export_mesh_csv`
 
-Export mesh data to a CSV file, compatible with the [csv_obj](https://github.com/nicbarker/csv_obj) project.
+Export mesh data to a CSV file.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -868,11 +905,12 @@ Export mesh data to a CSV file, compatible with the [csv_obj](https://github.com
 | `output_path` | `str` | Yes | | Output file path (e.g. `"D:/output/mesh.csv"`) |
 | `stage` | `str` | No | `"VSIn"` | Mesh data stage: `"VSIn"`, `"VSOut"`, `"GSOut"` |
 | `attributes` | `list[str]` | No | | Filter to specific attributes. If omitted, all attributes included. |
+| `instance` | `int` | No | `0` | Instance index for per-instance attributes and post-VS data selection |
 
 **Returns:** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
 
 **CSV format:**
-- First row: `VTX,IDX,in_POSITION0.x,in_POSITION0.y,...`
+- First row: `VTX,IDX,in_POSITION0.x,in_POSITION0.y,...` (VSOut/GSOut column names come from the output signature, e.g. `SV_POSITION0.x`)
 - VTX: deduplicated vertex index
 - IDX: original vertex index
 - Index sidecar file (`.idx`): remapped triangle stream

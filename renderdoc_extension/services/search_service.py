@@ -5,6 +5,7 @@ Reverse lookup search service for RenderDoc.
 import renderdoc as rd
 
 from ..utils import Parsers, Helpers
+from .replay_query import record_restore_failure
 
 
 class SearchService:
@@ -24,34 +25,65 @@ class SearchService:
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
-        result = {"matches": [], "scanned_count": 0}
+        result = {"matches": [], "scanned_count": 0, "scan_failures": 0,
+                  "scan_error": None, "error": None}
+        restore_event = self.ctx.CurEvent()
+        failures = [0, None]  # count, first message
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
-            structured_file = controller.GetStructuredFile()
-            all_actions = Helpers.flatten_actions(root_actions)
+            try:
+                root_actions = controller.GetRootActions()
+                structured_file = controller.GetStructuredFile()
+                all_actions = Helpers.flatten_actions(root_actions)
 
-            # Filter to only draw calls and dispatches
-            draw_actions = [
-                a for a in all_actions
-                if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch)
-            ]
-            result["scanned_count"] = len(draw_actions)
+                # Filter to only draw calls and dispatches
+                draw_actions = [
+                    a for a in all_actions
+                    if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch)
+                ]
+                result["scanned_count"] = len(draw_actions)
 
-            for action in draw_actions:
-                # Fetch fresh pipeline snapshots for each event, including remote replay.
-                controller.SetFrameEvent(action.eventId, True)
-                pipe = controller.GetPipelineState()
+                for action in draw_actions:
+                    # Fetch fresh pipeline snapshots for each event, including remote replay.
+                    try:
+                        controller.SetFrameEvent(action.eventId, True)
+                        pipe = controller.GetPipelineState()
+                    except Exception as exc:
+                        # One unreadable action must not abort the whole scan,
+                        # but partial failures stay visible in the response.
+                        failures[0] += 1
+                        if failures[1] is None:
+                            failures[1] = str(exc)
+                        continue
 
-                match_reason = matcher_fn(pipe, controller, action, self.ctx)
-                if match_reason:
-                    result["matches"].append({
-                        "action_event_id": action.eventId,
-                        "name": action.GetName(structured_file),
-                        "match_reason": match_reason,
-                    })
+                    match_reason = matcher_fn(pipe, controller, action, self.ctx)
+                    if match_reason:
+                        result["matches"].append({
+                            "action_event_id": action.eventId,
+                            "name": action.GetName(structured_file),
+                            "match_reason": match_reason,
+                        })
+
+                result["scan_failures"] = failures[0]
+                result["scan_error"] = failures[1]
+
+                if draw_actions and failures[0] == len(draw_actions):
+                    raise RuntimeError(
+                        "RESOURCE_QUERY_FAILED: all %d actions failed to scan: %s"
+                        % (len(draw_actions), failures[1])
+                    )
+            except Exception as exc:
+                # Exceptions must survive the SWIG BlockInvoke callback boundary.
+                result["error"] = exc
+            finally:
+                try:
+                    controller.SetFrameEvent(restore_event, True)
+                except Exception as exc:
+                    record_restore_failure(result, exc)
 
         self._invoke(callback)
+        if result["error"] is not None:
+            raise result["error"]
         result["total_matches"] = len(result["matches"])
         return result
 

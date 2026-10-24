@@ -90,13 +90,18 @@ list_captures(directory="D:/captures")
 
 #### `get_capture_status`
 
-检查 RenderDoc 中是否已加载捕获。如果已加载则返回捕获状态和 API 类型。
+检查 RenderDoc 中是否已加载捕获，并报告运行版本、IPC 协议版本与回放健康状态。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | *(无)* | | | |
 
-**返回值：** `{"loaded": true, "api": "D3D11"}` 或 `{"loaded": false}`
+**返回值：** `{"loaded": true, "api": "D3D11", "filename": "...", "remote_replay": false,
+"replay_healthy": true, "replay_error": null, "extension_version": "...",
+"renderdoc_version": "...", "ipc_version": 2}`。`replay_healthy` 为 replay 控制器探针结果
+（`GetAPIProperties` + `GetFatalErrorStatus` 往返）；驱动/设备失效时为 `false` 并带
+`replay_error`。未加载捕获时 `replay_healthy` 为 `null`，版本字段仍返回，可用于核对
+客户端连接的扩展与协议版本。
 
 **示例：**
 ```
@@ -185,7 +190,9 @@ get_actions(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
 | `query` | `str` | 是 | shader 名称、纹理名称或 resource ID |
 | `stage` | `str` | 否 | shader 阶段过滤（`"vertex"`、`"fragment"`、`"compute"` 等）— 仅在 `by="shader"` 时有效 |
 
-**返回值：** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`
+**返回值：** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`，另含
+`scan_failures`（无法读取的 action 数）与 `scan_error`（首个失败原因）；全部扫描失败时
+报 `RESOURCE_QUERY_FAILED`，恢复 replay 位置失败时报 `REPLAY_RESTORE_FAILED`。
 
 **示例：**
 ```
@@ -523,7 +530,10 @@ get_texture_info(resource_id="ResourceId::2495")
 | `sample` | `int` | 否 | `0` | MSAA 采样索引 |
 | `depth_slice` | `int` | 否 | | 仅限 3D 纹理，提取特定深度切片。省略时返回完整体积。 |
 
-**返回值：** Base64 编码的像素数据，含元数据（尺寸、格式）。
+**返回值：** Base64 编码的像素数据，含元数据（尺寸、格式）。`color_space` 标明源数据的
+存储色彩域（`srgb`/`linear`，按格式 compType 判定）；`all_zero` 表示全部字节为零（可能是
+合法的清零资源，也可能是回放故障，需对照纹理查看器确认）；`warnings` 在数据长度为 0 或
+全零时给出诊断提示。
 
 **示例：**
 ```
@@ -544,7 +554,8 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 #### `get_buffer_contents`
 
-读取缓冲区资源的内容。返回 Base64 编码的字节。
+读取缓冲区资源的内容。返回 Base64 编码的字节。`offset`/`length` 为非负字节值，负值报
+`INVALID_PAGINATION`；回放读取失败报 `RESOURCE_QUERY_FAILED`，不再静默返回空数据。
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
@@ -569,9 +580,10 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 
 获取特定 draw call 事件的网格数据摘要。
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `action_event_id` | `int` | 是 | draw call 的 event ID |
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `action_event_id` | `int` | 是 | | draw call 的 event ID |
+| `instance` | `int` | 否 | `0` | 实例索引，用于 per-instance 属性与 post-VS 数据选择 |
 
 **返回值：** 拓扑结构、顶点/索引数量、是否使用索引缓冲、顶点属性及其格式、包围盒。
 
@@ -596,8 +608,19 @@ get_mesh_summary(action_event_id=1234)
 | `offset` | `int` | 否 | `0` | 分页起始顶点偏移量 |
 | `limit` | `int` | 否 | `100` | 最大返回顶点数（建议：100-500） |
 | `attributes` | `list[str]` | 否 | | 过滤特定属性名称（如 `["POSITION", "NORMAL"]`）。省略时包含所有属性。 |
+| `instance` | `int` | 否 | `0` | 实例索引。VSIn 的 per-instance 属性按 `instance * byteStride`（含 instanceRate 折算）寻址；VSOut/GSOut 读取对应实例的 post-VS 数据。 |
 
 **返回值：** `items`、`indices`、`topology`、`attributes`、`total_count`、`has_more`、`truncated`。
+
+VSOut/GSOut 的属性名与布局来自产生该数据的 shader 阶段输出签名（VSOut 为 Vertex；
+GSOut 按实际绑定判断——有 Geometry shader 用 Geometry，否则取 Domain/曲面细分最终输出；
+`GetPostVSData` 返回的 MeshFormat 不含逐属性名字）。字节偏移按原生网格查看器规则计算：
+先按光栅化 stream 过滤签名（多 stream geometry 输出），SV_Position/gl_Position 无条件
+提前（D3D 将 Position 补齐为 float4）；分量统一按 32 位存储展开（64 位类型占 8 字节），
+仅当 `HasAlignedPostVSData` 为真（如 Vulkan VSOut 的计算着色器缓冲）时才做 std430 vec4
+对齐。计算结果会用返回的 `vertexByteStride` 校验，放不下时报 `MESH_SIGNATURE_UNAVAILABLE`
+而不是解码错位数据。逐实例数据基址（`vertexByteOffset`）已包含在属性地址中。签名为空时
+报 `MESH_SIGNATURE_UNAVAILABLE`，post-VS 数据缺失时报 `RESOURCE_NOT_FOUND`。
 
 **示例：**
 ```
@@ -791,7 +814,7 @@ diff_actions(action_event_id_a=100, action_event_id_b=200)
 | `marker_filter` | `str` | 是 | | marker 路径子串，用于选择 pass 子树 |
 | `exclude_markers` | `list[str]` | 否 | | 要排除的 marker 子串 |
 
-**返回值：** action 数量、主要 shader、代表性资源、耗时最高的 action、保守的工作负载警告。
+**返回值：** action 数量、主要 shader、代表性资源、耗时最高的 action、保守的工作负载警告，以及 `scan_failures`/`scan_error`（部分 action 无法读取时的计数与原因）。
 
 **示例：**
 ```
@@ -814,12 +837,15 @@ analyze_pass(marker_filter="Forward", exclude_markers=["GUI"])
 | `resource_id` | `str` | 是 | | 资源 ID（如 `"ResourceId::2495"`） |
 | `action_event_id` | `int` | 否 | UI 当前事件 | 读取指定 action 执行后的内容，随后恢复 replay |
 | `output_path` | `str` | 是 | | 输出文件路径（如 `"D:/output/texture.png"`） |
-| `format_type` | `str` | 否 | `"PNG"` | 输出格式：`"PNG"`、`"JPG"`、`"BMP"`、`"TGA"`、`"EXR"`、`"DDS"`、`"HDR"` |
-| `mip` | `int` | 否 | `0` | 要保存的 mip 级别（`-1` = 所有 mip） |
+| `format_type` | `str` | 否 | `"PNG"` | 输出格式：`"PNG"`、`"JPG"`、`"BMP"`、`"TGA"`、`"EXR"`、`"DDS"`、`"HDR"`；未知值报 `INVALID_FORMAT_TYPE`，不再静默回退 PNG |
+| `mip` | `int` | 否 | `0` | 要保存的 mip 级别（`-1` = 所有 mip；**仅 DDS 会真正写出全部 mip**，其他格式 RenderDoc 实际保存 mip 0，响应以 `mip_selection` 报告实际保存范围并附 `mip_note`） |
 | `slice_index` | `int` | 否 | `0` | 数组切片或立方体贴图面索引（0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-） |
-| `alpha_mode` | `str` | 否 | `"preserve"` | Alpha 处理：`"preserve"`、`"discard"`、`"blend_to_black"` |
+| `alpha_mode` | `str` | 否 | `"preserve"` | Alpha 处理：`"preserve"`、`"discard"`、`"blend_to_black"`；未知值报 `INVALID_ALPHA_MODE` |
 
-**返回值：** `{"success": true, "dimensions": [1920, 1080], "output_path": "D:/output/texture.png"}`
+**返回值：** `{"success": true, "dimensions": [1920, 1080], "output_path": "D:/output/texture.png"}`，
+含 `color_space`（描述**源纹理**的存储色彩域 `srgb`/`linear`）。注意导出文件中的数值域
+取决于输出格式与转换路径——部分格式（如 DDS）会保留源格式与编码，不能一概假定"已解码"
+或"未解码"，请按实际导出格式处理。
 
 **示例：**
 ```
@@ -845,11 +871,12 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 | `output_path` | `str` | 是 | | 输出文件路径（如 `"D:/output/mesh.csv"`） |
 | `stage` | `str` | 否 | `"VSIn"` | 网格数据阶段：`"VSIn"`、`"VSOut"`、`"GSOut"` |
 | `attributes` | `list[str]` | 否 | | 过滤特定属性。省略时包含所有属性。 |
+| `instance` | `int` | 否 | `0` | 实例索引，用于 per-instance 属性与 post-VS 数据选择 |
 
 **返回值：** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
 
 **CSV 格式说明：**
-- 第一行：`VTX,IDX,in_POSITION0.x,in_POSITION0.y,...`
+- 第一行：`VTX,IDX,in_POSITION0.x,in_POSITION0.y,...`（VSOut/GSOut 列名来自输出签名，如 `SV_POSITION0.x`）
 - VTX：去重后的顶点索引
 - IDX：原始顶点索引
 - 索引 sidecar 文件（`.idx`）：重映射后的三角形流

@@ -8,32 +8,62 @@ import renderdoc as rd
 class CaptureManager:
     """Capture management service"""
 
-    def __init__(self, ctx, invoke_fn):
+    def __init__(self, ctx, invoke_fn, runtime_info=None):
         self.ctx = ctx
         self._invoke = invoke_fn
+        self._runtime_info = runtime_info or {}
+
+    def _version_fields(self):
+        return {
+            "extension_version": self._runtime_info.get("extension_version"),
+            "renderdoc_version": self._runtime_info.get("renderdoc_version"),
+            "ipc_version": self._runtime_info.get("ipc_version"),
+        }
 
     def get_capture_status(self):
-        """Check if a capture is loaded and get API info"""
-        if not self.ctx.IsCaptureLoaded():
-            return {"loaded": False}
+        """Check if a capture is loaded and get API info plus replay health"""
+        result = {
+            "loaded": False,
+            "api": None,
+            "filename": None,
+            "remote_replay": None,
+            "replay_healthy": None,
+            "replay_error": None,
+        }
+        result.update(self._version_fields())
 
-        result = {"loaded": True, "api": None, "filename": None}
+        if not self.ctx.IsCaptureLoaded():
+            return result
+
+        result["loaded"] = True
 
         try:
             result["filename"] = self.ctx.GetCaptureFilename()
         except Exception:
             pass
 
-        # Get API type via replay
+        # Replay health probe: GetAPIProperties + GetFatalErrorStatus round-trip
+        # proves the replay controller responds; GetFatalErrorStatus surfaces
+        # driver/device removal that would otherwise only show up as empty data.
         def callback(controller):
             try:
                 props = controller.GetAPIProperties()
                 result["api"] = str(props.pipelineType)
                 result["remote_replay"] = bool(props.remoteReplay)
-            except Exception:
-                pass
+                result["replay_healthy"] = True
+                fatal = controller.GetFatalErrorStatus()
+                if not fatal.OK():
+                    result["replay_healthy"] = False
+                    result["replay_error"] = str(fatal.Message())
+            except Exception as exc:
+                result["replay_healthy"] = False
+                result["replay_error"] = str(exc)
 
-        self._invoke(callback)
+        try:
+            self._invoke(callback)
+        except Exception as exc:
+            result["replay_healthy"] = False
+            result["replay_error"] = str(exc)
         return result
 
     def list_captures(self, directory):
@@ -127,6 +157,7 @@ class CaptureManager:
             "capture_path": capture_path,
             "filename": os.path.basename(capture_path),
         }
+        result.update(self._version_fields())
 
         # Get API type if possible (may require replay thread)
         try:

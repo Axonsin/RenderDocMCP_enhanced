@@ -98,6 +98,7 @@ class RequestHandler:
             "INVALID_USAGE_CATEGORIES",
             "INVALID_STAGE",
             "INVALID_ACTION_EVENT_ID",
+            "INVALID_INSTANCE",
             "INVALID_BINDING_ID",
             "INVALID_SECTION",
             "INVALID_DIRECTION",
@@ -120,6 +121,8 @@ class RequestHandler:
             "INVALID_EDIT_MODE",
             "INVALID_SHADER_SOURCE",
             "INVALID_OUTPUT_PATH",
+            "INVALID_FORMAT_TYPE",
+            "INVALID_ALPHA_MODE",
         }
         runtime_prefixes = {
             "CAPTURE_NOT_LOADED",
@@ -127,6 +130,9 @@ class RequestHandler:
             "TEXTURE_NOT_FOUND",
             "BUFFER_NOT_FOUND",
             "RESOURCE_QUERY_FAILED",
+            "MESH_SIGNATURE_UNAVAILABLE",
+            "TEXTURE_SAVE_FAILED",
+            "REPLAY_RESTORE_FAILED",
             "UNSUPPORTED_CAPTURE_FEATURE",
         }
 
@@ -147,8 +153,21 @@ class RequestHandler:
         return value
 
     def _handle_ping(self, params):
-        """Handle ping request"""
-        return {"status": "ok", "message": "pong"}
+        """Handle ping request with version info (no replay probe)."""
+        runtime = getattr(self.facade, "runtime_info", None) or {}
+        capture_loaded = False
+        try:
+            capture_loaded = bool(self.facade.ctx.IsCaptureLoaded())
+        except Exception:
+            pass
+        return {
+            "status": "ok",
+            "message": "pong",
+            "extension_version": runtime.get("extension_version"),
+            "renderdoc_version": runtime.get("renderdoc_version"),
+            "ipc_version": runtime.get("ipc_version"),
+            "capture_loaded": capture_loaded,
+        }
 
     def _handle_get_capture_status(self, params):
         """Handle get_capture_status request"""
@@ -370,7 +389,11 @@ class RequestHandler:
     def _handle_get_mesh_summary(self, params):
         """Handle get_mesh_summary request"""
         action_event_id = self._require_param(params, "action_event_id")
-        return self.facade.get_mesh_summary(int(action_event_id))
+        # instance is passed through unconverted so the service's strict
+        # non-negative-integer validation applies (no silent float truncation).
+        return self.facade.get_mesh_summary(
+            int(action_event_id), instance=params.get("instance", 0)
+        )
 
     def _handle_get_mesh_data(self, params):
         """Handle get_mesh_data request"""
@@ -385,6 +408,7 @@ class RequestHandler:
             offset=int(offset),
             limit=int(limit),
             attributes=attributes,
+            instance=params.get("instance", 0),
         )
 
     def _handle_export_mesh_csv(self, params):
@@ -398,4 +422,5 @@ class RequestHandler:
             output_path=output_path,
             stage=stage,
             attributes=attributes,
+            instance=params.get("instance", 0),
         )

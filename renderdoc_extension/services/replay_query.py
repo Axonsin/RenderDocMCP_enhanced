@@ -40,3 +40,22 @@ def at_event(ctx, invoke, event_id, operation, require_exact_action=True):
         invalid, message = result["error"]
         raise (ValueError if invalid else RuntimeError)(message)
     return result.get("value")
+
+
+def record_restore_failure(target, exc):
+    """Store a REPLAY_RESTORE_FAILED error on a result dict, preserving any prior error.
+
+    The stable prefix always leads so request classification stays correct even
+    when a previous error (e.g. INVALID_MARKER_FILTER) is being merged in.
+    """
+    previous = target.get("error")
+    if isinstance(previous, BaseException):
+        previous_text = str(previous.args[0]) if previous.args else str(previous)
+    else:
+        previous_text = str(previous or "")
+    if previous_text:
+        target["error"] = RuntimeError(
+            "REPLAY_RESTORE_FAILED: %s (previous error: %s)" % (exc, previous_text)
+        )
+    else:
+        target["error"] = RuntimeError("REPLAY_RESTORE_FAILED: %s" % exc)

@@ -53,7 +53,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 |---------|------|
 | `list_captures` | 获取指定目录内的 .rdc 文件列表 |
 | `open_capture` | 打开捕获文件（现有捕获会自动关闭） |
-| `get_capture_status` | 确认捕获加载状态 |
+| `get_capture_status` | 确认捕获加载状态、版本/协议与回放健康 |
 | `get_actions` | action 列表（含 marker/draw/dispatch/copy/clear，支持层级与过滤） |
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
 | `search_actions` | 按 shader/texture/resource 搜索 draw 和 dispatch action |
@@ -84,9 +84,9 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_pipeline_stage` | 阶段绑定、descriptor 信息和固定功能状态 |
 | `inspect_pipeline_binding` | 绑定范围、资源身份和常量树展开 |
 | `get_action_textures` | Action 输入/输出纹理与 FS/FB 等阶段标签 |
-| `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒） |
-| `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段） |
-| `export_mesh_csv` | 将网格导出为 CSV 文件 |
+| `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒；支持 instance 选择） |
+| `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段与 instance 选择） |
+| `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择） |
 
 ### get_actions 过滤选项
 
@@ -111,6 +111,14 @@ list_captures(directory="D:\\captures")
 # 打开捕获文件（现有捕获会自动关闭）
 open_capture(capture_path="D:\\captures\\game.rdc")
 # → {"success": true, "filename": "game.rdc", "api": "D3D11"}
+
+# 确认捕获加载状态与回放健康
+get_capture_status()
+# → {"loaded": true, "api": "D3D11", "filename": "...", "remote_replay": false,
+#    "replay_healthy": true, "replay_error": null,
+#    "extension_version": "...", "renderdoc_version": "...", "ipc_version": 2}
+# replay_healthy 为 replay 控制器探针（GetAPIProperties + GetFatalErrorStatus）；
+# 断连/驱动失效时为 false 并带 replay_error。未加载捕获时仍返回版本字段。
 ```
 
 ### 资源枚举与检查工具
@@ -206,7 +214,8 @@ save_texture(
     action_event_id=343,
     output_path="D:/output/texture.exr",
     format_type="EXR",           # PNG, JPG, BMP, TGA, EXR, DDS, HDR
-    mip=-1,                      # -1 表示导出所有 mip 级别
+    mip=-1,                      # -1 表示导出所有 mip（仅 DDS 生效；其他格式实际保存 mip 0，
+                                 # 响应以 mip_selection/mip_note 报告实际范围）
     slice_index=0,               # 数组切片或立方体面索引
     alpha_mode="blend_to_black"  # preserve, discard, blend_to_black
 )
@@ -220,9 +229,10 @@ save_texture(
 
 ```python
 # 获取网格概要信息
-get_mesh_summary(action_event_id=1234)
+get_mesh_summary(action_event_id=1234, instance=0)  # instance 用于逐实例属性/post-VS 选择
 # → {
 #     "action_event_id": 1234,
+#     "instance": 0,
 #     "topology": "TriangleList",
 #     "num_vertices": 3024,
 #     "num_indices": 9072,
@@ -241,10 +251,13 @@ get_mesh_data(
     stage="VSIn",           # VSIn, VSOut, GSOut
     offset=0,               # 起始偏移量（分页）
     limit=100,              # 每次获取的顶点数（建议 100-500）
-    attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选，过滤属性
+    attributes=["POSITION", "NORMAL", "TEXCOORD"],  # 可选，过滤属性
+    instance=0              # 可选，实例索引（VSIn per-instance 按 instance*stride 寻址；
+                            #  VSOut/GSOut 读取对应实例的 post-VS 数据）
 )
 # → {
 #     "action_event_id": 1234,
+#     "instance": 0,
 #     "stage": "VSIn",
 #     "topology": "TriangleList",
 #     "items": [
@@ -264,12 +277,13 @@ get_mesh_data(
 # 分页获取下一批数据
 get_mesh_data(action_event_id=1234, offset=100, limit=100)
 
-# 导出网格为 CSV 文件（与 csv_obj 项目兼容）
+# 导出网格为 CSV 文件
 export_mesh_csv(
     action_event_id=1234,
     output_path="D:/output/mesh.csv",
     stage="VSIn",
-    attributes=["POSITION", "NORMAL", "TEXCOORD"]  # 可选
+    attributes=["POSITION", "NORMAL", "TEXCOORD"],  # 可选
+    instance=0  # 可选
 )
 # → {
 #     "success": true,
@@ -281,9 +295,12 @@ export_mesh_csv(
 ```
 
 **数据阶段说明**：
-- `VSIn`: 顶点着色器输入（原始顶点缓冲区数据）
-- `VSOut`: 顶点着色器输出（变换后的顶点数据）
-- `GSOut`: 几何着色器输出
+- `VSIn`: 顶点着色器输入（原始顶点缓冲区数据，含 per-instance 属性）
+- `VSOut`: 顶点着色器输出（属性名/布局来自 Vertex 输出签名）
+- `GSOut`: 管线最后活动阶段的最终输出（按实际绑定判断：有 Geometry 用 Geometry，
+  否则 Domain/曲面细分；偏移按原生网格查看器规则计算——按光栅化 stream 过滤、
+  Position 提前、分量按 32 位展开，仅 HasAlignedPostVSData 时做 vec4 对齐，
+  并用 vertexByteStride 校验）
 
 **分页说明**：
 - 使用 `offset` 和 `limit` 进行分页
@@ -343,7 +360,8 @@ renderdoc-mcp
 
 - RenderDoc 内置 Python 没有 socket/QtNetwork 模块，因此采用基于文件的 IPC
 - RenderDoc 扩展仅使用 Python 3.6 标准库
-- 对 ReplayController 的访问通过 `BlockInvoke` 进行
+- 对 ReplayController 的访问通过 `BlockInvoke` 进行。
+- 需要语法支持可以参考项目内的stubs文件夹，记录了renderdoc python module的模块语法支持。
 
 ## 参考链接
 

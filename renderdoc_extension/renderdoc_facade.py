@@ -29,17 +29,19 @@ class RenderDocFacade:
     - MeshService: Mesh data operations
     """
 
-    def __init__(self, ctx):
+    def __init__(self, ctx, runtime_info=None):
         """
         Initialize facade with CaptureContext.
 
         Args:
             ctx: The pyrenderdoc CaptureContext from register()
+            runtime_info: Optional dict with extension/renderdoc/ipc versions
         """
         self.ctx = ctx
+        self.runtime_info = runtime_info or {}
 
         # Initialize service classes
-        self._capture = CaptureManager(ctx, self._invoke)
+        self._capture = CaptureManager(ctx, self._invoke, runtime_info)
         self._action = ActionService(ctx, self._invoke)
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
@@ -262,9 +264,9 @@ class RenderDocFacade:
 
     # ==================== Mesh Operations ====================
 
-    def get_mesh_summary(self, action_event_id):
+    def get_mesh_summary(self, action_event_id, instance=0):
         """Get mesh summary information for a draw call"""
-        return self._mesh.get_mesh_summary(action_event_id)
+        return self._mesh.get_mesh_summary(action_event_id, instance=instance)
 
     def get_mesh_data(
         self,
@@ -273,6 +275,7 @@ class RenderDocFacade:
         offset=0,
         limit=100,
         attributes=None,
+        instance=0,
     ):
         """Get mesh vertex and index data for a draw call (with pagination)"""
         return self._mesh.get_mesh_data(
@@ -281,6 +284,7 @@ class RenderDocFacade:
             offset=offset,
             limit=limit,
             attributes=attributes,
+            instance=instance,
         )
 
     def export_mesh_csv(
@@ -289,6 +293,9 @@ class RenderDocFacade:
         output_path,
         stage="VSIn",
         attributes=None,
+        instance=0,
     ):
         """Export mesh data to CSV file"""
-        return self._mesh.export_mesh_csv(action_event_id, output_path, stage, attributes)
+        return self._mesh.export_mesh_csv(
+            action_event_id, output_path, stage, attributes, instance=instance
+        )
