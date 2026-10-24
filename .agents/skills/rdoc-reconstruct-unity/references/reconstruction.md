@@ -13,21 +13,24 @@
 - **观测 Shader**：反汇编识别活跃分支、关键字组合、缓冲布局——这决定哪些 URP 标准
   功能够用、哪些要写 Shader。
 
-## 2. 还原结构规划
+## 2. 还原结构规划（含默认范围）
 
-先分类，再动手：
+先分类，再动手。默认（无调用参数）只做**标准静态场景重建**：下表标 `需 --effects`
+或 `需 --pipeline` 的行仅在调用带对应参数时执行；未带参数时这些机制一律记为
+"未还原——需参数"，不自行实现。
 
-| 捕获中的机制 | URP 对应 | 备注 |
-|---|---|---|
-| 标准光照/阴影 | URP 内置（Main Light、Additional、Shadow Cascade） | 参数从常量拟合 |
-| 粒子/拖尾 | Particle System / VFX Graph | 观测发射器行为拟合 |
-| 屏幕空间效果（Bloom/Fog/色调映射） | URP Volume | 数值从后处理常量读 |
-| 引擎自定义 Pass（自定义混合、多 pass 材质） | Renderer Feature + Blitter/自定义 Pass | 逐 Pass 移植观测行为 |
-| Compute 驱动（粒子模拟、裁剪） | 自定义 Compute + GraphicsBuffer | 先复刻数据流再复刻数学 |
+| 捕获中的机制 | URP 对应 | 默认? | 备注 |
+|---|---|---|---|
+| 标准光照/阴影 | URP 内置（Main Light、Additional、Shadow Cascade） | 默认 | 参数从常量拟合 |
+| 屏幕空间效果（Bloom/Fog/色调映射） | URP Volume 参数 | 默认 | 数值从后处理常量读；只调 Volume，不动渲染器资产 |
+| 材质级外观（含自定义材质 Shader） | Lit/Complex 材质 + 自定义 .shader | 默认 | 数学移植分级见 §4 |
+| 粒子/拖尾 | Particle System / VFX Graph | 需 `--effects` | 观测发射器行为拟合 |
+| Compute 驱动（粒子模拟、裁剪） | 自定义 Compute + GraphicsBuffer | 需 `--effects` | 先复刻数据流再复刻数学 |
+| 引擎自定义 Pass（自定义混合、多 pass 材质） | Renderer Feature + Blitter/自定义 Pass | 需 `--pipeline` | 逐 Pass 移植观测行为 |
 
 共享逻辑（多个 Pass 复用的函数、公共缓冲）按功能抽成共享 include/类，不做复制粘贴。
-是否引入 Renderer Feature 的判据：效果跨对象/跨 Pass 生效才用；单对象效果优先用
-材质/粒子内建机制解决。
+带 `--pipeline` 时，是否引入 Renderer Feature 的判据：效果跨对象/跨 Pass 生效才用；
+单对象效果优先用材质/粒子内建机制解决。
 
 ## 3. 材质拟合
 
@@ -43,7 +46,10 @@
   导入后同位置采样值对比，确认没有重复解码或漏解码，再批量套用。
 - 拟合结果先在单对象上与捕获对照（同视角渲染），再批量套用到同材质家族。
 
-## 4. 自定义 Pass 移植
+## 4. 自定义 Pass 移植（仅 `--pipeline`）
+
+仅当调用带 `--pipeline` 参数时执行本节；未带参数时相关 Pass 一律记为
+"未还原——需参数"。
 
 1. 从捕获确认该 Pass 的输入/输出目标、视口、清屏状态、混合状态、Shader 阶段。
 2. 在 Renderer Feature 中复刻执行顺序（注入点对齐原 Pass 在帧中的位置）。

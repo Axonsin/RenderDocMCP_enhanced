@@ -2,4 +2,4 @@
 name: rdoc-reconstruct-unity
 interface:
   display_name: RenderDoc → Unity URP 重建
-  short_description: 从捕获还原场景、物体与特效到可编译、可渲染对照的 Unity URP 工程。
+  short_description: 从捕获静态重建场景到可编译、可渲染对照的 URP 工程；特效与渲染管线改动需显式参数。
