@@ -46,7 +46,7 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   `GSOut`（最后活动阶段的最终输出，可能是 Geometry 或曲面细分）。
 - 纹理子资源：数组层/立方体面用 `slice_index`，3D 的 Z 切片用 `depth_slice`，
   MSAA 用 `sample`；网格属性筛选用 `attributes`；分页 `offset`/`limit` 单位是条目
-  （网格为顶点），缓冲区读取的 `offset`/`length` 单位是字节。
+  （网格为绘制引用序列），缓冲区读取的 `offset`/`length` 单位是字节。
 - 绑定类接口的 `binding_id` 是临时令牌：只在同一捕获、同一 action 的上一条响应内有效，
   不能跨 action 或跨查询复用。
 - 逐实例数据：网格类接口的 `instance` 参数选择实例；超界会收到参数错误，先查
@@ -63,8 +63,42 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 - 纹理数据响应携带 `color_space`、`all_zero`、`warnings` 等诊断字段，消费前先读；
   纹理导出响应以 `mip_selection` 报告实际保存的 mip 范围。
 - 状态类工具返回回放健康与版本信息；把它的响应当作每次长程操作的入口检查点。
+- `get_buffer_contents` 按**数值 ID** 匹配（`ResourceId` 不能由 int 构造）；
+  单次内联上限 256 KiB，超出返回 `truncated=true` 与 `next_offset`，按该偏移分页；
+  资源不存在报 `BUFFER_NOT_FOUND`，`offset` 超出缓冲报 `INVALID_PAGINATION`。
+- `search_actions` 的 `complete=false` / `stopped_reason` / `next_event_id` 是**截断**而非
+  空结果；`scan_mode="usage"` 表示候选来自 Timeline usage 索引（较快），`"pipeline"`
+  表示逐 action 扫描。续扫用 `start_event_id=next_event_id`，大捕获上先给
+  `action_event_id_range` 缩小范围。
+- `get_mesh_summary` 的 `topology` 取自管线状态（`topology_source="pipeline"`）；
+  `num_vertices` 保留 draw 的 numIndices；新增 `unique_vertex_count` 为去重引用顶点数
+  （索引不可读时为 null，`indices_available=false`）；反射名被剥离时位置流由启发式推断，看
+  `bounding_box_source` / `bounding_box_basis` / `bounding_box_inferred`，并用
+  `bounding_boxes` 核对其它三分量属性。
+- `export_mesh_csv` 在没有任何可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`（不会再写出
+  只有 `VTX,IDX` 的“成功”文件）；`exported_attributes` / `skipped_attributes` 用于
+  核对实际写入磁盘的内容。
 
-## 6. 禁止事项
+## 6. 2.0 作业、来源与数值验证
+
+- 要求 MCP 与扩展均为 2.0.0、RenderDoc >=1.46、API contract=2；核对构建指纹。
+- open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history
+  返回 job_id。通过 get_job_status 查询；paused 可补充纹理额度，cancel/resume 为协作操作。
+  原生调用不能强行取消。stalled 或提交超时不证明失败，保留原 job_id 查询，勿盲目重试。
+- file_location 区分本地/远端文件；replay_target 区分回放位置。远端路径不创建本地占位。
+- 作业期间其它回放查询返回 REPLAY_BUSY；健康探针未运行时不把 null 当健康成功。
+- 缓存和产物绑定 capture_session、replay_revision、事件与子资源；跨加载或替换失效。
+- 常量按绑定反射路径与布局读取；GetConstantBlock 已含 dynamic offset。原始字节的矩阵
+  主序/stride 与 ShaderVariable 解码后的 row-major 数值分开记录。SInt 使用 s32v。
+- 不从块大小、槽位、固定步长或数值形状推断 ObjectToWorld。矩阵只来自反射确认；
+  语义需 shader 证据。没有反射时不扫描任意 buffer 猜变换。
+- post-VS 使用原生返回的重映射索引；分页按绘制引用，CSV 顶点表去重，.idx 保留 restart。
+  用完整 xyzw、NDC 或屏幕位置核验。恒值输出先核对独立原生读取，不预判未落盘或不可用。
+- Shader 大文本用 export_shader_bundle 落盘。ROI 使用 compare_texture_events 数值差分；
+  默认 storage 域，linear 仅转换 sRGB RGB。差分是观测结果，不等于独立 draw 贡献。
+- get_pixel_history 是原生历史；先核对能力与数值有效性，不能用 ROI 差分冒充。
+
+## 7. 禁止事项
 
 - 绕过 MCP 直接用原生脚本读取 RDC 或调用 RenderDoc 内部接口——除非用户显式授权，
   并如实标注来源。

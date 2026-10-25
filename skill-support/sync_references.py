@@ -1,7 +1,7 @@
 """Sync shared references into each skill's references/ directory.
 
 Single editing source: skill-support/shared-references/*.md is copied into every
-skill under .agents/skills/*/references/.
+skill under .agents/skills/*/references/ and .claude/skills/*/references/.
 
 Source updates vs local edits are told apart via the previous manifest: a target
 whose content still matches its last-synced hash is "unchanged since sync" and
@@ -25,6 +25,7 @@ SUPPORT_DIR = Path(__file__).resolve().parent
 SOURCE_DIR = SUPPORT_DIR / "shared-references"
 REPO_ROOT = SUPPORT_DIR.parent
 SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
+CLAUDE_SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 MANIFEST = SUPPORT_DIR / "references-manifest.json"
 
 
@@ -63,12 +64,15 @@ def sync(source_dir, skills_dir, manifest_path, repo_root, force=False, check=Fa
     if not sources:
         print("no shared references found in %s" % source_dir)
         return 1
-    if not skills_dir.is_dir():
-        print("skill directory not found: %s" % skills_dir)
-        return 1
-    skill_dirs = sorted(p for p in skills_dir.iterdir() if p.is_dir())
+    skill_roots = [skills_dir] if isinstance(skills_dir, Path) else list(skills_dir)
+    skill_dirs = []
+    for skill_root in skill_roots:
+        if not skill_root.is_dir():
+            print("skill directory not found: %s" % skill_root)
+            return 1
+        skill_dirs.extend(sorted(p for p in skill_root.iterdir() if p.is_dir()))
     if not skill_dirs:
-        print("no skill directories found in %s" % skills_dir)
+        print("no skill directories found in %s" % skill_roots)
         return 1
 
     previous = load_previous(manifest_path)
@@ -161,7 +165,7 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="report drift without writing; exit 1 on drift")
     args = parser.parse_args()
-    return sync(SOURCE_DIR, SKILLS_DIR, MANIFEST, REPO_ROOT,
+    return sync(SOURCE_DIR, (SKILLS_DIR, CLAUDE_SKILLS_DIR), MANIFEST, REPO_ROOT,
                 force=args.force, check=args.check)
 
 

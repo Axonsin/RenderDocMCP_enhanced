@@ -15,8 +15,10 @@ evals/               每个 skill 的触发用例集（<name>.evals.json）
 
 ## 同步共用契约
 
-`shared-references/` 下的文件会同步进每个 skill 的 `references/`，保证每个发布目录
-可独立安装。**修改共用契约只改编辑源，然后运行同步**：
+`shared-references/` 下的文件会同时同步进 `.agents/skills/`（Codex）和
+`.claude/skills/`（Claude Code）下每个 skill 的 `references/`，并统一记录在 manifest，
+保证每个发布目录可独立安装。`--check` 同时检查两边，任意一边漂移都会失败。
+**修改共用契约只改编辑源，然后运行同步**：
 
 ```bash
 python skill-support/sync_references.py           # 同步并更新 manifest

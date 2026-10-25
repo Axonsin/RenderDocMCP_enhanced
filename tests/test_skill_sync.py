@@ -80,6 +80,27 @@ class SyncReferenceTests(unittest.TestCase):
         self.assertIn("skills/skill-a/references/tool-usage.md", paths)
         self.assertIn("skills/skill-b/references/tool-usage.md", paths)
 
+    def test_two_client_roots_sync_update_and_detect_claude_drift(self):
+        claude = self.fx.repo / ".claude" / "skills"
+        (claude / "skill-a").mkdir(parents=True)
+
+        def sync(**kwargs):
+            return SYNC.sync(self.fx.source, (self.fx.skills, claude),
+                             self.fx.manifest, self.fx.repo, **kwargs)
+
+        self.assertEqual(sync(), 0)
+        self.fx.write_source("tool-usage.md", "v2\n")
+        self.assertEqual(sync(), 0)
+        target = claude / "skill-a" / "references" / "tool-usage.md"
+        self.assertEqual(target.read_text(), "v2\n")
+        entry = json.loads(self.fx.manifest.read_text())["tool-usage.md"]
+        self.assertEqual(len(entry["targets"]), 3)
+        self.assertEqual(sync(check=True), 0)
+        target.write_text("Claude-only drift\n")
+        self.assertEqual(sync(check=True), 1)
+        self.assertEqual(sync(), 1)
+        self.assertEqual(target.read_text(), "Claude-only drift\n")
+
     def test_source_only_update_does_not_require_force(self):
         # Review regression: updating only the shared source is a normal sync,
         # not a "locally modified target" conflict.
