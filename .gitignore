@@ -9,3 +9,5 @@ build/
 *.egg-info/
 PROGRESS.md
 tests/blender_tests/
+.zcode/
+evidence/
