@@ -366,7 +366,7 @@ class ResourceService:
             raise ValueError(result["error"])
         return result
 
-    def get_buffer_contents(self, resource_id, offset=0, length=0):
+    def get_buffer_contents(self, resource_id, offset=0, length=0, action_event_id=None):
         """Get buffer data"""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
@@ -455,6 +455,8 @@ class ResourceService:
                     "length": len(data),
                     "total_size": total_size,
                     "offset": offset,
+                    "read_range": {"byte_offset": offset, "byte_length": len(data),
+                                   "end_exclusive": offset + len(data)},
                     "requested_bytes": requested,
                     "truncated": truncated,
                     "next_offset": consumed if truncated and consumed < total_size else None,
@@ -465,10 +467,17 @@ class ResourceService:
                 # Exceptions must survive the SWIG BlockInvoke callback boundary.
                 result["error"] = "RESOURCE_QUERY_FAILED: failed to get buffer data: %s" % str(exc)
 
-        self._invoke(callback)
+        def scoped(controller, event):
+            callback(controller)
+            if result["data"] is not None:
+                result["data"]["action_event_id" if action_event_id is not None else "event_id"] = event
+                result["data"]["event_phase"] = "after"
+                result["data"]["source"] = "raw_buffer"
+        at_event(self.ctx, self._invoke, action_event_id, scoped)
 
         if result["error"]:
             raise ValueError(result["error"])
+        result["data"]["replay_restored"] = True
         return result["data"]
 
     def get_texture_info(self, resource_id):

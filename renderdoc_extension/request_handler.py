@@ -51,6 +51,9 @@ class RequestHandler:
             "get_mesh_data": self._handle_get_mesh_data,
             "export_mesh_csv": self._handle_export_mesh_csv,
             "dump_draws": self._handle_dump_draws,
+            **{name: (lambda params, name=name: getattr(self.facade, name)(**params)) for name in (
+                "get_replay_context", "get_job_status", "cancel_job", "resume_job",
+                "export_shader_bundle", "compare_texture_events", "get_pixel_history")},
         }
 
     def handle(self, request):
@@ -65,6 +68,15 @@ class RequestHandler:
                     request_id, -32601, "Method not found: %s" % method
                 )
 
+            runtime = getattr(self.facade, "runtime_info", {}) or {}
+            if runtime.get("api_contract_version") == 2 and request.get("api_contract_version") != 2:
+                raise ValueError("API_VERSION_MISMATCH: MCP server and extension must both use API contract 2")
+            jobs = getattr(self.facade, "_jobs", None)
+            controls = {"ping", "get_capture_status", "get_replay_context", "get_job_status", "cancel_job"}
+            resubmission = (jobs and params.get("job_id") in jobs.records and
+                            jobs.records[params["job_id"]]["kind"] == method)
+            if jobs and jobs.busy() and method not in controls and not resubmission:
+                raise ValueError("REPLAY_BUSY: query or cancel the active job before submitting replay work")
             target = getattr(self.facade, method) if method != "ping" else None
             allowed = set(inspect.signature(target).parameters) if target else set()
             unexpected = sorted(set(params) - allowed)
@@ -73,7 +85,7 @@ class RequestHandler:
                                  ", ".join(unexpected))
 
             result = self._methods[method](params)
-            return {"id": request_id, "result": result}
+            return {"id": request_id, "result": result, "api_contract_version": 2}
 
         except ValueError as e:
             code, message = self._classify_error(str(e))
@@ -85,7 +97,7 @@ class RequestHandler:
 
     def _error_response(self, request_id, code, message):
         """Create an error response"""
-        return {"id": request_id, "error": {"code": code, "message": message}}
+        return {"id": request_id, "error": {"code": code, "message": message}, "api_contract_version": 2}
 
     def _classify_error(self, message):
         """Classify exception messages into stable JSON-RPC error responses."""
@@ -124,6 +136,7 @@ class RequestHandler:
             "INVALID_OUTPUT_PATH",
             "INVALID_FORMAT_TYPE",
             "INVALID_ALPHA_MODE",
+            "INVALID_VIEW_INDEX",
         }
         runtime_prefixes = {
             "CAPTURE_NOT_LOADED",
@@ -168,11 +181,13 @@ class RequestHandler:
             "renderdoc_version": runtime.get("renderdoc_version"),
             "ipc_version": runtime.get("ipc_version"),
             "capture_loaded": capture_loaded,
+            "api_contract_version": 2,
+            "extension_build_hash": runtime.get("extension_build_hash"),
         }
 
     def _handle_get_capture_status(self, params):
         """Handle get_capture_status request"""
-        return self.facade.get_capture_status()
+        return self.facade.get_capture_status(**params)
 
     def _handle_get_actions(self, params):
         """Handle get_actions request"""
@@ -271,7 +286,7 @@ class RequestHandler:
         resource_id = self._require_param(params, "resource_id")
         offset = params.get("offset", 0)
         length = params.get("length", 0)
-        return self.facade.get_buffer_contents(resource_id, offset, length)
+        return self.facade.get_buffer_contents(resource_id, offset, length, params.get("action_event_id"))
 
     def _handle_get_texture_info(self, params):
         """Handle get_texture_info request"""
@@ -393,7 +408,7 @@ class RequestHandler:
     def _handle_open_capture(self, params):
         """Handle open_capture request"""
         capture_path = self._require_param(params, "capture_path")
-        return self.facade.open_capture(capture_path)
+        return self.facade.open_capture(**params)
 
     def _handle_get_mesh_summary(self, params):
         """Handle get_mesh_summary request"""
@@ -401,7 +416,7 @@ class RequestHandler:
         # instance is passed through unconverted so the service's strict
         # non-negative-integer validation applies (no silent float truncation).
         return self.facade.get_mesh_summary(
-            int(action_event_id), instance=params.get("instance", 0)
+            int(action_event_id), instance=params.get("instance", 0), view_index=params.get("view_index", 0)
         )
 
     def _handle_get_mesh_data(self, params):
@@ -418,18 +433,11 @@ class RequestHandler:
             limit=int(limit),
             attributes=attributes,
             instance=params.get("instance", 0),
+            view_index=params.get("view_index", 0),
         )
 
     def _handle_dump_draws(self, params):
-        return self.facade.dump_draws(
-            self._require_param(params, "action_event_ids"),
-            mesh_dir=params.get("mesh_dir"),
-            texture_dir=params.get("texture_dir"),
-            export_meshes=params.get("export_meshes", True),
-            export_textures=params.get("export_textures", True),
-            max_textures=params.get("max_textures", 48),
-            summary_path=params.get("summary_path"),
-        )
+        return self.facade.dump_draws(**params)
 
     def _handle_export_mesh_csv(self, params):
         """Handle export_mesh_csv request"""
@@ -443,4 +451,5 @@ class RequestHandler:
             stage=stage,
             attributes=attributes,
             instance=params.get("instance", 0),
+            view_index=params.get("view_index", 0),
         )

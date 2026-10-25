@@ -1,5 +1,7 @@
 # RenderDoc MCP Server Enhanced
 
+Version **2.0.0** — [2.0 migration / 迁移说明](docs/migration_v2.md). Upgrade server and extension together.
+
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
 > 这是一个基于 [RenderDocMCP](https://github.com/halby24/RenderDocMCP) 的 fork，重点优化了跨 API 兼容性（尤其是 OpenGL 场景）以及 MCP 工具面的设计与调用。
@@ -48,7 +50,7 @@ MCP Server 通过 stdio 与 AI 客户端通信，并通过文件 IPC 将请求�
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/)
-- RenderDoc 1.20+
+- RenderDoc 1.46+
 - Windows
 
 > **注意**：当前仅在 Windows 环境下完成验证。

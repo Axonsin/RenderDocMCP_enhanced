@@ -8,6 +8,7 @@ import renderdoc as rd
 
 from ..utils import Parsers
 from .resource_catalog import build_catalog, enum_name, identity
+from .native_serialization import plain
 
 
 STAGES = (
@@ -42,38 +43,6 @@ def flag(value, name, enum_type=None):
     member = getattr(enum_type or rd.ActionFlags, name, None)
     return member is not None and bool(value & member)
 
-
-def plain(value, depth=0):
-    """Serialize small native state structs; never traverse a whole API state."""
-    if value is None or isinstance(value, (str, bool)):
-        return value
-    if isinstance(value, rd.ResourceId):
-        return Parsers.canonical_resource_id(value)
-    if hasattr(value, "name") and isinstance(value, int):
-        return enum_name(value)
-    if isinstance(value, (int, float)):
-        return str(value) if isinstance(value, float) and not math.isfinite(value) else value
-    if depth > 8:
-        return {"available": False, "reason": "maximum_structure_depth"}
-    if hasattr(value, "Name") and callable(value.Name):
-        return value.Name()
-    if isinstance(value, (bytes, bytearray)):
-        return {"byte_size": len(value)}
-    if isinstance(value, dict):
-        return {str(k): plain(v, depth + 1) for k, v in value.items()}
-    if hasattr(value, "__iter__"):
-        return [plain(v, depth + 1) for v in value]
-    names = set(getattr(value, "__dict__", {}).keys())
-    for cls in type(value).__mro__:
-        names.update(k for k, v in vars(cls).items() if isinstance(v, property))
-    result = {}
-    for key in sorted(names):
-        if key.startswith("_") or key in ("this", "thisown"):
-            continue
-        item = getattr(value, key)
-        if not callable(item):
-            result[key] = plain(item, depth + 1)
-    return result
 
 
 def unavailable(reason):
@@ -291,6 +260,7 @@ class Snapshot:
         row["descriptor_flags"] = enum_name(getattr(descriptor, "flags", "Unknown"))
         row["format"] = plain(getattr(descriptor, "format", None))
         row["view_type"] = enum_name(getattr(descriptor, "textureType", "Unknown"))
+        row["descriptor_details"] = plain(descriptor)
         numeric = int(rid) if rid is not None else 0
         texture = self.catalog["textures"].get(numeric)
         buffer = self.catalog["buffers"].get(numeric)

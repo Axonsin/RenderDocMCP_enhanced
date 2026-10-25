@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from typing import Any
+from mcp_server.bridge.job_status import read_status, request_cancel
 
 
 # IPC directory (must match renderdoc_extension/socket_server.py)
@@ -18,7 +19,8 @@ REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
 CALL_LOCK_FILE = os.path.join(IPC_DIR, "call.lock")
 
 EDIT_METHODS = {"get_shader_edit_context", "replace_shader", "revert_shader",
-                "list_shader_replacements", "export_shader_source", "dump_draws"}
+                "list_shader_replacements", "export_shader_source"}
+JOB_METHODS = {"open_capture", "dump_draws", "export_shader_bundle", "compare_texture_events", "get_pixel_history"}
 
 
 class RenderDocBridgeError(Exception):
@@ -82,11 +84,21 @@ class RenderDocBridge:
                 "Make sure RenderDoc is running with the MCP Bridge extension loaded."
             )
 
+        params = dict(params or {})
+        if method in ("get_job_status", "cancel_job"):
+            try:
+                function = read_status if method == "get_job_status" else request_cancel
+                return function(os.path.join(IPC_DIR, "jobs"), **params)
+            except (ValueError, OSError) as exc:
+                raise RenderDocBridgeError(str(exc)) from exc
+        if method in JOB_METHODS and not params.get("job_id"):
+            params["job_id"] = str(uuid.uuid4())
         request = {
             "id": str(uuid.uuid4()),
             "method": method,
             "params": params or {},
             "ipc_version": 2,
+            "api_contract_version": 2,
         }
         timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout
         response_file = os.path.join(IPC_DIR, "response_%s.json" % request["id"])
@@ -110,6 +122,8 @@ class RenderDocBridge:
                             response = json.load(handle)
                         os.remove(response_file)
                         if response.get("id") == request["id"]:
+                            if response.get("api_contract_version") != 2:
+                                raise RenderDocBridgeError("API_VERSION_MISMATCH: update both MCP server and RenderDoc extension to 2.x")
                             if "error" in response:
                                 error = response["error"]
                                 raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
@@ -117,8 +131,9 @@ class RenderDocBridge:
                     if time.monotonic() >= deadline:
                         raise RenderDocBridgeError(
                             "RESULT_PENDING: request %s timed out after submission; result is unknown. "
-                            "Do not automatically retry. Query list_shader_replacements or "
-                            "get_shader_edit_context to confirm shader state." % request["id"])
+                            "Do not automatically retry. %s" % (request["id"],
+                            ("Query get_job_status(job_id=%s)." % params["job_id"]) if method in JOB_METHODS
+                            else "Query current replay/shader state before retrying."))
                     time.sleep(0.05)
         except RenderDocBridgeError:
             raise

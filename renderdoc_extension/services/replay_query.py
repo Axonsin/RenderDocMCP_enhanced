@@ -33,7 +33,7 @@ def at_event(ctx, invoke, event_id, operation, require_exact_action=True):
                 controller.SetFrameEvent(restore, True)
             except Exception as exc:
                 previous = result.get("error", (False, ""))[1]
-                result["error"] = (False, "%s REPLAY_RESTORE_FAILED: %s" % (previous, exc))
+                result["error"] = (False, "REPLAY_RESTORE_FAILED: %s; previous error: %s" % (exc, previous))
 
     invoke(callback)
     if "error" in result:

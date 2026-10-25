@@ -4,6 +4,8 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
+RenderDoc MCP **2.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v2.md).
+
 ## Naming Conventions
 
 | Term / field | Meaning |
@@ -58,17 +60,25 @@ A typical analysis workflow follows this pattern:
 
 #### `open_capture`
 
-Open a RenderDoc capture file (.rdc). Closes any currently open capture.
+Submit capture loading and return a `job_id` immediately. Poll `get_job_status`.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `capture_path` | `str` | Yes | Full path to the capture file |
+| Parameter | Default | Meaning |
+|---|---|---|
+| `capture_path` | required | Absolute local or remote .rdc path |
+| `file_location` | `"local"` | `local` or `remote`: file location |
+| `replay_target` | `"current"` | `current`, `local`, or `remote`: replay location |
+| `remote_host` | null | Explicit host for replay_target=remote; otherwise reuse current remote context |
+| `job_id` | generated | Stable submission ID; same ID+parameters is idempotent |
 
-**Returns:** `{"success": true, "filename": "game.rdc", "api": "D3D11"}`
+Remote preflight occurs before replacing a capture. Local files are uploaded through
+RenderDoc; existing remote paths are checked remotely and loaded with local=False.
+Only the selected host's official launch flow may be used. Version/connect/start errors
+are explicit. Native LoadCapture may display a modal error; running/stalled does not mean failed.
 
-**Example:**
-```
-open_capture(capture_path="D:/captures/game.rdc")
+```python
+job = open_capture(capture_path="D:/captures/game.rdc", file_location="local",
+                   replay_target="remote", remote_host="adb://DEVICE_SERIAL")
+get_job_status(job_id=job["job_id"])
 ```
 
 ---
@@ -98,7 +108,7 @@ protocol version and replay health.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| *(none)* | | | |
+| `probe_replay` | `bool` | No | Default true; false returns context/version data without a replay probe |
 
 **Returns:** `{"loaded": true, "api": "D3D11", "filename": "...", "remote_replay": false,
 "replay_healthy": true, "replay_error": null, "extension_version": "...",
@@ -599,6 +609,8 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 #### `get_buffer_contents`
 
+Optional `action_event_id` reads **after** that action, then restores replay. Omission reads the current event. Returns actual `action_event_id`, `event_phase`, `read_range`, `replay_restored`, `source`; max inline 256 KiB.
+
 Read the contents of a buffer resource. Returns base64-encoded bytes. `offset`/`length`
 must be non-negative byte values (`INVALID_PAGINATION` otherwise, including an `offset`
 past the buffer end); replay read failures raise `RESOURCE_QUERY_FAILED` instead of
@@ -629,6 +641,8 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 ---
 
 #### `get_mesh_summary`
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
 
 Get a summary of mesh data for a specific draw call event.
 
@@ -673,6 +687,10 @@ get_mesh_summary(action_event_id=1234)
 ---
 
 #### `get_mesh_data`
+
+Pagination units and `total_count` count draw references. `indices` is populated for all stages; post-VS uses the returned native index buffer, offset/width/base vertex. `unique_vertex_count` counts distinct references. Primitive restart is -1.
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
 
 Get mesh vertex and index data for a specific draw call with pagination support.
 
@@ -944,6 +962,10 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 #### `export_mesh_csv`
 
+CSV contains unique vertices; .idx contains real remapped references (-1 for restart). Retain topology. Short reads, invalid addresses and missing required streams are errors.
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+
 Export mesh data to a CSV file.
 
 | Parameter | Type | Required | Default | Description |
@@ -976,41 +998,49 @@ export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="V
 
 #### `dump_draws`
 
-Export geometry and material facts for multiple draws in one IPC request. Requires a loaded capture.
+Submit a resumable batch and return its `job_id`; poll `get_job_status`.
+Required `output_dir` replaces mesh_dir/texture_dir/summary_path. Files and manifest
+live under output_dir/job_id. Select exactly one: `action_event_ids` (1..256 real draws),
+`marker_filter`, `action_event_id_range={"min":...,"max":...}`. Ranges resolve real draws.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `action_event_ids` | `list[int]` | Yes | | 1–256 draw action EIDs |
-| `mesh_dir` | `str` | Conditional | | Required when `export_meshes=true`; saves `vsIn_<EID>.csv` and `.idx` |
-| `texture_dir` | `str` | Conditional | | Required when `export_textures=true`; saves `tex_<numericResourceId>.png` |
-| `export_meshes` | `bool` | No | `true` | Export VSIn geometry using instance 0 |
-| `export_textures` | `bool` | No | `true` | Export vertex/fragment input textures, deduplicated by resource ID within this request |
-| `max_textures` | `int` | No | `48` | Maximum distinct texture exports selected per request; reusing an existing file also consumes a slot |
-| `summary_path` | `str` | No | | Full JSON output path; defaults to `<mesh_dir>/_batch_summary.json` when `mesh_dir` is supplied |
+Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=True`,
+`export_textures=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
+Texture budget exhaustion pauses the job; resume_job adds allowance. Cancellation is
+cooperative between native steps. No cross-session/revision resume is allowed.
 
-**Returns:** With a summary path, returns `summary_path`, `draw_count`, `ok_count`,
-`failed_count`, `textures_saved`, and up to five failed entries in `failed`.
-The full JSON contains `draws`, `textures`, `textures_deferred`, and draw counts;
-without a summary path, this full result is returned directly.
-Each successful draw includes its mesh path (when enabled), `vertex_shader`,
-`pixel_shader`, `constants` (constant-buffer ranges), `textures`, `blend`, `depth`,
-and `object_matrix`. An individual draw failure records `ok=false` and `error`
-and processing continues. Non-draw entries record `skipped="not_a_draw"` and
-count as neither successes nor failures.
+Manifest entries include detailed bindings, descriptor subresources, samplers, shader
+identity, vertex layout, quality warnings and provenance. No object_matrix field or
+automatic UV/albedo/normal naming. Same filenames never authorize cache reuse;
+event/subresource/revision reads precede content-hash deduplication. Filtering is explicit.
 
-**Export scope:** PNG uses mip 0, slice 0, and preserved alpha. Textures with a
-width or height above 4096 or matching depth-format markers are skipped.
-Existing PNG files are reused; mesh files and summary JSON are overwritten.
-`object_matrix` only attempts to read the first 16 floats at the binding offset
-of a 720-byte vertex-stage constant binding. This assumes a specific layout;
-verify the shader before interpreting it as an object transform. It is `null`
-when unavailable.
-
-**Examples:**
 ```python
-dump_draws(action_event_ids=[343, 350], mesh_dir="D:/output/meshes",
-           texture_dir="D:/output/textures")
-
-# Inspect state without exporting files; return the full result inline.
-dump_draws(action_event_ids=[343], export_meshes=False, export_textures=False)
+job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
+get_job_status(job_id=job["job_id"])
+resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
 ```
+
+## 2.0 job control and investigation / 作业控制与调查
+
+Requires RenderDoc 1.46+. All paths are absolute. Upgrade server and extension together.
+See [2.0 migration](migration_v2.md) for complete lifecycle, limits and file formats.
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | State, phase, timestamps, progress, compact draw summaries with details_path/artifact_paths, error and manifests; pixel-history rows retain native fields |
+| `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
+| `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources and SHA256 files |
+| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts |
+| `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
+
+The default texture comparison domain is stored numeric values; `linear` converts only sRGB RGB,
+not alpha. Supports Regular integer/normalized 8/16/32-bit, float 16/32/64-bit,
+R10G10B10A2 and R11G11B10 on Vulkan/D3D11/D3D12. Unknown formats fail explicitly.
+Limits: 64 MiB per raw subresource, 262144 ROI pixels. Coordinates use top-left origin.
+NaN/Inf are counted separately. Observed differences do not isolate a draw's contribution.
+
+`get_capture_status(probe_replay=True)` also reports capture_session, replay_revision,
+extension_build_hash, API contract/capabilities, current event and active job. Busy status
+does not run a health probe: replay_healthy is unknown and replay_probe explains why.
+Native serialization failures set section.available=false with a reason, including in composite tools.

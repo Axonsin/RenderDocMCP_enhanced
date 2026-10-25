@@ -71,7 +71,7 @@ def modules():
         services = packages["renderdoc_extension.services"]
         for name in ("CaptureManager", "ActionService", "SearchService", "ResourceService",
                      "PipelineService", "ShaderEditService", "MeshService", "AnalysisService",
-                     "BatchService"):
+                     "BatchService", "SessionState", "JobService", "InvestigationService"):
             setattr(services, name, object)
         facade = load("renderdoc_extension.renderdoc_facade",
                       "renderdoc_extension/renderdoc_facade.py")
@@ -153,6 +153,9 @@ class Controller:
         self.fail_usage = False
         self.fail_structured = False
         self.usage_calls = []
+
+    def SetFrameEvent(self, event, force):
+        self.event = event
 
     def GetResources(self):
         return self.resources
@@ -490,12 +493,11 @@ class ResourceTests(unittest.TestCase):
         from mcp_server import server
 
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-        self.assertEqual(len(tools), 37)
+        self.assertEqual(len(tools), 44)
         batch_schema = tools["dump_draws"].parameters
-        self.assertEqual(batch_schema["required"], ["action_event_ids"])
-        self.assertEqual(set(batch_schema["properties"]), {
-            "action_event_ids", "mesh_dir", "texture_dir", "export_meshes",
-            "export_textures", "max_textures", "summary_path"})
+        self.assertEqual(batch_schema["required"], ["output_dir"])
+        self.assertIn("marker_filter", batch_schema["properties"])
+        self.assertIn("job_id", batch_schema["properties"])
         for old in ("get_draw_call_details", "get_draw_calls", "search_draws",
                     "inspect_event", "diff_events", "trace_event_dependencies"):
             self.assertNotIn(old, tools)
@@ -509,7 +511,7 @@ class ResourceTests(unittest.TestCase):
             "include_children", "marker_filter", "exclude_markers", "action_event_id_range",
             "exclude_marker_actions", "flags_filter"})
         self.assertEqual(set(tools["get_mesh_data"].parameters["properties"]), {
-            "action_event_id", "stage", "offset", "limit", "attributes", "instance"})
+            "action_event_id", "stage", "offset", "limit", "attributes", "instance", "view_index"})
         self.assertEqual(set(tools["trace_resource_usage"].parameters["properties"]), {
             "resource_id", "marker_filter", "exclude_markers", "event_id_range",
             "before_event_id", "offset", "limit", "categories"})

@@ -156,7 +156,8 @@ class Controller:
         return self.postvs
 
     def GetBufferData(self, rid, offset, length):
-        return self.buffers.get(int(rid), b"")
+        data = self.buffers.get(int(rid), b"")
+        return data[offset:offset + length] if length else data[offset:]
 
     def GetBuffers(self):
         return []
@@ -255,7 +256,7 @@ class MeshDataTests(unittest.TestCase):
         self.controller.postvs = postvs_mesh()
         self.controller.reflections = {ShaderStage.Vertex: NS(outputSignature=[
             sig("SV_POSITION0", 0, 4), sig("TEXCOORD0", 1, 3)])}
-        self.controller.buffers[7] = struct.pack("<7f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
+        self.controller.buffers[7] = (struct.pack("<7f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0) + bytes(4)) * 3
 
         result = self.mesh.get_mesh_data(343, stage="VSOut")
 
@@ -353,7 +354,7 @@ class MeshDataTests(unittest.TestCase):
         self.controller.reflections = {
             ShaderStage.Domain: NS(outputSignature=[sig("SV_POSITION0", 0, 4)]),
         }
-        self.controller.buffers[7] = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+        self.controller.buffers[7] = (struct.pack("<4f", 1.0, 2.0, 3.0, 4.0) + bytes(16)) * 3
         result = self.mesh.get_mesh_data(343, stage="GSOut")
         self.assertEqual([a["name"] for a in result["attributes"]], ["SV_POSITION0"])
 
@@ -364,7 +365,7 @@ class MeshDataTests(unittest.TestCase):
             ShaderStage.Geometry: NS(outputSignature=[sig("GSOUT_A", 0, 4)]),
             ShaderStage.Domain: NS(outputSignature=[sig("SV_POSITION0", 0, 4)]),
         }
-        self.controller.buffers[7] = struct.pack("<8f", 9.0, 9.0, 9.0, 9.0, 1.0, 2.0, 3.0, 4.0)
+        self.controller.buffers[7] = struct.pack("<8f", 9.0, 9.0, 9.0, 9.0, 1.0, 2.0, 3.0, 4.0) * 3
         result = self.mesh.get_mesh_data(343, stage="GSOut")
         self.assertEqual([a["name"] for a in result["attributes"]], ["GSOUT_A"])
         self.assertEqual(result["items"][0]["GSOUT_A"], [9.0, 9.0, 9.0, 9.0])
@@ -396,6 +397,7 @@ class MeshDataTests(unittest.TestCase):
         self.controller.postvs = postvs_mesh()
         self.controller.reflections = {ShaderStage.Vertex: NS(outputSignature=[
             sig("DATA0", 0, 2, VarType.UInt), sig("HALVES0", 1, 4, VarType.Half)])}
+        self.controller.buffers[7] = bytes(96)
         result = self.mesh.get_mesh_data(343, stage="VSOut")
         data, halves = result["attributes"]
         self.assertEqual(data["format"], "FORMAT(UInt x2 b4)")
@@ -406,7 +408,7 @@ class MeshDataTests(unittest.TestCase):
         self.controller.postvs = postvs_mesh()
         self.controller.reflections = {ShaderStage.Vertex: NS(outputSignature=[
             sig("SV_POSITION0", 0, 4), sig("TEXCOORD0", 1, 3)])}
-        self.controller.buffers[7] = struct.pack("<7f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
+        self.controller.buffers[7] = (struct.pack("<7f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0) + bytes(4)) * 3
         with tempfile.TemporaryDirectory() as directory:
             result = self.mesh.export_mesh_csv(343, str(Path(directory) / "mesh.csv"),
                                                stage="VSOut")
@@ -480,7 +482,7 @@ class MeshDataTests(unittest.TestCase):
         self.controller.postvs = postvs_mesh()
         self.controller.reflections = {ShaderStage.Vertex: NS(outputSignature=[
             sig("SV_POSITION0", 0, 4)])}
-        self.controller.buffers[7] = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+        self.controller.buffers[7] = (struct.pack("<4f", 1.0, 2.0, 3.0, 4.0) + bytes(16)) * 3
         self.mesh.get_mesh_data(343, stage="VSOut", instance=3)
         self.assertEqual(self.controller.postvs_calls,
                          [(3, 0, MeshDataStage.VSOut)])
@@ -522,6 +524,9 @@ class MeshDataTests(unittest.TestCase):
 
 class CaptureStatusTests(unittest.TestCase):
     def _service(self, ctx, invoke):
+        ctx.CurEvent = lambda: 1
+        ctx.Replay = lambda: NS(CurrentRemote=lambda: NS(Hostname=lambda: ""))
+        ctx.Config = lambda: NS(GetRemoteHosts=lambda: [])
         return CAPTURE.CaptureManager(ctx, invoke, runtime_info={
             "extension_version": "1.0.1a1",
             "renderdoc_version": "1.46",

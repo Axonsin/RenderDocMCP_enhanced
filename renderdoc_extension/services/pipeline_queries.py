@@ -11,9 +11,10 @@ from .shader_variables import read_variables
 
 
 class PipelineQueries(qrd.CaptureViewer):
-    def __init__(self, ctx, invoke_fn):
+    def __init__(self, ctx, invoke_fn, session=None):
         super(PipelineQueries, self).__init__()
         self.ctx, self._invoke = ctx, invoke_fn
+        self.session = session
         self._generation = uuid.uuid4().hex
         ctx.AddCaptureViewer(self)
 
@@ -34,9 +35,12 @@ class PipelineQueries(qrd.CaptureViewer):
 
     def _snapshot_query(self, action_event_id, operation):
         action = require_action(self.ctx, action_event_id)
-        return at_event(self.ctx, self._invoke, action_event_id,
-                        lambda controller, event: operation(Snapshot(
-                            self.ctx, controller, action, self._generation)))
+        if self.session:
+            self.session.observe_replacements()
+        def read(controller, event):
+            return operation(Snapshot(self.ctx, controller, action,
+                                      self.session.token() if self.session else self._generation))
+        return at_event(self.ctx, self._invoke, action_event_id, read)
 
     def get_pipeline_state(self, action_event_id):
         return self._snapshot_query(action_event_id, lambda snapshot: snapshot.overview())

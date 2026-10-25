@@ -137,8 +137,9 @@ class MeshService:
 
         # Check if offset is valid
         required_size = struct.calcsize(vertex_format)
-        if offset + required_size > len(buffer_data):
-            return tuple([0.0] * fmt.compCount)
+        if offset < 0 or offset + required_size > len(buffer_data):
+            raise ValueError("MESH_DATA_OUT_OF_BOUNDS: attribute byte range %d..%d exceeds %d" %
+                             (offset, offset + required_size, len(buffer_data)))
 
         value = struct.unpack_from(vertex_format, buffer_data, offset)
 
@@ -174,22 +175,33 @@ class MeshService:
             List of indices
         """
         # Determine index format
-        index_format = "B"
-        if mesh.indexByteStride == 2:
-            index_format = "H"
-        elif mesh.indexByteStride == 4:
-            index_format = "I"
-
-        index_format = str(mesh.numIndices) + index_format
-
         if mesh.indexResourceId != rd.ResourceId.Null():
-            # GetBufferData already starts at indexByteOffset, so only the
-            # startIndexLocation shift applies here (indexOffset is carried on
-            # locally built entries; GetPostVSData results default to 0).
-            ib_data = controller.GetBufferData(mesh.indexResourceId, mesh.indexByteOffset, 0)
-            offset = getattr(mesh, "indexOffset", 0) * mesh.indexByteStride
-            indices = struct.unpack_from(index_format, ib_data, offset)
-            return [i + mesh.baseVertex for i in indices]
+            if mesh.indexByteStride not in (1, 2, 4):
+                raise ValueError("MESH_INVALID_INDEX_FORMAT: index width must be 1, 2 or 4")
+            offset = mesh.indexByteOffset + getattr(mesh, "indexOffset", 0) * mesh.indexByteStride
+            if offset < 0:
+                raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative index offset")
+            size = mesh.numIndices * mesh.indexByteStride
+            ib_data = controller.GetBufferData(mesh.indexResourceId, offset, size) if size else b""
+            if len(ib_data) < size:
+                raise ValueError("MESH_DATA_SHORT_READ: index buffer has %d bytes, expected %d" %
+                                 (len(ib_data), size))
+            indices = struct.unpack_from("<%d%s" % (
+                mesh.numIndices, {1: "B", 2: "H", 4: "I"}[mesh.indexByteStride]), ib_data)
+            restart = None
+            try:
+                pipe = controller.GetPipelineState()
+                if pipe.IsRestartEnabled() and getattr(mesh, "allowRestart", True):
+                    restart = pipe.GetRestartIndex() & ((1 << (8 * mesh.indexByteStride)) - 1)
+            except AttributeError:
+                pass
+            result = [-1 if i == restart else i + mesh.baseVertex for i in indices]
+            if any(i < 0 and i != -1 for i in result):
+                raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative effective vertex index")
+            # -1 is reserved exclusively for primitive restart.
+            if any(i + mesh.baseVertex == -1 and i != restart for i in indices):
+                raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative effective vertex index")
+            return result
         else:
             # Non-indexed draw
             return list(range(mesh.numIndices))
@@ -216,13 +228,12 @@ class MeshService:
         for attr in attrs:
             if not getattr(attr, "used", True):
                 continue
-            if getattr(attr, "genericEnabled", False):
-                # Generic/constant attributes carry no vertex-buffer data
-                continue
+            generic = bool(getattr(attr, "genericEnabled", False))
             vb_index = attr.vertexBuffer
-            if vb_index is None or vb_index < 0 or vb_index >= len(vbs):
-                continue
-            vb = vbs[vb_index]
+            if not generic and (vb_index is None or vb_index < 0 or vb_index >= len(vbs)):
+                raise ValueError("MESH_DATA_UNAVAILABLE: required vertex binding missing for %s" % attr.name)
+            vb = (vbs[vb_index] if not generic else
+                  _AttributeEntry(byteOffset=0, byteStride=0, resourceId=rd.ResourceId.Null()))
 
             attr_offset = attr.byteOffset + vb.byteOffset
             instanced = bool(getattr(attr, "perInstance", False))
@@ -237,7 +248,7 @@ class MeshService:
             else:
                 attr_offset += draw.vertexOffset * vb.byteStride
 
-            mesh_input = rd.MeshFormat()
+            mesh_input = _AttributeEntry()
             mesh_input.indexResourceId = ib.resourceId
             mesh_input.indexByteOffset = ib.byteOffset
             mesh_input.indexByteStride = ib.byteStride
@@ -245,6 +256,7 @@ class MeshService:
             mesh_input.indexOffset = draw.indexOffset
             mesh_input.numIndices = draw.numIndices
             mesh_input.instanced = instanced
+            mesh_input.topology = state.GetPrimitiveTopology() if hasattr(state, "GetPrimitiveTopology") else "Unknown"
 
             # Check if indexed draw
             if not (draw.flags & rd.ActionFlags.Indexed):
@@ -255,12 +267,20 @@ class MeshService:
             mesh_input.vertexResourceId = vb.resourceId
             mesh_input.vertexByteStride = vb.byteStride
             mesh_input.name = attr.name
+            mesh_input.source_vertex_buffer = vb_index
+            mesh_input.source_attribute_offset = attr.byteOffset
+            mesh_input.source_binding_offset = vb.byteOffset
+            mesh_input.source_instance_rate = getattr(attr, "instanceRate", 0)
+            if generic:
+                value_field = ("uintValue" if attr.format.compType == rd.CompType.UInt else
+                               "intValue" if attr.format.compType == rd.CompType.SInt else "floatValue")
+                mesh_input.constant_value = list(getattr(attr.genericValue, value_field))[:attr.format.compCount]
 
             mesh_inputs.append(mesh_input)
 
         return mesh_inputs
 
-    def _get_postvs_data(self, controller, draw, stage: str, instance: int = 0) -> Any:
+    def _get_postvs_data(self, controller, draw, stage: str, instance: int = 0, view_index: int = 0) -> Any:
         """
         Get post-vertex-shader or post-geometry-shader mesh data.
 
@@ -279,17 +299,24 @@ class MeshService:
         }
         mesh_stage = stage_map.get(stage, rd.MeshDataStage.VSOut)
 
-        mesh = controller.GetPostVSData(instance, 0, mesh_stage)
+        _validate_instance(view_index)
+        try:
+            count = max(1, controller.GetPipelineState().MultiviewBroadcastCount())
+        except AttributeError:
+            count = 1
+        if view_index >= count:
+            raise ValueError("INVALID_VIEW_INDEX: view_index exceeds multiview count")
+        mesh = controller.GetPostVSData(instance, view_index, mesh_stage)
 
         # Check if valid
         if mesh is None or mesh.vertexResourceId == rd.ResourceId.Null():
             return None
         if hasattr(mesh, "status") and mesh.status:
-            return None
+            raise ValueError("MESH_DATA_UNAVAILABLE: %s" % mesh.status)
 
         return mesh
 
-    def _get_postvs_inputs(self, controller, action, stage: str, instance: int) -> list:
+    def _get_postvs_inputs(self, controller, action, stage: str, instance: int, view_index: int = 0) -> list:
         """
         Build per-attribute entries for VSOut/GSOut from the shader output signature.
 
@@ -301,7 +328,7 @@ class MeshService:
         the front, and 32-bit-expanded components with vec4 alignment only when
         HasAlignedPostVSData reports an aligned (compute-built) buffer.
         """
-        mesh = self._get_postvs_data(controller, action, stage, instance)
+        mesh = self._get_postvs_data(controller, action, stage, instance, view_index)
         if mesh is None:
             return []
 
@@ -471,6 +498,9 @@ class MeshService:
                 indexByteStride=mesh.indexByteStride,
                 baseVertex=mesh.baseVertex,
                 indexOffset=0,
+                allowRestart=getattr(mesh, "allowRestart", True),
+                native_status=getattr(mesh, "status", ""),
+                position_semantic=getattr(sig, "systemValue", None) == getattr(rd.ShaderBuiltin, "Position", object()),
             ))
         return inputs
 
@@ -481,6 +511,8 @@ class MeshService:
         instance offset is already baked into vertexByteOffset, so no per-vertex
         stride advance applies.
         """
+        if idx < 0:
+            raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative vertex index")
         if getattr(mesh, "instanced", False):
             return mesh.vertexByteOffset
         return mesh.vertexByteOffset + mesh.vertexByteStride * idx
@@ -507,6 +539,14 @@ class MeshService:
             ):
                 buffer_cache[res_id] = controller.GetBufferData(res_id, 0, 0)
         return buffer_cache
+
+    def _read_attribute(self, mesh, buffers, idx):
+        if hasattr(mesh, "constant_value"):
+            return mesh.constant_value
+        if mesh.vertexResourceId not in buffers:
+            raise ValueError("MESH_DATA_SHORT_READ: missing required attribute buffer")
+        return self._unpack_vertex_data(mesh.format, buffers[mesh.vertexResourceId],
+                                        self._vertex_byte_offset(mesh, idx))
 
     def _get_resource_name(self, controller, resource_id) -> str:
         """Get resource name from RenderDoc"""
@@ -609,7 +649,7 @@ class MeshService:
         unit-length (i.e. not a normal) is used. Every computed box is returned
         so callers can verify the choice.
         """
-        sample = indices[:1000]
+        sample = [i for i in indices if i != -1][:1000]
         eligible = [mesh for mesh in mesh_inputs
                     if not mesh.format.Special()
                     and mesh.format.compCount >= 3
@@ -669,7 +709,7 @@ class MeshService:
             source = "first_three_component_attribute"
         return boxes, chosen, source
 
-    def get_mesh_summary(self, action_event_id: int, instance: int = 0) -> dict:
+    def get_mesh_summary(self, action_event_id: int, instance: int = 0, view_index: int = 0) -> dict:
         """
         Get mesh summary information for an event.
 
@@ -681,6 +721,9 @@ class MeshService:
             Dict with topology, vertex/index counts, attributes and bounding box
         """
         _validate_instance(instance)
+        _validate_instance(view_index)
+        if view_index:
+            raise ValueError("INVALID_VIEW_INDEX: VSIn does not have a multiview selection")
 
         def operation(controller, target):
             action = self.ctx.GetAction(action_event_id)
@@ -700,6 +743,13 @@ class MeshService:
                     "format": str(mesh.format.Name()),
                     "components": mesh.format.compCount,
                     "instanced": bool(getattr(mesh, "instanced", False)),
+                    "source": {"resource_id": str(mesh.vertexResourceId),
+                               "vertex_byte_offset": mesh.vertexByteOffset,
+                               "vertex_byte_stride": mesh.vertexByteStride,
+                               "vertex_buffer_slot": getattr(mesh, "source_vertex_buffer", None),
+                               "attribute_byte_offset": getattr(mesh, "source_attribute_offset", None),
+                               "binding_byte_offset": getattr(mesh, "source_binding_offset", None),
+                               "instance_rate": getattr(mesh, "source_instance_rate", None)},
                     "exportable": self._exportable(mesh),
                 })
 
@@ -725,7 +775,7 @@ class MeshService:
                 except Exception:
                     indices = []
                     indices_available = False
-                unique_vertex_count = len(set(indices)) if indices_available else None
+                unique_vertex_count = len(set(indices) - {-1}) if indices_available else None
             else:
                 indices = list(range(action.numIndices))
                 unique_vertex_count = action.numIndices
@@ -737,6 +787,7 @@ class MeshService:
             return {
                 "action_event_id": action_event_id,
                 "instance": instance,
+                "view_index": view_index,
                 "name": self._resolve_mesh_name(controller, mesh_inputs, action),
                 "topology": topology,
                 "topology_source": topology_source,
@@ -763,6 +814,7 @@ class MeshService:
         limit: int = 100,
         attributes: Optional[List[str]] = None,
         instance: int = 0,
+        view_index: int = 0,
     ) -> dict:
         """
         Get mesh vertex and index data for a specific draw call.
@@ -781,6 +833,9 @@ class MeshService:
         if stage not in _MESH_STAGES:
             raise ValueError("INVALID_STAGE: %s. Must be VSIn, VSOut, or GSOut" % stage)
         _validate_instance(instance)
+        _validate_instance(view_index)
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("INVALID_PAGINATION: offset >= 0, 1 <= limit <= 500 required")
 
         def operation(controller, target):
             action = self.ctx.GetAction(action_event_id)
@@ -800,7 +855,7 @@ class MeshService:
                     )
             else:
                 # VSOut or GSOut: attributes come from the shader output signature
-                mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance)
+                mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance, view_index)
                 if not mesh_inputs:
                     raise ValueError(
                         "RESOURCE_NOT_FOUND: no %s data available for event %d"
@@ -821,11 +876,9 @@ class MeshService:
                     )
 
             # Get indices
-            if stage == "VSIn":
-                all_indices = self._get_indices(controller, mesh_inputs[0])
-            else:
-                # For VSOut/GSOut, indices are typically sequential
-                all_indices = list(range(mesh_inputs[0].numIndices))
+            if stage == "VSIn" and view_index:
+                raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
+            all_indices = self._get_indices(controller, mesh_inputs[0])
 
             # Calculate pagination info
             total_count = len(all_indices)
@@ -850,22 +903,22 @@ class MeshService:
                     "format": str(mesh.format.Name()),
                     "components": mesh.format.compCount,
                     "instanced": bool(getattr(mesh, "instanced", False)),
+                    "source": {"resource_id": str(mesh.vertexResourceId),
+                               "vertex_byte_offset": mesh.vertexByteOffset,
+                               "vertex_byte_stride": mesh.vertexByteStride,
+                               "vertex_buffer_slot": getattr(mesh, "source_vertex_buffer", None),
+                               "instance_rate": getattr(mesh, "source_instance_rate", None)},
                 })
 
             # Process each vertex
             for idx in indices:
                 vertex = {}
+                if idx == -1:
+                    vertices.append({"primitive_restart": True})
+                    continue
                 for mesh in mesh_inputs:
-                    if mesh.vertexResourceId == rd.ResourceId.Null():
-                        continue
-
-                    if mesh.vertexResourceId in buffer_cache:
-                        buffer_data = buffer_cache[mesh.vertexResourceId]
-                        byte_offset = self._vertex_byte_offset(mesh, idx)
-                        values = self._unpack_vertex_data(mesh.format, buffer_data, byte_offset)
-
-                        # Store as list
-                        vertex[mesh.name] = list(values)[: mesh.format.compCount]
+                    values = self._read_attribute(mesh, buffer_cache, idx)
+                    vertex[mesh.name] = list(values)[:mesh.format.compCount]
 
                 vertices.append(vertex)
 
@@ -877,9 +930,12 @@ class MeshService:
             return {
                 "action_event_id": action_event_id,
                 "instance": instance,
+                "view_index": view_index,
                 "stage": stage,
                 "topology": topology,
-                "items": vertices,
+                "items": [{k: [v if not isinstance(v, float) or math.isfinite(v) else None for v in values]
+                           if isinstance(values, list) else values for k, values in vertex.items()}
+                          for vertex in vertices],
                 "offset": offset,
                 "limit": limit,
                 "returned_count": len(vertices),
@@ -889,7 +945,11 @@ class MeshService:
                 "has_more": has_more,
                 "truncated": truncated,
                 "attributes": attribute_info,
-                "indices": list(indices) if stage == "VSIn" else [],
+                "indices": list(indices),
+                "unique_vertex_count": len(set(all_indices) - {-1}),
+                "index_domain": "input" if stage == "VSIn" else "post_transform",
+                "native_status": getattr(mesh_inputs[0], "native_status", ""),
+                "data_quality": self._quality(vertices, mesh_inputs, offset, total_count),
             }
 
         return at_event(self.ctx, self._invoke, action_event_id, operation)
@@ -901,6 +961,7 @@ class MeshService:
         stage: str = "VSIn",
         attributes: Optional[List[str]] = None,
         instance: int = 0,
+        view_index: int = 0,
     ) -> dict:
         """
         Export mesh data to CSV file.
@@ -924,6 +985,9 @@ class MeshService:
         if stage not in _MESH_STAGES:
             raise ValueError("INVALID_STAGE: %s. Must be VSIn, VSOut, or GSOut" % stage)
         _validate_instance(instance)
+        _validate_instance(view_index)
+        if stage == "VSIn" and view_index:
+            raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
 
         def operation(controller, target):
             action = self.ctx.GetAction(action_event_id)
@@ -942,7 +1006,7 @@ class MeshService:
                         % action_event_id
                     )
             else:
-                mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance)
+                mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance, view_index)
                 if not mesh_inputs:
                     raise ValueError(
                         "RESOURCE_NOT_FOUND: no %s data available for event %d"
@@ -971,10 +1035,9 @@ class MeshService:
                 )
 
             # Get indices
-            if stage == "VSIn":
-                indices = self._get_indices(controller, mesh_inputs[0])
-            else:
-                indices = list(range(mesh_inputs[0].numIndices))
+            if stage == "VSIn" and view_index:
+                raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
+            indices = self._get_indices(controller, mesh_inputs[0])
 
             # Batch get buffer data
             buffer_cache = self._batch_get_buffer_data(controller, mesh_inputs)
@@ -994,17 +1057,16 @@ class MeshService:
             unique_vertices = {}  # {original_idx: [attr_values...]}
 
             for idx in indices:
+                if idx == -1:
+                    continue
                 if idx not in unique_vertices:
                     attribute_values = []
                     for mesh in mesh_inputs:
                         if not self._exportable(mesh):
                             continue
-                        if mesh.vertexResourceId in buffer_cache:
-                            buffer_data = buffer_cache[mesh.vertexResourceId]
-                            byte_offset = self._vertex_byte_offset(mesh, idx)
-                            values = self._unpack_vertex_data(mesh.format, buffer_data, byte_offset)
-                            for j in range(mesh.format.compCount):
-                                attribute_values.append(values[j])
+                        values = self._read_attribute(mesh, buffer_cache, idx)
+                        for j in range(mesh.format.compCount):
+                            attribute_values.append(values[j])
                     unique_vertices[idx] = attribute_values
 
             # Build remapping
@@ -1019,7 +1081,9 @@ class MeshService:
             # Build triangle stream
             triangle_stream = []  # remapped indices
             for idx in indices:
-                if idx in remap:
+                if idx == -1:
+                    triangle_stream.append(-1)
+                elif idx in remap:
                     triangle_stream.append(remap[idx])
 
             # A header without attribute columns means every attribute was
@@ -1056,6 +1120,15 @@ class MeshService:
                 "success": True,
                 "action_event_id": action_event_id,
                 "instance": instance,
+                "view_index": view_index,
+                "restart_index": -1,
+                "topology": str(mesh_inputs[0].topology),
+                "native_status": getattr(mesh_inputs[0], "native_status", ""),
+                "data_quality": self._quality([
+                    {m.name: list(self._read_attribute(m, buffer_cache, idx)) for m in mesh_inputs
+                     if self._exportable(m)} if idx != -1 else {"primitive_restart": True}
+                    for idx in indices[:1000]
+                ], mesh_inputs, 0, len(indices)),
                 "output_path": output_path,
                 "index_path": index_path,
                 "vertex_count": len(unique_vertices),
@@ -1067,3 +1140,68 @@ class MeshService:
             }
 
         return at_event(self.ctx, self._invoke, action_event_id, operation)
+
+    @staticmethod
+    def _quality(vertices, inputs, offset, total):
+        sample = vertices[:1000]
+        seen = set()
+        nonfinite = 0
+        points = []
+        for vertex in sample:
+            flat = []
+            for values in vertex.values():
+                if isinstance(values, (tuple, list)):
+                    flat.extend(values)
+            nonfinite += sum(isinstance(x, float) and not math.isfinite(x) for x in flat)
+            seen.add(tuple(flat))
+            if len(flat) >= 3 and all(isinstance(x, (int, float)) and math.isfinite(x) for x in flat[:3]):
+                points.append(flat[:3])
+        warnings = []
+        if nonfinite:
+            warnings.append("non_finite_components")
+        if sample and len(seen) < len(sample):
+            warnings.append("repeated_attribute_rows_may_be_legal")
+        box = ({"min": [min(p[i] for p in points) for i in range(3)],
+                "max": [max(p[i] for p in points) for i in range(3)]} if points else None)
+        position = next((m.name for m in inputs if getattr(m, "position_semantic", False)), None)
+        degenerate, tested = 0, 0
+        if position and inputs and str(inputs[0].topology).split(".")[-1] == "TriangleList":
+            triangle = []
+            for vertex in sample:
+                if vertex.get("primitive_restart"):
+                    triangle = []
+                    continue
+                p = vertex.get(position)
+                if p is None or len(p) < 3 or not all(math.isfinite(v) for v in p[:3]):
+                    triangle = []
+                    continue
+                triangle.append(p[:3])
+                if len(triangle) == 3:
+                    a, b, c = triangle
+                    u, v = [b[i] - a[i] for i in range(3)], [c[i] - a[i] for i in range(3)]
+                    cross = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]]
+                    degenerate += int(all(x == 0 for x in cross))
+                    tested += 1
+                    triangle = []
+        if degenerate:
+            warnings.append("degenerate_position_triangles_may_be_legal_or_unavailable_postvs")
+        constants = []
+        for mesh in inputs:
+            values = [tuple(v[mesh.name]) for v in sample if mesh.name in v]
+            if len(values) > 1 and len(set(values)) == 1:
+                constants.append(mesh.name)
+        position_points = [v[position][:3] for v in sample if position and position in v
+                           and len(v[position]) >= 3 and all(math.isfinite(x) for x in v[position][:3])]
+        position_bounds = ({"min": [min(p[i] for p in position_points) for i in range(3)],
+                            "max": [max(p[i] for p in position_points) for i in range(3)]}
+                           if position_points else None)
+        return {"sample_offset": offset, "sample_count": len(sample), "total_count": total,
+                "nonfinite_components": nonfinite,
+                "duplicate_row_count": len(sample) - len(seen),
+                "duplicate_row_ratio": (len(sample) - len(seen)) / float(len(sample)) if sample else None,
+                "constant_attributes": constants, "uv_semantics": "not_inferred",
+                "position_bounds": position_bounds,
+                "first_attribute_bounds": box, "position_semantics": "builtin_position" if position else "unverified",
+                "position_attribute": position, "triangles_tested": tested,
+                "degenerate_triangles": degenerate if tested else None,
+                "warnings": warnings}

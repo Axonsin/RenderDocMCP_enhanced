@@ -25,6 +25,10 @@ _RELOAD_MODULES = [
     ".services.resource_catalog",
     ".services.structured_data",
     ".services.replay_query",
+    ".services.native_serialization",
+    ".services.session_state",
+    ".services.job_service",
+    ".services.texture_values",
     ".services.capture_manager",
     ".services.action_service",
     ".services.search_service",
@@ -36,6 +40,8 @@ _RELOAD_MODULES = [
     ".services.mesh_service",
     ".services.shader_edit_service",
     ".services.analysis_service",
+    ".services.batch_service",
+    ".services.investigation_service",
     ".services",
     ".renderdoc_facade",
     ".request_handler",
@@ -60,6 +66,10 @@ def register(version, ctx):
         ctx: CaptureContext handle
     """
     global _context, _server, _version, _facade
+    import re
+    numbers = re.match(r"(\d+)\.(\d+)", version)
+    if not numbers or tuple(int(n) for n in numbers.groups()) < (1, 46):
+        raise RuntimeError("RenderDoc MCP 2.0 requires RenderDoc 1.46 or newer")
     _version = version
     _context = ctx
     _reload_child_modules()
@@ -101,8 +111,11 @@ def _extension_version():
 
 def _runtime_info(renderdoc_version):
     """Version/protocol info reported by get_capture_status and ping."""
+    from .services.session_state import build_fingerprint
     return {
         "extension_version": _extension_version(),
+        "api_contract_version": 2,
+        "extension_build_hash": build_fingerprint(),
         "renderdoc_version": renderdoc_version,
         "ipc_version": socket_server.IPC_VERSION,
     }

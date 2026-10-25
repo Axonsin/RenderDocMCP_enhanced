@@ -132,8 +132,8 @@ def test_invalid_search_options_fail_before_replay(options):
 
 def buffer_fixture(size):
     rid = resource_tests.ResourceId(7)
-    controller = NS(GetBuffers=lambda: [NS(resourceId=rid, length=size)])
-    ctx = NS(IsCaptureLoaded=lambda: True)
+    controller = NS(GetBuffers=lambda: [NS(resourceId=rid, length=size)], SetFrameEvent=lambda *args: None)
+    ctx = NS(IsCaptureLoaded=lambda: True, CurEvent=lambda: 1)
     return controller, resource_tests.RESOURCE.ResourceService(ctx, lambda cb: cb(controller))
 
 

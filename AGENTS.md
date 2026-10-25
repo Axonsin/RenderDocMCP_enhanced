@@ -1,5 +1,7 @@
 # RenderDoc MCP Server
 
+版本 2.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 2。迁移见 docs/migration_v2.md。
+
 作为 RenderDoc UI 扩展运行的 MCP 服务器。帮助 AI 助手访问 RenderDoc 的捕获数据，辅助 DirectX 11/12 图形调试。
 
 ## 架构
@@ -73,7 +75,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `revert_shader` | 还原原始 shader 并刷新 RenderDoc |
 | `list_shader_replacements` | 查询生效替换与各编辑会话状态 |
 | `export_shader_source` | 导出编辑后的 shader 源码（UTF-8，不覆盖已有文件） |
-| `get_buffer_contents` | 缓冲区数据获取（按数值 ID 匹配；偏移/长度指定；单次上限 256 KiB 可分页） |
+| `get_buffer_contents` | 支持 action_event_id 的事件后缓冲读取并恢复 replay；缓冲区数据获取（按数值 ID 匹配；偏移/长度指定；单次上限 256 KiB 可分页） |
 | `list_resources` | 全部 API 对象目录（支持类型/名称过滤、排序和分页） |
 | `inspect_resource` | 资源元数据、父/派生关系、使用统计和初始化调用目录 |
 | `get_resource_initialization` | 初始化调用目录和按索引路径展开的参数树 |
@@ -87,7 +89,14 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_mesh_summary` | 获取网格概要信息（管线拓扑、`num_vertices` 保留 `numIndices` 语义、`unique_vertex_count` 为去重引用数、多属性包围盒；支持 instance 选择） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段与 instance 选择） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择；无可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`） |
-| `dump_draws` | 批量导出 1–256 个 draw 的 VSIn 网格、VS/PS 输入贴图和材质状态，可将完整结果写入 JSON |
+| `dump_draws` | 异步批量导出：output_dir + draw列表/marker/EID范围，状态、取消、纹理额度暂停及续跑 |
+| `get_replay_context` | 当前/配置/官方协议发现的远端主机与服务状态 |
+| `get_job_status` | 分页作业状态、阶段、进度、错误与结果清单 |
+| `cancel_job` | 请求协作取消；原生加载不能强行中断 |
+| `resume_job` | 同会话/修订内续跑暂停或已取消作业 |
+| `export_shader_bundle` | 异步导出原始 Shader、反射、反汇编、已捕获源码及哈希 |
+| `compare_texture_events` | 异步比较两个 action 后同一纹理 ROI 的数值 |
+| `get_pixel_history` | 异步原生像素历史；按设备能力与原生有效性返回 |
 
 ### get_actions 过滤选项
 
@@ -110,8 +119,9 @@ list_captures(directory="D:\\captures")
 # → {"count": 3, "captures": [{"filename": "game.rdc", "path": "...", "size_bytes": 12345, "modified_time": "..."}, ...]}
 
 # 打开捕获文件（现有捕获会自动关闭）
-open_capture(capture_path="D:\\captures\\game.rdc")
-# → {"success": true, "filename": "game.rdc", "api": "D3D11"}
+job = open_capture(capture_path="D:\\captures\\game.rdc")
+get_job_status(job_id=job["job_id"])
+# → {"job_id": "...", "status": "queued", ...}
 
 # 确认捕获加载状态与回放健康
 get_capture_status()
@@ -265,7 +275,7 @@ get_mesh_data(
     action_event_id=1234,
     stage="VSIn",           # VSIn, VSOut, GSOut
     offset=0,               # 起始偏移量（分页）
-    limit=100,              # 每次获取的顶点数（建议 100-500）
+    limit=100,              # 每次获取的绘制引用数（建议 100-500）
     attributes=["POSITION", "NORMAL", "TEXCOORD"],  # 可选，过滤属性
     instance=0              # 可选，实例索引（VSIn per-instance 按 instance*stride 寻址；
                             #  VSOut/GSOut 读取对应实例的 post-VS 数据）
@@ -283,7 +293,7 @@ get_mesh_data(
 #     "offset": 0,
 #     "limit": 100,
 #     "returned_count": 100,
-#     "total_count": 3024,
+#     "total_count": 9072,
 #     "has_more": true,
 #     "truncated": false,
 #     "attributes": [...]
@@ -319,7 +329,7 @@ export_mesh_csv(
 
 **分页说明**：
 - 使用 `offset` 和 `limit` 进行分页
-- `total_count` 表示总顶点数，`returned_count` 为本次返回数量
+- `total_count` 表示总绘制引用数，`returned_count` 为本次返回数量
 - `has_more` 表示是否还有更多数据
 - 建议每次获取 100-500 顶点
 
@@ -369,6 +379,10 @@ renderdoc-mcp
 - `request.json`: 请求（MCP 服务器 → RenderDoc）
 - `response_<request_id>.json`: 响应（RenderDoc → MCP 服务器）
 - `call.lock`: MCP 客户端间的 OS 事务锁；request/response 通过临时文件原子发布
+- `jobs/<job_id>.json`：原子作业元数据；`jobs/<job_id>/items/` 保存独立条目
+- `jobs/controls/<job_id>.cancel.json`：MCP 原子发布取消请求，由扩展在步骤间协作处理
+- `get_job_status` 直接读取作业快照；UI 模态停滞时仍能报告阶段与持续时间，不能据此认定原生调用失败
+- 批处理状态页只返回紧凑条目，完整绑定／常量布局从 details_path 对应文件读取；不要反复倾倒完整清单进上下文
 - 轮询间隔: 100ms（RenderDoc 端）
 
 ## 开发注意事项
@@ -376,6 +390,8 @@ renderdoc-mcp
 - RenderDoc 内置 Python 没有 socket/QtNetwork 模块，因此采用基于文件的 IPC
 - RenderDoc 扩展仅使用 Python 3.6 标准库
 - 对 ReplayController 的访问通过 `BlockInvoke` 进行。
+- 异步作业通过 `AsyncInvoke` 分步访问 ReplayController，不嵌套 `BlockInvoke`，不保存控制器对象。
+- 后台 Python 工作线程仅做清单写入和数值运算；不能访问 Qt 或 ReplayController，以免阻塞 UI 保活。
 - 需要语法支持可以参考项目内的stubs文件夹，记录了renderdoc python module的模块语法支持。
 
 ## 参考链接

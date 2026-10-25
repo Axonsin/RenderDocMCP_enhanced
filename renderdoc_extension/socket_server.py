@@ -77,6 +77,7 @@ class MCPBridgeServer(QObject):
 
         # Check if request file exists
         if not os.path.exists(REQUEST_FILE):
+            self._pump_jobs()
             return
 
         self._busy = True  # ShaderProcessingTool progress dialogs run a nested Qt event loop.
@@ -116,3 +117,12 @@ class MCPBridgeServer(QObject):
             self._busy = False
             if temporary and os.path.exists(temporary):
                 os.remove(temporary)
+        # Publish the reply before starting any native/UI operation. Continuous
+        # status polling must not starve the cooperative job scheduler.
+        self._pump_jobs()
+
+    def _pump_jobs(self):
+        facade = getattr(self.handler, "facade", None)
+        jobs = getattr(facade, "_jobs", None)
+        if jobs:
+            jobs.pump()

@@ -14,6 +14,9 @@ from .services import (
     MeshService,
     AnalysisService,
     BatchService,
+    SessionState,
+    JobService,
+    InvestigationService,
 )
 
 
@@ -41,15 +44,18 @@ class RenderDocFacade:
         self.ctx = ctx
         self.runtime_info = runtime_info or {}
 
-        # Initialize service classes
-        self._capture = CaptureManager(ctx, self._invoke, runtime_info)
+        # Shared identity and jobs own all capture-scoped asynchronous work.
+        self._session = SessionState(ctx)
+        self._jobs = JobService(ctx, self._session)
+        self._capture = CaptureManager(ctx, self._invoke, runtime_info, self._session, self._jobs)
         self._action = ActionService(ctx, self._invoke)
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
-        self._pipeline = PipelineService(ctx, self._invoke)
+        self._pipeline = PipelineService(ctx, self._invoke, self._session)
         self._shader_edit = ShaderEditService(ctx, self._invoke)
         self._mesh = MeshService(ctx, self._invoke)
-        self._batch = BatchService(ctx, self._invoke, self._mesh)
+        self._batch = BatchService(ctx, self._invoke, self._mesh, self._session, self._jobs)
+        self._investigation = InvestigationService(ctx, self._session, self._jobs)
         self._analysis = AnalysisService(
             ctx,
             self._invoke,
@@ -65,22 +71,49 @@ class RenderDocFacade:
 
     def dispose(self):
         """Revert owned shader edits before the extension unloads."""
+        self._jobs.dispose()
         self._shader_edit.dispose()
+        self._session.dispose()
         self._pipeline.dispose()
 
     # ==================== Capture Management ====================
 
-    def get_capture_status(self):
+    def get_capture_status(self, probe_replay=True):
         """Check if a capture is loaded and get API info"""
-        return self._capture.get_capture_status()
+        return self._capture.get_capture_status(probe_replay)
 
     def list_captures(self, directory):
         """List all .rdc files in the specified directory"""
         return self._capture.list_captures(directory)
 
-    def open_capture(self, capture_path):
-        """Open a capture file in RenderDoc"""
-        return self._capture.open_capture(capture_path)
+    def open_capture(self, capture_path, file_location="local", replay_target="current", remote_host=None, job_id=None):
+        return self._capture.open_capture(capture_path, file_location, replay_target, remote_host, job_id)
+
+    def get_replay_context(self):
+        return self._capture.get_replay_context()
+
+    def get_job_status(self, job_id, offset=0, limit=100):
+        return self._jobs.status(job_id, offset, limit)
+
+    def cancel_job(self, job_id):
+        return self._jobs.cancel(job_id)
+
+    def resume_job(self, job_id, texture_budget=48):
+        return self._jobs.resume(job_id, texture_budget)
+
+    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None):
+        return self._investigation.export_shader_bundle(action_event_id, stage, output_dir, job_id)
+
+    def compare_texture_events(self, resource_id, action_event_id_a, action_event_id_b, region, output_dir,
+                               mip=0, slice_index=0, sample=0, depth_slice=0, value_domain="storage", job_id=None):
+        return self._investigation.compare_texture_events(resource_id, action_event_id_a, action_event_id_b,
+                                                          region, output_dir, mip, slice_index, sample,
+                                                          depth_slice, value_domain, job_id)
+
+    def get_pixel_history(self, resource_id, x, y, action_event_id, output_dir,
+                          mip=0, slice_index=0, sample=0, job_id=None):
+        return self._investigation.get_pixel_history(resource_id, x, y, action_event_id, output_dir,
+                                                     mip, slice_index, sample, job_id)
 
     # ==================== Action Operations ====================
 
@@ -157,9 +190,9 @@ class RenderDocFacade:
         return self._resource.get_resource_initialization(
             resource_id, chunk_index, child_path, offset, limit)
 
-    def get_buffer_contents(self, resource_id, offset=0, length=0):
+    def get_buffer_contents(self, resource_id, offset=0, length=0, action_event_id=None):
         """Get buffer data"""
-        return self._resource.get_buffer_contents(resource_id, offset, length)
+        return self._resource.get_buffer_contents(resource_id, offset, length, action_event_id)
 
     def get_texture_info(self, resource_id):
         """Get texture metadata"""
@@ -204,10 +237,18 @@ class RenderDocFacade:
         return self._shader_edit.get_shader_edit_context(event_id, stage, mode)
 
     def replace_shader(self, edit_id, source_text):
-        return self._shader_edit.replace_shader(edit_id, source_text)
+        result = self._shader_edit.replace_shader(edit_id, source_text)
+        if hasattr(self, "_session"):
+            self._session.replay_revision += 1
+            self._session.replacements = None
+        return result
 
     def revert_shader(self, edit_id):
-        return self._shader_edit.revert_shader(edit_id)
+        result = self._shader_edit.revert_shader(edit_id)
+        if hasattr(self, "_session"):
+            self._session.replay_revision += 1
+            self._session.replacements = None
+        return result
 
     def list_shader_replacements(self):
         return self._shader_edit.list_shader_replacements()
@@ -270,9 +311,9 @@ class RenderDocFacade:
 
     # ==================== Mesh Operations ====================
 
-    def get_mesh_summary(self, action_event_id, instance=0):
+    def get_mesh_summary(self, action_event_id, instance=0, view_index=0):
         """Get mesh summary information for a draw call"""
-        return self._mesh.get_mesh_summary(action_event_id, instance=instance)
+        return self._mesh.get_mesh_summary(action_event_id, instance=instance, view_index=view_index)
 
     def get_mesh_data(
         self,
@@ -282,6 +323,7 @@ class RenderDocFacade:
         limit=100,
         attributes=None,
         instance=0,
+        view_index=0,
     ):
         """Get mesh vertex and index data for a draw call (with pagination)"""
         return self._mesh.get_mesh_data(
@@ -291,6 +333,7 @@ class RenderDocFacade:
             limit=limit,
             attributes=attributes,
             instance=instance,
+            view_index=view_index,
         )
 
     def export_mesh_csv(
@@ -300,29 +343,16 @@ class RenderDocFacade:
         stage="VSIn",
         attributes=None,
         instance=0,
+        view_index=0,
     ):
         """Export mesh data to CSV file"""
         return self._mesh.export_mesh_csv(
-            action_event_id, output_path, stage, attributes, instance=instance
+            action_event_id, output_path, stage, attributes, instance=instance, view_index=view_index
         )
 
-    def dump_draws(
-        self,
-        action_event_ids,
-        mesh_dir=None,
-        texture_dir=None,
-        export_meshes=True,
-        export_textures=True,
-        max_textures=48,
-        summary_path=None,
-    ):
-        """Dump meshes plus per-draw material facts for many draws in one request."""
-        return self._batch.dump_draws(
-            action_event_ids,
-            mesh_dir=mesh_dir,
-            texture_dir=texture_dir,
-            export_meshes=export_meshes,
-            export_textures=export_textures,
-            max_textures=max_textures,
-            summary_path=summary_path,
-        )
+    def dump_draws(self, output_dir, action_event_ids=None, marker_filter=None, action_event_id_range=None,
+                   mesh_stage="VSIn", instances=None, view_index=0, export_meshes=True, export_textures=True,
+                   max_textures=48, max_texture_edge=None, skip_depth=False, job_id=None):
+        return self._batch.dump_draws(output_dir, action_event_ids, marker_filter, action_event_id_range,
+                                     mesh_stage, instances, view_index, export_meshes, export_textures,
+                                     max_textures, max_texture_edge, skip_depth, job_id)

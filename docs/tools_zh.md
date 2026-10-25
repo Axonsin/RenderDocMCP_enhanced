@@ -4,6 +4,8 @@
 
 [English](tools.md)
 
+RenderDoc MCP **2.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v2.md).
+
 ## 术语与字段约定
 
 | 术语 / 字段 | 含义 |
@@ -55,17 +57,26 @@ API 调用上下文的名称字段为 `name`；`inspect_action.timing.action` �
 
 #### `open_capture`
 
-打开 RenderDoc 捕获文件 (.rdc)。会自动关闭当前已打开的捕获。
+提交捕获加载作业并立即返回 `job_id`，使用 `get_job_status` 查询。
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `capture_path` | `str` | 是 | 捕获文件的完整路径 |
+| Parameter | Default | Meaning |
+|---|---|---|
+| `capture_path` | required | Absolute local or remote .rdc path |
+| `file_location` | `"local"` | `local` or `remote`: file location |
+| `replay_target` | `"current"` | `current`, `local`, or `remote`: replay location |
+| `remote_host` | null | Explicit host for replay_target=remote; otherwise reuse current remote context |
+| `job_id` | generated | Stable submission ID; same ID+parameters is idempotent |
 
-**返回值：** `{"success": true, "filename": "game.rdc", "api": "D3D11"}`
+远端预检通过后才替换当前捕获。本地文件通过官方接口上传；远端文件通过官方传输接口
+下载真实字节到临时目录，核验捕获元数据与哈希，随后以 local=False 加载。
+Android 的目录浏览返回应用／Activity，不用于判定捕获文件存在。
+仅启动明确指定主机的官方回放服务；版本、连接、启动错误明确返回。
+原生 LoadCapture 仍可能弹出模态错误；running/stalled 不等于失败。
 
-**示例：**
-```
-open_capture(capture_path="D:/captures/game.rdc")
+```python
+job = open_capture(capture_path="D:/captures/game.rdc", file_location="local",
+                   replay_target="remote", remote_host="adb://DEVICE_SERIAL")
+get_job_status(job_id=job["job_id"])
 ```
 
 ---
@@ -94,7 +105,7 @@ list_captures(directory="D:/captures")
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| *(无)* | | | |
+| `probe_replay` | `bool` | 否 | 默认 true；false 仅返回上下文／版本信息，不执行回放健康探针 |
 
 **返回值：** `{"loaded": true, "api": "D3D11", "filename": "...", "remote_replay": false,
 "replay_healthy": true, "replay_error": null, "extension_version": "...",
@@ -570,6 +581,8 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 #### `get_buffer_contents`
 
+Optional `action_event_id` reads **after** that action, then restores replay. Omission reads the current event. Returns actual `action_event_id`, `event_phase`, `read_range`, `replay_restored`, `source`; max inline 256 KiB.
+
 读取缓冲区资源的内容。返回 Base64 编码的字节。`offset`/`length` 为非负字节值，负值或
 `offset` 超过缓冲大小时报 `INVALID_PAGINATION`；回放读取失败报 `RESOURCE_QUERY_FAILED`，
 资源不存在报 `BUFFER_NOT_FOUND`，不再静默返回空数据。
@@ -599,6 +612,8 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 ---
 
 #### `get_mesh_summary`
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
 
 获取特定 draw call 事件的网格数据摘要。
 
@@ -638,6 +653,10 @@ get_mesh_summary(action_event_id=1234)
 ---
 
 #### `get_mesh_data`
+
+Pagination units and `total_count` count draw references. `indices` is populated for all stages; post-VS uses the returned native index buffer, offset/width/base vertex. `unique_vertex_count` counts distinct references. Primitive restart is -1.
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
 
 获取特定 draw call 的网格顶点和索引数据，支持分页。
 
@@ -903,6 +922,10 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 #### `export_mesh_csv`
 
+CSV contains unique vertices; .idx contains real remapped references (-1 for restart). Retain topology. Short reads, invalid addresses and missing required streams are errors.
+
+2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+
 将网格数据导出为 CSV 文件。
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
@@ -934,36 +957,48 @@ export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="V
 
 #### `dump_draws`
 
-一次 IPC 请求批量导出 draw 的几何与材质相关状态。需要已加载捕获。
+提交可续跑的批量导出，返回 `job_id`，使用 `get_job_status` 查询。
+必需的 `output_dir` 替代 mesh_dir/texture_dir/summary_path；文件和清单位于
+output_dir/job_id。三种选择方式互斥：`action_event_ids`（1..256 个真实 draw）、
+`marker_filter`、`action_event_id_range={"min":...,"max":...}`；范围由服务端解析真实 draw。
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `action_event_ids` | `list[int]` | 是 | | 1–256 个 draw 的 action EID |
-| `mesh_dir` | `str` | 条件必填 | | `export_meshes=true` 时必须提供；保存 `vsIn_<EID>.csv` 和 `.idx` |
-| `texture_dir` | `str` | 条件必填 | | `export_textures=true` 时必须提供；保存 `tex_<资源数值ID>.png` |
-| `export_meshes` | `bool` | 否 | `true` | 导出 VSIn 网格，固定使用 instance 0 |
-| `export_textures` | `bool` | 否 | `true` | 导出 vertex/fragment 阶段输入贴图，本次请求内按资源 ID 去重 |
-| `max_textures` | `int` | 否 | `48` | 本次请求选取的不同贴图导出数量上限；复用已有同名文件也占额度 |
-| `summary_path` | `str` | 否 | | 完整结果的 JSON 路径；省略且提供 `mesh_dir` 时使用 `<mesh_dir>/_batch_summary.json` |
+Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=True`,
+`export_textures=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
+纹理额度耗尽时暂停，resume_job 补充额度。取消在原生步骤之间协作执行；
+不能跨捕获会话、修订或扩展重启续跑。
 
-**返回值：** 有汇总路径时返回 `summary_path`、`draw_count`、`ok_count`、
-`failed_count`、`textures_saved` 和最多前 5 个失败条目 `failed`。完整 JSON 包含
-`draws`、`textures`、`textures_deferred` 及 draw 计数；没有汇总路径时直接返回完整结果。
-每个成功 draw 包含网格路径（启用导出时）、`vertex_shader`、`pixel_shader`、
-`constants`（常量缓冲范围）、`textures`、`blend`、`depth` 和 `object_matrix`。
-单个 draw 处理失败时记录 `ok=false` 和 `error` 并继续；非 draw 条目记录
-`skipped="not_a_draw"`，不计入成功或失败数。
+清单包含绑定、descriptor 子资源、采样器、Shader 身份、顶点布局、质量诊断和来源。
+移除 object_matrix 特判，不自动命名 UV/albedo/normal。相同文件名不代表可复用；
+跨事件重新读取后，才按导出内容哈希去重。过滤条件必须显式配置。
 
-**导出范围：** PNG 固定使用 mip 0、slice 0 并保留 alpha；跳过宽或高超过 4096
-以及匹配深度格式标记的纹理。已有同名 PNG 直接复用，网格和汇总 JSON 会覆盖。
-`object_matrix` 仅尝试读取 vertex 阶段大小为 720 字节的常量绑定，从绑定偏移取前
-16 个 float；这是特定布局假设，需核对 shader 后才能当作物体变换。未找到时为 `null`。
-
-**示例：**
 ```python
-dump_draws(action_event_ids=[343, 350], mesh_dir="D:/output/meshes",
-           texture_dir="D:/output/textures")
-
-# 只查看状态，不导出文件；直接返回完整结果
-dump_draws(action_event_ids=[343], export_meshes=False, export_textures=False)
+job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
+get_job_status(job_id=job["job_id"])
+resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
 ```
+
+## 2.0 job control and investigation / 作业控制与调查
+
+要求 RenderDoc 1.46+，路径必须为绝对路径，服务器与扩展一起升级。
+完整生命周期、限制与文件格式见 [2.0 迁移说明](migration_v2.md)。
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | 状态、阶段、进度、紧凑 draw 摘要、details_path／artifact_paths、错误及清单；像素历史页保留原生字段 |
+| `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
+| `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources and SHA256 files |
+| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts |
+| `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
+
+纹理差分默认比较存储数值；`linear` 仅转换 sRGB RGB，alpha 不转换。
+支持 Vulkan/D3D11/D3D12 的 Regular 8/16/32 位整数／归一化、16/32/64 位浮点，
+以及 R10G10B10A2、R11G11B10。未知格式明确拒绝，不转 PNG 冒充精确差分。
+每个原始子资源上限 64 MiB，ROI 上限 262144 像素，坐标原点为左上角。
+NaN/Inf 单独统计；观测差异不等于单个 draw 的独立贡献。
+
+`get_capture_status(probe_replay=True)` also reports capture_session, replay_revision,
+extension_build_hash, API contract/capabilities, current event and active job. Busy status
+does not run a health probe: replay_healthy is unknown and replay_probe explains why.
+Native serialization failures set section.available=false with a reason, including in composite tools.

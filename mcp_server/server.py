@@ -12,6 +12,7 @@ from .bridge.client import RenderDocBridge, RenderDocBridgeError
 # Initialize FastMCP server
 mcp = FastMCP(
     name="RenderDoc MCP Server",
+    version="2.0.0",
 )
 
 # RenderDoc bridge client
@@ -25,13 +26,13 @@ def _optional_param(params: dict[str, object], name: str, value: object | None) 
 
 
 @mcp.tool
-def get_capture_status() -> dict:
+def get_capture_status(probe_replay: bool = True) -> dict:
     """
     Check if a capture is currently loaded in RenderDoc.
     Returns the capture status, API type, extension/renderdoc/IPC versions,
     and replay health (replay_healthy/replay_error) when loaded.
     """
-    return bridge.call("get_capture_status")
+    return bridge.call("get_capture_status", {"probe_replay": probe_replay})
 
 
 @mcp.tool
@@ -318,6 +319,7 @@ def get_buffer_contents(
     resource_id: str,
     offset: int = 0,
     length: int = 0,
+    action_event_id: int | None = None,
 ) -> dict:
     """
     Read the contents of a buffer resource.
@@ -331,7 +333,7 @@ def get_buffer_contents(
     """
     return bridge.call(
         "get_buffer_contents",
-        {"resource_id": resource_id, "offset": offset, "length": length},
+        {"resource_id": resource_id, "offset": offset, "length": length, "action_event_id": action_event_id},
     )
 
 
@@ -661,21 +663,22 @@ def list_captures(directory: str) -> dict:
 
 
 @mcp.tool
-def open_capture(capture_path: str) -> dict:
-    """
-    Open a RenderDoc capture file (.rdc).
+def open_capture(capture_path: str, file_location: Literal["local", "remote"] = "local",
+                 replay_target: Literal["current", "local", "remote"] = "current",
+                 remote_host: str | None = None, job_id: str | None = None) -> dict:
+    """Submit an asynchronous capture load. Query get_job_status; never retry blindly.
 
-    Args:
-        capture_path: Full path to the capture file to open
-
-    Returns success status and information about the opened capture.
-    Note: This will close any currently open capture.
+    file_location identifies the file, replay_target identifies where replay runs.
+    A local capture replayed remotely is uploaded using RenderDoc's official API.
+    Explicit remote hosts may be started with the configured official launch flow.
+    Native load calls cannot be forcibly cancelled.
     """
-    return bridge.call("open_capture", {"capture_path": capture_path})
+    return bridge.call("open_capture", dict(capture_path=capture_path, file_location=file_location,
+                                           replay_target=replay_target, remote_host=remote_host, job_id=job_id))
 
 
 @mcp.tool
-def get_mesh_summary(action_event_id: int, instance: int = 0) -> dict:
+def get_mesh_summary(action_event_id: int, instance: int = 0, view_index: int = 0) -> dict:
     """
     Get a summary of mesh data for a specific draw call event.
 
@@ -692,7 +695,7 @@ def get_mesh_summary(action_event_id: int, instance: int = 0) -> dict:
     - bounding_box: Min/max bounds if position attribute available
     """
     return bridge.call(
-        "get_mesh_summary", {"action_event_id": action_event_id, "instance": instance}
+        "get_mesh_summary", {"action_event_id": action_event_id, "instance": instance, "view_index": view_index}
     )
 
 
@@ -704,6 +707,7 @@ def get_mesh_data(
     limit: int = 100,
     attributes: list[str] | None = None,
     instance: int = 0,
+    view_index: int = 0,
 ) -> dict:
     """
     Get mesh vertex and index data for a specific draw call (with pagination).
@@ -714,18 +718,18 @@ def get_mesh_data(
     Args:
         action_event_id: The event ID of the draw call to inspect
         stage: Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)
-        offset: Canonical starting vertex offset for pagination (default: 0)
-        limit: Canonical maximum number of vertices to return (default: 100, max recommended: 500)
+        offset: Starting draw-reference offset for pagination (default: 0)
+        limit: Maximum draw references to return (default: 100, maximum: 500)
         attributes: Optional list of attribute names to include (e.g., ["POSITION", "NORMAL", "TEXCOORD"])
                    If None, all attributes are included.
         instance: Instance index for instanced attributes and post-VS data (default: 0)
 
     Returns mesh data including:
     - items: List of vertex data, each vertex is a dict of attribute_name -> values
-    - indices: Index buffer data (empty for non-indexed draws)
+    - indices: Effective vertex references for all stages (-1 for primitive restart)
     - topology: Primitive topology
     - attributes: Metadata about each attribute
-    - total_count: Total number of vertices in the mesh
+    - total_count: Total number of draw references (unique_vertex_count is separate)
     - has_more: Whether more vertices are available
     - truncated: Whether data was truncated
 
@@ -741,6 +745,7 @@ def get_mesh_data(
         "offset": offset,
         "limit": limit,
         "instance": instance,
+        "view_index": view_index,
     }
     _optional_param(params, "attributes", attributes)
     return bridge.call("get_mesh_data", params)
@@ -753,6 +758,7 @@ def export_mesh_csv(
     stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
     attributes: list[str] | None = None,
     instance: int = 0,
+    view_index: int = 0,
 ) -> dict:
     """
     Export mesh data to a CSV file.
@@ -782,6 +788,7 @@ def export_mesh_csv(
         "output_path": output_path,
         "stage": stage,
         "instance": instance,
+        "view_index": view_index,
     }
     if attributes is not None:
         params["attributes"] = attributes
@@ -789,51 +796,98 @@ def export_mesh_csv(
 
 
 @mcp.tool()
-def dump_draws(
-    action_event_ids: list[int],
-    mesh_dir: str | None = None,
-    texture_dir: str | None = None,
-    export_meshes: bool = True,
-    export_textures: bool = True,
-    max_textures: int = 48,
-    summary_path: str | None = None,
-) -> dict:
+def dump_draws(output_dir: str, action_event_ids: list[int] | None = None,
+               marker_filter: str | None = None, action_event_id_range: dict[str, int] | None = None,
+               mesh_stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
+               instances: list[int] | None = None, view_index: int = 0,
+               export_meshes: bool = True, export_textures: bool = True,
+               max_textures: int = 48, max_texture_edge: int | None = None,
+               skip_depth: bool = False, job_id: str | None = None) -> dict:
+    """Submit a resumable export into output_dir/<job_id>/.
+
+    Select exactly one of explicit draw IDs, a marker, or an EID range. Range/marker
+    selectors resolve real draws. Instances default to [0]. Texture allowance
+    exhaustion pauses the job; resume_job supplies a fresh allowance. All exports
+    retain event, binding and subresource provenance. No object-matrix inference.
     """
-    Dump geometry and material facts for many draws in one request.
+    return bridge.call("dump_draws", dict(output_dir=output_dir, action_event_ids=action_event_ids,
+        marker_filter=marker_filter, action_event_id_range=action_event_id_range, mesh_stage=mesh_stage,
+        instances=instances, view_index=view_index, export_meshes=export_meshes, export_textures=export_textures,
+        max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, job_id=job_id))
 
-    One IPC round trip replaces the per-draw calls (export_mesh_csv +
-    get_pipeline_stage + save_texture). Use it to inventory a whole pass: it
-    returns, for every event, the exported mesh, the bound VS/PS shader, the
-    constant-buffer ranges (which carry the per-draw transform), the sampled
-    textures with the local PNG each one was saved to, and the blend/depth state.
 
-    Args:
-        action_event_ids: Draw event IDs to dump (1..256 per call)
-        mesh_dir: Directory for vsIn_<EID>.csv + .idx when export_meshes
-        texture_dir: Directory for tex_<resourceId>.png when export_textures
-        export_meshes: Export VSIn geometry per draw (default True)
-        export_textures: Save each sampled texture once (default True)
-        max_textures: Cap on unique texture exports selected by this call (default 48)
-        summary_path: Full JSON output path; defaults to mesh_dir/_batch_summary.json
-            when mesh_dir is supplied. With a summary path, returns counts and
-            the path instead of the full per-draw facts.
+@mcp.tool()
+def get_replay_context() -> dict:
+    """Get the current/known replay hosts and cached service states without moving replay."""
+    return bridge.call("get_replay_context")
 
-    Per-draw entries also report ok=false with an error string, so a failure on
-    one draw does not hide the rest.
+
+@mcp.tool()
+def get_job_status(job_id: str, offset: int = 0, limit: int = 100) -> dict:
+    """Get persisted job progress/results. Pagination uses items; limit is 1..500.
+
+    A completed job is not a certification of reconstruction or user acceptance.
+    stalled means no recent progress, not proof that the native operation failed.
+    Batch items are compact summaries; details_path points to full persisted
+    bindings/layouts, while artifact_paths lists exported files.
     """
-    params: dict[str, object] = {
-        "action_event_ids": action_event_ids,
-        "export_meshes": export_meshes,
-        "export_textures": export_textures,
-        "max_textures": max_textures,
-    }
-    if summary_path is not None:
-        params["summary_path"] = summary_path
-    if mesh_dir is not None:
-        params["mesh_dir"] = mesh_dir
-    if texture_dir is not None:
-        params["texture_dir"] = texture_dir
-    return bridge.call("dump_draws", params)
+    return bridge.call("get_job_status", dict(job_id=job_id, offset=offset, limit=limit))
+
+
+@mcp.tool()
+def cancel_job(job_id: str) -> dict:
+    """Request cooperative cancellation between steps. Native calls cannot be interrupted."""
+    return bridge.call("cancel_job", {"job_id": job_id})
+
+
+@mcp.tool()
+def resume_job(job_id: str, texture_budget: int = 48) -> dict:
+    """Resume a paused/cancelled export in the same capture/replay revision."""
+    return bridge.call("resume_job", dict(job_id=job_id, texture_budget=texture_budget))
+
+
+@mcp.tool()
+def export_shader_bundle(action_event_id: int, stage: str, output_dir: str,
+                         job_id: str | None = None) -> dict:
+    """Submit a shader evidence export: raw bytes, reflection, disassembly and embedded sources.
+
+    Source text is only included when actually preserved in the capture. Returns a
+    job_id; large shader payloads remain on disk with hashes, not in tool replies.
+    """
+    return bridge.call("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
+                                                   output_dir=output_dir, job_id=job_id))
+
+
+@mcp.tool()
+def compare_texture_events(resource_id: str, action_event_id_a: int, action_event_id_b: int,
+                           region: dict[str, int], output_dir: str, mip: int = 0, slice_index: int = 0,
+                           sample: int = 0, depth_slice: int = 0,
+                           value_domain: Literal["storage", "linear"] = "storage", job_id: str | None = None) -> dict:
+    """Submit typed b-minus-a ROI comparison of the same texture after two actions.
+
+    region={x,y,width,height}, origin top-left. Max ROI 262144 pixels; max raw
+    subresource 64 MiB. Supports regular numeric formats, R10G10B10A2 and R11G11B10
+    on Vulkan/D3D11/D3D12; unsupported formats are explicit errors, never PNG fallbacks.
+    Linear domain applies sRGB decoding to RGB only. Difference is an observation,
+    not an isolated draw contribution. Full signed float64 differences are saved on disk.
+    """
+    return bridge.call("compare_texture_events", dict(resource_id=resource_id,
+        action_event_id_a=action_event_id_a, action_event_id_b=action_event_id_b,
+        region=region, output_dir=output_dir, mip=mip, slice_index=slice_index,
+        sample=sample, depth_slice=depth_slice, value_domain=value_domain, job_id=job_id))
+
+
+@mcp.tool()
+def get_pixel_history(resource_id: str, x: int, y: int, action_event_id: int, output_dir: str,
+                      mip: int = 0, slice_index: int = 0, sample: int = 0, job_id: str | None = None) -> dict:
+    """Submit native pixel history up to the action. Origin top-left; check availability.
+
+    Query get_job_status for paginated fragments and the evidence manifest. Native
+    validity restrictions are retained; failed fragments can lack defined values.
+    """
+    return bridge.call("get_pixel_history", dict(resource_id=resource_id, x=x, y=y,
+        action_event_id=action_event_id, output_dir=output_dir, mip=mip,
+        slice_index=slice_index, sample=sample, job_id=job_id))
 
 
 def main():

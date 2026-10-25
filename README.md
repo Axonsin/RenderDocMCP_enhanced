@@ -1,5 +1,7 @@
 # RenderDoc MCP Server Enhanced
 
+Version **2.0.0** — [2.0 migration / 迁移说明](docs/migration_v2.md). Upgrade server and extension together.
+
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
 > This is a fork of [RenderDocMCP](https://github.com/halby24/RenderDocMCP), focusing on cross-API compatibility (especially OpenGL scenes) and MCP tool interface design improvements.
@@ -49,7 +51,7 @@ Since the built-in Python in RenderDoc does not have the socket module, file-bas
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/)
-- RenderDoc 1.20+
+- RenderDoc 1.46+
 - Windows
 
 > **Note**: Currently only tested on Windows environment.

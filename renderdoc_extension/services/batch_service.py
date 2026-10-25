@@ -1,302 +1,219 @@
-"""Batch dump of draw geometry and material facts in as few IPC round trips as possible.
-
-The extension is the only place that can walk many draws cheaply: each draw still
-costs one BlockInvoke, but the MCP client pays a single request. Everything here is
-Python 3.6 + stdlib plus the renderdoc module.
-"""
-
+"""Event-scoped batch exports, executed as resumable replay-thread steps."""
+import copy
+import hashlib
+import json
 import os
-import struct
 
 import renderdoc as rd
 
-from .pipeline_snapshot import Snapshot
+from .job_service import atomic_json, PauseJob
+from .mesh_service import MeshService
+from .pipeline_snapshot import Snapshot, plain
 from .replay_query import at_event, require_action
-
-# Textures larger than this are almost always scene render targets rather than
-# material inputs; skipping them keeps the dump small and fast.
-MAX_TEXTURE_EDGE = 4096
-_SKIP_FORMAT_MARKERS = ("D16", "D24", "D32", "D32S8", "S8", "DEPTH")
+from .shader_variables import reflected_layout
 
 
-class BatchService(object):
-    def __init__(self, ctx, invoke_fn, mesh_service):
-        self.ctx = ctx
-        self._invoke = invoke_fn
-        self._mesh = mesh_service
+class BatchService:
+    def __init__(self, ctx, invoke_fn, mesh_service, session=None, jobs=None):
+        self.ctx, self._invoke, self._mesh = ctx, invoke_fn, mesh_service
+        self.session, self.jobs = session, jobs
 
-    # ------------------------------------------------------------------ public
-
-    def dump_draws(self, action_event_ids, mesh_dir=None, texture_dir=None,
-                   export_meshes=True, export_textures=True, max_textures=48,
-                   summary_path=None):
-        """Dump meshes + material facts for a list of draw EIDs.
-
-        Returns one entry per requested event, including failures, so the caller
-        can tell "nothing to export" apart from "the draw was skipped".
-        """
+    def _select(self, action_event_ids, marker_filter, action_event_id_range):
+        if sum(x is not None for x in (action_event_ids, marker_filter, action_event_id_range)) != 1:
+            raise ValueError("INVALID_REQUEST: choose exactly one draw list, marker or EID range")
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
-        if not isinstance(action_event_ids, (list, tuple)) or not action_event_ids:
-            raise ValueError("INVALID_REQUEST: action_event_ids must be a non-empty list")
-        if len(action_event_ids) > 256:
-            raise ValueError("INVALID_REQUEST: at most 256 events per call")
-        if export_meshes and not mesh_dir:
-            raise ValueError("INVALID_REQUEST: mesh_dir is required when export_meshes")
-        if export_textures and not texture_dir:
-            raise ValueError("INVALID_REQUEST: texture_dir is required when export_textures")
+        if action_event_ids is not None:
+            if not isinstance(action_event_ids, list) or not 1 <= len(action_event_ids) <= 256:
+                raise ValueError("INVALID_REQUEST: action_event_ids must contain 1..256 IDs")
+            actions = [require_action(self.ctx, e) for e in action_event_ids]
+            if any(not a.flags & rd.ActionFlags.Drawcall for a in actions):
+                raise ValueError("INVALID_ACTION_EVENT_ID: explicit selections must be draws")
+            selected = sorted(set(a.eventId for a in actions))
+            return selected, len(actions) - len(selected)
+        low, high = 1, 0xffffffff
+        if action_event_id_range is not None:
+            if not isinstance(action_event_id_range, dict) or set(action_event_id_range) != {"min", "max"}:
+                raise ValueError("INVALID_REQUEST: range needs min and max")
+            low, high = action_event_id_range["min"], action_event_id_range["max"]
+            if type(low) is not int or type(high) is not int or not 1 <= low <= high:
+                raise ValueError("INVALID_REQUEST: invalid action EID range")
+        if marker_filter is not None and (not isinstance(marker_filter, str) or not marker_filter):
+            raise ValueError("INVALID_MARKER_FILTER: non-empty marker required")
+        selected, skipped = [], [0]
+        def visit(rows, inherited=False):
+            for a in rows:
+                try:
+                    name = self.ctx.GetEventName(a.eventId)
+                except Exception:
+                    try:
+                        name = a.GetName(self.ctx.GetStructuredFile())
+                    except Exception:
+                        name = getattr(a, "name", "")
+                matched = inherited or marker_filter is None or marker_filter in str(name)
+                if matched and low <= a.eventId <= high:
+                    if a.flags & rd.ActionFlags.Drawcall:
+                        selected.append(a.eventId)
+                    else:
+                        skipped[0] += 1
+                visit(a.children, matched)
+        visit(self.ctx.CurRootActions())
+        if not selected:
+            raise ValueError("INVALID_REQUEST: selector matches no draws")
+        return sorted(set(selected)), skipped[0]
 
-        if export_meshes:
-            _ensure_dir(mesh_dir)
-        if export_textures:
-            _ensure_dir(texture_dir)
+    def dump_draws(self, output_dir, action_event_ids=None, marker_filter=None,
+                   action_event_id_range=None, mesh_stage="VSIn", instances=None, view_index=0,
+                   export_meshes=True, export_textures=True, max_textures=48,
+                   max_texture_edge=None, skip_depth=False, job_id=None):
+        selected, skipped = self._select(action_event_ids, marker_filter, action_event_id_range)
+        if mesh_stage not in ("VSIn", "VSOut", "GSOut"):
+            raise ValueError("INVALID_STAGE: invalid mesh_stage")
+        instances = [0] if instances is None else instances
+        if not isinstance(instances, list) or not instances or any(type(i) is not int or i < 0 for i in instances):
+            raise ValueError("INVALID_INSTANCE: instances must be non-negative integer list")
+        instances = sorted(set(instances))
+        if type(view_index) is not int or view_index < 0 or (mesh_stage == "VSIn" and view_index):
+            raise ValueError("INVALID_VIEW_INDEX: invalid view selection")
+        if type(max_textures) is not int or max_textures < 1:
+            raise ValueError("INVALID_REQUEST: max_textures must be positive")
+        if max_texture_edge is not None and (type(max_texture_edge) is not int or max_texture_edge < 1):
+            raise ValueError("INVALID_REQUEST: max_texture_edge must be positive or null")
+        if any(type(v) is not bool for v in (export_meshes, export_textures, skip_depth)):
+            raise ValueError("INVALID_REQUEST: export options must be booleans")
+        if not isinstance(output_dir, str) or not os.path.isabs(output_dir):
+            raise ValueError("INVALID_OUTPUT_PATH: output_dir must be absolute")
+        for eid in selected:
+            a = require_action(self.ctx, eid)
+            if any(i >= max(1, a.numInstances) for i in instances):
+                raise ValueError("INVALID_INSTANCE: selected instance exceeds draw %d" % eid)
+        params = dict(output_dir=output_dir, action_event_ids=action_event_ids,
+                      marker_filter=marker_filter, action_event_id_range=action_event_id_range,
+                      mesh_stage=mesh_stage, instances=instances, view_index=view_index,
+                      export_meshes=export_meshes, export_textures=export_textures,
+                      max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth)
 
-        if summary_path is None and mesh_dir:
-            # The MCP reply must stay small; always spill the full facts.
-            summary_path = os.path.join(mesh_dir, "_batch_summary.json")
-
-        budget = {"textures": max_textures}
-        saved = {}
-        draws = []
-        for raw_eid in action_event_ids:
-            eid = int(raw_eid)
-            entry = {"action_event_id": eid}
-            try:
-                action = require_action(self.ctx, eid)
-                entry["flags"] = _flag_names(action.flags)
-                entry["index_count"] = int(action.numIndices)
-                entry["instance_count"] = int(action.numInstances)
-                if not (action.flags & rd.ActionFlags.Drawcall):
-                    entry["skipped"] = "not_a_draw"
-                    draws.append(entry)
-                    continue
-                if export_meshes:
-                    entry["mesh"] = self._dump_mesh(eid, mesh_dir)
-                entry.update(self._material_facts(eid, texture_dir if export_textures else None,
-                                                  budget, saved))
-                entry["ok"] = True
-            except Exception as exc:  # keep the batch going; report per draw
-                entry["ok"] = False
-                entry["error"] = str(exc)
-            draws.append(entry)
-
-        result = {
-            "draw_count": len(draws),
-            "ok_count": sum(1 for d in draws if d.get("ok")),
-            "failed_count": sum(1 for d in draws if d.get("ok") is False),
-            "draws": draws,
-            "textures": sorted(saved.values(), key=lambda t: t["resource_id"]),
-            "textures_deferred": budget["textures"] <= 0,
-        }
-        if summary_path:
-            # Full per-draw material facts are large; write them next to the
-            # meshes and keep the IPC reply small.
-            _ensure_dir(os.path.dirname(summary_path) or ".")
-            import json as _json
-            with open(summary_path, "w", encoding="utf-8") as fh:
-                _json.dump(result, fh, ensure_ascii=False)
-            return {
-                "summary_path": summary_path,
-                "draw_count": result["draw_count"],
-                "ok_count": result["ok_count"],
-                "failed_count": result["failed_count"],
-                "textures_saved": len(result["textures"]),
-                "failed": [d for d in draws if d.get("ok") is False][:5],
-            }
-        return result
-
-    # ----------------------------------------------------------------- helpers
-
-    def _dump_mesh(self, eid, mesh_dir):
-        output_path = os.path.join(mesh_dir, "vsIn_%d.csv" % eid)
-        info = self._mesh.export_mesh_csv(eid, output_path, "VSIn")
-        return {
-            "path": output_path,
-            "vertex_count": info.get("vertex_count"),
-            "index_count": info.get("index_count"),
-            "attributes": info.get("exported_attributes"),
-        }
-
-    def _material_facts(self, eid, texture_dir, budget, saved):
-        eid_box = {"value": None, "error": None}
-
-        def operation(controller, event):
-            snapshot = Snapshot(self.ctx, controller, require_action(self.ctx, eid),
-                                "batch")
-            eid_box["value"] = self._summarise(snapshot, controller, eid, texture_dir,
-                                               budget, saved)
-
-        at_event(self.ctx, self._invoke, eid,
-                 lambda controller, event: operation(controller, event))
-        if eid_box["error"]:
-            raise RuntimeError(eid_box["error"])
-        return eid_box["value"]
-
-    def _summarise(self, snapshot, controller, eid, texture_dir, budget, saved):
-        result = {"vertex_shader": None, "pixel_shader": None, "constants": [],
-                  "textures": [], "blend": None, "depth": None}
-        stages = snapshot.stages
-        for key, slot in (("vertex", "vertex_shader"), ("fragment", "pixel_shader")):
-            item = stages.get(key) or {}
-            shader = item.get("shader") or {}
-            resource = shader.get("resource") or {}
-            result[slot] = resource.get("resource_id")
-
-        for row in snapshot.bindings:
-            if row.get("category") != "constant" or not row.get("bound"):
-                continue
-            if row.get("stage") not in ("vertex", "fragment"):
-                continue
-            rng = row.get("buffer_range") or {}
-            result["constants"].append({
-                "stage": row.get("stage"),
-                "binding_name": row.get("binding_name"),
-                "location": row.get("location"),
-                "byte_offset": rng.get("byte_offset"),
-                "byte_size": rng.get("byte_size"),
-                "resource_id": (row.get("resource") or {}).get("resource_id"),
-            })
-
-        result["object_matrix"] = self._object_matrix(snapshot, controller, result["constants"])
-
-        framebuffer = stages.get("framebuffer") or {}
-        sections = framebuffer.get("sections") or {}
-        if sections.get("blend", {}).get("available"):
-            result["blend"] = sections["blend"].get("data")
-        if sections.get("depth_stencil", {}).get("available"):
-            result["depth"] = sections["depth_stencil"].get("data")
-
-        for row in snapshot.texture_rows():
-            # Texture SRVs use the read_only/read_write categories, not "resource".
-            if row.get("resource_kind") != "texture" or not row.get("bound"):
-                continue
-            if "input" not in (row.get("roles") or []):
-                continue
-            if row.get("stage") not in ("vertex", "fragment"):
-                continue
-            resource = row.get("resource") or {}
-            rid = resource.get("resource_id")
-            if not rid:
-                continue
-            numeric = _numeric_id(rid)
-            record = {"resource_id": rid, "stage": row.get("stage"),
-                      "location": row.get("location")}
-            path = None
-            if numeric is not None and numeric in saved:
-                path = saved[numeric]["file"]
-                record.update({k: saved[numeric][k] for k in ("width", "height", "format")})
-            elif texture_dir and budget["textures"] > 0 and numeric is not None:
-                path, meta = self._save_texture(controller, snapshot, numeric, texture_dir)
-                record.update(meta)
-                if path:
-                    budget["textures"] -= 1
-                    saved[numeric] = {"resource_id": numeric, "file": path,
-                                      "width": meta.get("width"),
-                                      "height": meta.get("height"),
-                                      "format": meta.get("format")}
-            if path:
-                record["file"] = path
-            else:
-                record["skipped"] = True
-            result["textures"].append(record)
-        return result
-
-    def _object_matrix(self, snapshot, controller, constants):
-        """Read the 720-byte per-object block's leading 4x4 affine, if present.
-
-        Passes that place geometry per draw bind this struct on the vertex
-        stage; its Offset(0) is the object->world affine in column-major order.
-        """
-        for row in constants:
-            if row.get("stage") != "vertex" or row.get("byte_size") != 720:
-                continue
-            numeric = _numeric_id(row.get("resource_id"))
-            if numeric is None:
-                continue
-            buf = (snapshot.catalog.get("buffers") or {}).get(numeric)
-            if buf is None:
-                continue
-            try:
-                data = controller.GetBufferData(buf.resourceId, int(row["byte_offset"]), 64)
-                values = struct.unpack("<16f", bytes(data[:64]))
-            except Exception:
-                continue
-            return [round(v, 9) for v in values]
-        return None
-
-    def _save_texture(self, controller, snapshot, numeric, texture_dir):
-        # Resolve from the snapshot catalog: a nested BlockInvoke here would run
-        # on the replay thread and never return.
-        tex = (snapshot.catalog.get("textures") or {}).get(numeric)
-        if tex is None:
-            return None, {"skipped": "texture_descriptor_missing"}
-        name_attr = getattr(tex.format, "Name", None)
-        try:
-            format_name = name_attr() if callable(name_attr) else str(tex.format)
-        except Exception:
-            format_name = str(tex.format)
-        meta = {"width": int(tex.width), "height": int(tex.height),
-                "format": format_name}
-        if int(tex.width) > MAX_TEXTURE_EDGE or int(tex.height) > MAX_TEXTURE_EDGE:
-            return None, {"skipped": "too_large"}
-        if any(marker in meta["format"].upper() for marker in _SKIP_FORMAT_MARKERS):
-            return None, {"skipped": "depth_format"}
-        output_path = os.path.join(texture_dir, "tex_%d.png" % numeric)
-        if not os.path.exists(output_path):
-            tex_save = rd.TextureSave()
-            tex_save.resourceId = tex.resourceId
-            tex_save.mip = 0
-            tex_save.slice.sliceIndex = 0
-            tex_save.alpha = rd.AlphaMapping.Preserve
-            tex_save.destType = rd.FileType.PNG
-            try:
-                # Already on the replay thread; call SaveTexture directly.
-                outcome = controller.SaveTexture(tex_save, output_path)
-                ok = bool(outcome.OK())
-            except Exception as exc:
-                return None, {"save_failed": "%s: %s" % (meta["format"], exc)}
-            if not ok:
-                return None, {"save_failed": meta["format"]}
-        return output_path, meta
-
-
-def _ensure_dir(path):
-    if path and not os.path.exists(path):
-        os.makedirs(path)
-
-
-def _numeric_id(text):
-    try:
-        return int(str(text).split("::")[-1])
-    except (TypeError, ValueError):
-        return None
-
-
-def _flag_names(flags):
-    names = []
-    for name in ("Drawcall", "Dispatch", "Indexed", "Instanced", "Clear", "Copy"):
-        value = getattr(rd.ActionFlags, name, None)
-        if value is not None and (flags & value):
-            names.append(name)
-    return names
-
-
-def _blend_summary(data):
-    if not isinstance(data, dict):
-        return None
-    summary = {"enabled": data.get("blendEnable")}
-    for key in ("source", "destination", "operation", "sourceAlpha",
-                "destinationAlpha", "alphaOperation", "colorWrite"):
-        if key in data:
-            summary[key] = data[key]
-    return summary
-
-
-def _depth_summary(data):
-    if not isinstance(data, dict):
-        return None
-    summary = {}
-    for key in ("depthEnable", "depthWrite", "depthFunction", "depthBounds"):
-        if key in data:
-            summary[key] = data[key]
-    return summary
+        def steps(key):
+            directory = os.path.join(output_dir, key)
+            os.makedirs(directory, exist_ok=True)
+            self.jobs.update(key, texture_budget=max_textures, requested_count=len(action_event_ids or selected),
+                             draw_count=len(selected), skipped_count=skipped,
+                             expected_items=len(selected) * len(instances), output_dir=directory)
+            saved, contents = {}, {}
+            for eid in selected:
+                for instance in sorted(set(instances)):
+                    entry = {"item_key": "%d:%d:%d" % (eid, instance, view_index),
+                             "action_event_id": eid, "instance": instance, "view_index": view_index,
+                             "complete": False}
+                    def facts(controller, eid=eid, instance=instance, entry=entry):
+                        fatal = controller.GetFatalErrorStatus()
+                        if not fatal.OK():
+                            raise RuntimeError("REPLAY_UNHEALTHY: %s" % fatal.Message())
+                        try:
+                            def read(c, event):
+                                action = require_action(self.ctx, eid)
+                                snapshot = Snapshot(self.ctx, c, action, self.session.token())
+                                entry.update(source="tool_output", provenance=self.session.describe(),
+                                             vertex_inputs=plain(snapshot.pipe.GetVertexInputs()),
+                                             shaders={k: s.get("shader") for k, s in snapshot.stages.items() if s.get("shader")},
+                                             bindings=copy.deepcopy(snapshot.bindings),
+                                             fixed_state={k: copy.deepcopy(snapshot.stages[k]) for k in ("rasterizer", "framebuffer")})
+                                entry["textures"] = [copy.deepcopy(r) for r in snapshot.texture_rows()
+                                                     if r.get("bound") and r.get("resource_kind") == "texture"
+                                                     and "input" in r.get("roles", [])]
+                                entry["constant_layouts"] = []
+                                for binding in entry["bindings"]:
+                                    source = snapshot.variable_sources.get(binding["binding_key"])
+                                    if source is None or source[4] is None:
+                                        continue
+                                    declaration = source[4]
+                                    entry["constant_layouts"].append({
+                                        "binding_id": binding["binding_id"],
+                                        "binding_key": binding["binding_key"],
+                                        "reflection_index": source[1], "array_element": source[2],
+                                        "name": declaration.name, "byte_size": declaration.byteSize,
+                                        "source": "reflected_constant_layout", "semantic": "unknown",
+                                        "variables": reflected_layout(declaration.variables)})
+                                if export_meshes:
+                                    local = MeshService(self.ctx, lambda fn: fn(c))
+                                    path = os.path.join(directory, "mesh_%d_i%d_v%d.csv" % (eid, instance, view_index))
+                                    entry["mesh"] = local.export_mesh_csv(eid, path, mesh_stage,
+                                                                         instance=instance, view_index=view_index)
+                                issues = [section.get("reason") for st in entry["fixed_state"].values()
+                                          for section in st.get("sections", {}).values() if section.get("available") is False]
+                                entry["warnings"] = issues
+                                entry["serialization_complete"] = not issues
+                                entry["ok"] = True
+                            at_event(self.ctx, lambda fn: fn(controller), eid, read)
+                        except Exception as exc:
+                            entry.update(ok=False, error=str(exc))
+                        entry["complete"] = not entry.get("ok") or not export_textures
+                        return {"item": entry}
+                    yield ("replay", "draw_%d_instance_%d" % (eid, instance), facts)
+                    if not entry.get("ok") or not export_textures:
+                        continue
+                    for row in entry["textures"]:
+                        def texture(controller, row=row, eid=eid, entry=entry):
+                            rid = int(row["resource"]["resource_id"].split("::")[-1])
+                            sub = row.get("subresources") or {}
+                            mip, layer = sub.get("first_mip") or 0, sub.get("first_slice") or 0
+                            cache_key = (self.session.token(), eid, rid, mip, layer, 0, "PNG", "preserve")
+                            if cache_key not in saved:
+                                record = self.jobs.records[key]
+                                if record["texture_budget"] <= 0:
+                                    raise PauseJob("TEXTURE_BUDGET: resume_job adds a fresh texture allowance")
+                                def save(c, event):
+                                    td = next(t for t in c.GetTextures() if int(t.resourceId) == rid)
+                                    if max_texture_edge and max(td.width, td.height) > max_texture_edge:
+                                        return {"skipped": "max_texture_edge"}
+                                    if skip_depth and str(td.format.compType).split(".")[-1] == "Depth":
+                                        return {"skipped": "depth_filter"}
+                                    config = rd.TextureSave()
+                                    config.resourceId = td.resourceId
+                                    config.mip, config.slice.sliceIndex = mip, layer
+                                    config.sample.sampleIndex = 0
+                                    config.destType, config.alpha = rd.FileType.PNG, rd.AlphaMapping.Preserve
+                                    path = os.path.join(directory, "tex_%d_e%d_m%d_s%d.png" % (rid, eid, mip, layer))
+                                    outcome = c.SaveTexture(config, path)
+                                    if not outcome.OK():
+                                        raise RuntimeError("TEXTURE_SAVE_FAILED: %s" % outcome.Message())
+                                    with open(path, "rb") as handle:
+                                        digest = hashlib.sha256(handle.read()).hexdigest()
+                                    if digest in contents:
+                                        os.remove(path)
+                                        path = contents[digest]
+                                    else:
+                                        contents[digest] = path
+                                    return dict(path=path, sha256=digest, source="capture_texture",
+                                                format=td.format.Name(), export_format="PNG", mip=mip,
+                                                slice_index=layer, sample=0, event_phase="after",
+                                                source_color_space="srgb" if td.format.compType == rd.CompType.UNormSRGB else "linear",
+                                                output_value_domain="RenderDoc_SaveTexture_conversion")
+                                try:
+                                    saved[cache_key] = at_event(self.ctx, lambda fn: fn(controller), eid, save)
+                                    if "path" in saved[cache_key]:
+                                        self.jobs.update(key, texture_budget=record["texture_budget"] - 1)
+                                except Exception as exc:
+                                    saved[cache_key] = {"error": str(exc)}
+                                    entry["ok"] = False
+                            row["export"] = saved[cache_key]
+                            return {"item": entry}
+                        yield ("replay", "texture_%d" % eid, texture)
+                    def complete(_, entry=entry):
+                        entry["complete"] = True
+                        return {"item": entry}
+                    yield ("ui", "completed_draw_%d_instance_%d" % (eid, instance), complete)
+            def finish(_):
+                record = self.jobs.records[key]
+                result = dict(provenance=self.session.describe(), draw_count=len(selected),
+                              item_count=len(record["items"]),
+                              ok_count=sum(i.get("ok") is True for i in record["items"]),
+                              failed_count=sum(i.get("ok") is False for i in record["items"]),
+                              pending_count=sum(not i.get("complete") for i in record["items"]),
+                              textures_saved=len(contents), skipped_count=skipped,
+                              items=record["items"])
+                path = os.path.join(directory, "manifest.json")
+                atomic_json(path, result)
+                return {"result": {k: v for k, v in dict(result, summary_path=path).items() if k != "items"}}
+            yield ("worker", "writing_manifest", finish)
+        return self.jobs.submit("dump_draws", params, steps, job_id)

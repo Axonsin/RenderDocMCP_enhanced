@@ -45,7 +45,7 @@ class Handler:
     def handle(self, request):
         self.calls.append(request)
         time.sleep(request["params"].get("delay", 0))
-        return {"id": request["id"], "result": request["params"]}
+        return {"id": request["id"], "result": request["params"], "api_contract_version": 2}
 
 
 class BridgeTests(unittest.TestCase):
@@ -174,10 +174,27 @@ class BridgeTests(unittest.TestCase):
 
     def test_error_reply_is_not_a_success(self):
         self.server.handler = types.SimpleNamespace(handle=lambda request: {
-            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}})
+            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}, "api_contract_version": 2})
         self.start_server()
         with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "SHADER_TOOL_MISSING"):
             CLIENT.RenderDocBridge().call("get_shader_edit_context")
+
+    def test_submission_timeout_exposes_stable_job_id(self):
+        self.start_server()
+        client = CLIENT.RenderDocBridge()
+        client.timeout = 0.02
+        key = str(uuid.uuid4())
+        with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "get_job_status.*" + key):
+            client.call("open_capture", {"job_id": key, "delay": 0.2})
+        time.sleep(0.25)
+        self.assertEqual(self.handler.calls[0]["params"]["job_id"], key)
+
+    def test_contract_mismatch_is_rejected(self):
+        self.server.handler = types.SimpleNamespace(handle=lambda request: {
+            "id": request["id"], "result": {}, "api_contract_version": 1})
+        self.start_server()
+        with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "API_VERSION_MISMATCH"):
+            CLIENT.RenderDocBridge().call("ping")
 
 
 if __name__ == "__main__":

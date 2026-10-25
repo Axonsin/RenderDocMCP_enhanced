@@ -26,7 +26,7 @@ Stage = enum.IntEnum("ShaderStage", "Vertex Hull Domain Geometry Pixel Compute T
 ActionFlags = enum.IntFlag("ActionFlags", {
     "Drawcall": 1, "Dispatch": 2, "Copy": 4, "Resolve": 8, "Clear": 16,
     "Indexed": 32, "MeshDispatch": 64})
-VarType = enum.IntEnum("VarType", "Float Int UInt Bool Struct")
+VarType = enum.IntEnum("VarType", "Float SInt UInt Bool Struct")
 CompType = enum.IntEnum("CompType", "Typeless Float UNorm SNorm UInt SInt Depth UNormSRGB")
 
 
@@ -54,7 +54,7 @@ def modules():
                              "renderdoc_extension/utils/parsers.py").Parsers
         utils.Helpers, utils.Serializers = NS(), NS()
         loaded = {}
-        for name in ("resource_catalog", "structured_data", "replay_query", "pipeline_snapshot",
+        for name in ("resource_catalog", "structured_data", "replay_query", "native_serialization", "pipeline_snapshot",
                      "shader_variables", "pipeline_queries", "pipeline_service",
                      "resource_service", "analysis_service"):
             loaded[name] = load("renderdoc_extension.services." + name,
@@ -603,7 +603,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(result["children"]["has_more"])
         item = result["children"]["items"][0]
         self.assertEqual(item["child_path"], [0, 2])
-        self.assertEqual(item["layout"]["byte_offset"], 48)
+        self.assertEqual(item["layout"]["byte_offset"], 32)  # Relative to parent array, not block.
         json.dumps(result, allow_nan=False)
         with self.assertRaisesRegex(ValueError, "INVALID_CHILD_PATH"):
             adapter(arrays, decl, [True], 0, 50)
@@ -611,7 +611,7 @@ class PipelineTests(unittest.TestCase):
     def test_integer_bool_and_nested_values_decode(self):
         adapter = MODULES["shader_variables"].read_variables
         scalars = [
-            typed_variable("count", "Int", "s32v", [-7]),
+            typed_variable("count", "SInt", "s32v", [-7]),
             typed_variable("mask", "UInt", "u32v", [4294967295]),
             typed_variable("visible", "Bool", "u32v", [1]),
         ]
@@ -622,7 +622,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(values["mask"], [4294967295])
         self.assertEqual(values["visible"], [1])
 
-        nested = [variable("pair", members=[typed_variable("size", "Int", "s32v", [-2])])]
+        nested = [variable("pair", members=[typed_variable("size", "SInt", "s32v", [-2])])]
         decl = [layout("pair", members=[layout("size")])]
         result = adapter(nested, decl, [0], 0, 10)
         self.assertEqual(result["children"]["items"][0]["value"], [-2])

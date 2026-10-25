@@ -78,7 +78,7 @@ def shader_modules():
         packages["renderdoc_extension.utils"].Serializers = types.SimpleNamespace()
         shader = load_module("renderdoc_extension.services.shader_edit_service",
                              "renderdoc_extension/services/shader_edit_service.py")
-        for dependency in ("resource_catalog", "structured_data", "replay_query", "pipeline_snapshot",
+        for dependency in ("resource_catalog", "structured_data", "replay_query", "native_serialization", "pipeline_snapshot",
                            "shader_variables", "pipeline_queries"):
             load_module("renderdoc_extension.services." + dependency,
                         "renderdoc_extension/services/" + dependency + ".py")
@@ -495,12 +495,12 @@ class ShaderEditTests(unittest.TestCase):
 
     def test_export_utf8_and_refuse_overwrite(self):
         edit = self.prepare()["edit_id"]
-        self.service.replace_shader(edit, "INVALID // 测试")
+        self.service.replace_shader(edit, "INVALID // 娴嬭瘯")
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "shader.glsl")
             result = self.service.export_shader_source(edit, path)
             self.assertFalse(result["matches_applied_source"])
-            self.assertEqual(Path(path).read_text(encoding="utf-8"), "INVALID // 测试")
+            self.assertEqual(Path(path).read_text(encoding="utf-8"), "INVALID // 娴嬭瘯")
             with self.assertRaisesRegex(ValueError, "OUTPUT_FILE_EXISTS"):
                 self.service.export_shader_source(edit, path)
 
