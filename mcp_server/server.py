@@ -112,6 +112,10 @@ def search_actions(
     by: Literal["shader", "texture", "resource"],
     query: str,
     stage: str | None = None,
+    action_event_id_range: dict[str, int] | None = None,
+    time_budget_ms: int | None = None,
+    max_matches: int | None = None,
+    start_event_id: int | None = None,
 ) -> dict:
     """
     Search draw and dispatch actions by shader, texture or resource.
@@ -120,11 +124,23 @@ def search_actions(
         by: Search mode - shader, texture, or resource
         query: Shader name, texture name, or resource ID query
         stage: Optional shader stage filter; uses the same canonical names/aliases as Pipeline State
+        action_event_id_range: Optional {"min": ..., "max": ...} action EID range
+        time_budget_ms: Optional scan budget (default 8000). On expiry the scan
+            stops and returns complete=false plus next_event_id instead of hanging.
+        max_matches: Optional match cap (default 200)
+        start_event_id: Resume cursor from a previous truncated result
 
-    Returns a search result with matches, total_matches, and scanned_count.
+    Returns a search result with matches, total_matches, scanned_count,
+    complete/stopped_reason/next_event_id, scan_mode ("usage" or "pipeline")
+    and elapsed_ms. Texture/resource searches use the Timeline usage index and
+    only fall back to a pipeline scan when no usage is recorded.
     """
     params: dict[str, object] = {"by": by, "query": query}
     _optional_param(params, "stage", stage)
+    _optional_param(params, "action_event_id_range", action_event_id_range)
+    _optional_param(params, "time_budget_ms", time_budget_ms)
+    _optional_param(params, "max_matches", max_matches)
+    _optional_param(params, "start_event_id", start_event_id)
     return bridge.call("search_actions", params)
 
 
@@ -770,6 +786,54 @@ def export_mesh_csv(
     if attributes is not None:
         params["attributes"] = attributes
     return bridge.call("export_mesh_csv", params)
+
+
+@mcp.tool()
+def dump_draws(
+    action_event_ids: list[int],
+    mesh_dir: str | None = None,
+    texture_dir: str | None = None,
+    export_meshes: bool = True,
+    export_textures: bool = True,
+    max_textures: int = 48,
+    summary_path: str | None = None,
+) -> dict:
+    """
+    Dump geometry and material facts for many draws in one request.
+
+    One IPC round trip replaces the per-draw calls (export_mesh_csv +
+    get_pipeline_stage + save_texture). Use it to inventory a whole pass: it
+    returns, for every event, the exported mesh, the bound VS/PS shader, the
+    constant-buffer ranges (which carry the per-draw transform), the sampled
+    textures with the local PNG each one was saved to, and the blend/depth state.
+
+    Args:
+        action_event_ids: Draw event IDs to dump (1..256 per call)
+        mesh_dir: Directory for vsIn_<EID>.csv + .idx when export_meshes
+        texture_dir: Directory for tex_<resourceId>.png when export_textures
+        export_meshes: Export VSIn geometry per draw (default True)
+        export_textures: Save each sampled texture once (default True)
+        max_textures: Cap on unique texture exports selected by this call (default 48)
+        summary_path: Full JSON output path; defaults to mesh_dir/_batch_summary.json
+            when mesh_dir is supplied. With a summary path, returns counts and
+            the path instead of the full per-draw facts.
+
+    Per-draw entries also report ok=false with an error string, so a failure on
+    one draw does not hide the rest.
+    """
+    params: dict[str, object] = {
+        "action_event_ids": action_event_ids,
+        "export_meshes": export_meshes,
+        "export_textures": export_textures,
+        "max_textures": max_textures,
+    }
+    if summary_path is not None:
+        params["summary_path"] = summary_path
+    if mesh_dir is not None:
+        params["mesh_dir"] = mesh_dir
+    if texture_dir is not None:
+        params["texture_dir"] = texture_dir
+    return bridge.call("dump_draws", params)
 
 
 def main():

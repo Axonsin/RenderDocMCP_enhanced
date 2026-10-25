@@ -50,6 +50,7 @@ class RequestHandler:
             "get_mesh_summary": self._handle_get_mesh_summary,
             "get_mesh_data": self._handle_get_mesh_data,
             "export_mesh_csv": self._handle_export_mesh_csv,
+            "dump_draws": self._handle_dump_draws,
         }
 
     def handle(self, request):
@@ -208,7 +209,15 @@ class RequestHandler:
         search_type = self._require_param(params, "by")
         query = self._require_param(params, "query")
         stage = params.get("stage")
-        return self.facade.search_actions(search_type, query, stage)
+        return self.facade.search_actions(
+            search_type,
+            query,
+            stage,
+            action_event_id_range=params.get("action_event_id_range"),
+            time_budget_ms=params.get("time_budget_ms"),
+            max_matches=params.get("max_matches"),
+            start_event_id=params.get("start_event_id"),
+        )
 
     def _handle_get_action_details(self, params):
         """Handle get_action_details request"""
@@ -409,6 +418,17 @@ class RequestHandler:
             limit=int(limit),
             attributes=attributes,
             instance=params.get("instance", 0),
+        )
+
+    def _handle_dump_draws(self, params):
+        return self.facade.dump_draws(
+            self._require_param(params, "action_event_ids"),
+            mesh_dir=params.get("mesh_dir"),
+            texture_dir=params.get("texture_dir"),
+            export_meshes=params.get("export_meshes", True),
+            export_textures=params.get("export_textures", True),
+            max_textures=params.get("max_textures", 48),
+            summary_path=params.get("summary_path"),
         )
 
     def _handle_export_mesh_csv(self, params):

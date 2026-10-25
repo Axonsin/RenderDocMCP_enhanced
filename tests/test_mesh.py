@@ -31,6 +31,7 @@ ActionFlags = enum.IntFlag("ActionFlags", {"Drawcall": 1, "Indexed": 2, "Instanc
 ShaderStage = enum.IntEnum("ShaderStage", "Vertex Hull Domain Geometry Pixel")
 MeshDataStage = enum.IntEnum("MeshDataStage", "VSIn VSOut GSOut")
 ShaderBuiltin = enum.IntEnum("ShaderBuiltin", "Position")
+ResourceFormatType = enum.IntEnum("ResourceFormatType", "Undefined Regular")
 
 
 class MeshFormat:
@@ -52,6 +53,7 @@ class MeshFormat:
 class ResourceFormat:
     def __init__(self):
         self.compType = CompType.Float
+        self.type = ResourceFormatType.Regular
         self.compCount = 1
         self.compByteWidth = 4
 
@@ -59,7 +61,7 @@ class ResourceFormat:
         return "FORMAT(%s x%d b%d)" % (self.compType.name, self.compCount, self.compByteWidth)
 
     def Special(self):
-        return False
+        return self.type != ResourceFormatType.Regular
 
     def BGRAOrder(self):
         return False
@@ -78,6 +80,7 @@ def load_module(service_name):
     rd.ResourceId, rd.CompType, rd.VarType = ResourceId, CompType, VarType
     rd.ActionFlags, rd.ShaderStage, rd.MeshDataStage = ActionFlags, ShaderStage, MeshDataStage
     rd.MeshFormat, rd.ResourceFormat, rd.ShaderBuiltin = MeshFormat, ResourceFormat, ShaderBuiltin
+    rd.ResourceFormatType = ResourceFormatType
     packages = {"renderdoc": rd}
     for name in ("renderdoc_extension", "renderdoc_extension.services"):
         packages[name] = types.ModuleType(name)

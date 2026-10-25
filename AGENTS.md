@@ -56,7 +56,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_capture_status` | 确认捕获加载状态、版本/协议与回放健康 |
 | `get_actions` | action 列表（含 marker/draw/dispatch/copy/clear，支持层级与过滤） |
 | `get_frame_summary` | 帧整体统计信息（draw call 数量、标记列表等） |
-| `search_actions` | 按 shader/texture/resource 搜索 draw 和 dispatch action |
+| `search_actions` | 按 shader/texture/resource 搜索 draw 和 dispatch action（支持 EID 范围、时间预算与续扫游标） |
 | `get_action_details` | action 的元数据、绘制计数、偏移及输出资源（参数 action_event_id） |
 | `get_action_api_calls` | action 关联 API 调用列表及按路径展开的参数树（API Inspector） |
 | `get_action_timings` | 获取 action 的 GPU 执行时间 |
@@ -73,7 +73,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `revert_shader` | 还原原始 shader 并刷新 RenderDoc |
 | `list_shader_replacements` | 查询生效替换与各编辑会话状态 |
 | `export_shader_source` | 导出编辑后的 shader 源码（UTF-8，不覆盖已有文件） |
-| `get_buffer_contents` | 缓冲区数据获取（支持偏移/长度指定） |
+| `get_buffer_contents` | 缓冲区数据获取（按数值 ID 匹配；偏移/长度指定；单次上限 256 KiB 可分页） |
 | `list_resources` | 全部 API 对象目录（支持类型/名称过滤、排序和分页） |
 | `inspect_resource` | 资源元数据、父/派生关系、使用统计和初始化调用目录 |
 | `get_resource_initialization` | 初始化调用目录和按索引路径展开的参数树 |
@@ -84,9 +84,10 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_pipeline_stage` | 阶段绑定、descriptor 信息和固定功能状态 |
 | `inspect_pipeline_binding` | 绑定范围、资源身份和常量树展开 |
 | `get_action_textures` | Action 输入/输出纹理与 FS/FB 等阶段标签 |
-| `get_mesh_summary` | 获取网格概要信息（拓扑、顶点数、属性、包围盒；支持 instance 选择） |
+| `get_mesh_summary` | 获取网格概要信息（管线拓扑、`num_vertices` 保留 `numIndices` 语义、`unique_vertex_count` 为去重引用数、多属性包围盒；支持 instance 选择） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段与 instance 选择） |
-| `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择） |
+| `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择；无可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`） |
+| `dump_draws` | 批量导出 1–256 个 draw 的 VSIn 网格、VS/PS 输入贴图和材质状态，可将完整结果写入 JSON |
 
 ### get_actions 过滤选项
 
@@ -151,12 +152,25 @@ get_resource_initialization(resource_id="ResourceId::86983", chunk_index=42, chi
 search_actions(by="shader", query="Toon", stage="fragment")
 search_actions(by="texture", query="CharacterSkin")
 search_actions(by="resource", query="ResourceId::12345")
+search_actions(by="resource", query="ResourceId::12345",
+               action_event_id_range={"min": 940, "max": 1533})
 # → {
 #     "matches": [...],
 #     "scanned_count": 150,
-#     "total_matches": 3
+#     "total_matches": 3,
+#     "complete": true,
+#     "stopped_reason": null,
+#     "next_event_id": null,
+#     "scan_mode": "usage"
 # }
 ```
+
+- `by="texture"` / `by="resource"` 先走 Timeline usage 索引缩小候选
+  （`scan_mode="usage"`），只有 usage 为空时才退回逐 action 的 pipeline 扫描。
+- 资源与 shader 一律按**数值 ID** 比较（`ResourceId` 不能由 int 构造）。
+- 扫描有 `time_budget_ms`（默认 8000）与 `max_matches`（默认 200）；截断时
+  `complete=false`、`stopped_reason` 非空，用 `start_event_id=next_event_id` 续扫，
+  不要把截断结果当空结果。
 
 ### 管线与事件纹理
 
@@ -234,7 +248,8 @@ get_mesh_summary(action_event_id=1234, instance=0)  # instance 用于逐实例�
 #     "action_event_id": 1234,
 #     "instance": 0,
 #     "topology": "TriangleList",
-#     "num_vertices": 3024,
+#     "num_vertices": 9072,
+#     "unique_vertex_count": 3024,
 #     "num_indices": 9072,
 #     "indexed": true,
 #     "attributes": [

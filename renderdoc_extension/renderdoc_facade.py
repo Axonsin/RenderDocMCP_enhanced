@@ -13,6 +13,7 @@ from .services import (
     ShaderEditService,
     MeshService,
     AnalysisService,
+    BatchService,
 )
 
 
@@ -48,6 +49,7 @@ class RenderDocFacade:
         self._pipeline = PipelineService(ctx, self._invoke)
         self._shader_edit = ShaderEditService(ctx, self._invoke)
         self._mesh = MeshService(ctx, self._invoke)
+        self._batch = BatchService(ctx, self._invoke, self._mesh)
         self._analysis = AnalysisService(
             ctx,
             self._invoke,
@@ -132,9 +134,13 @@ class RenderDocFacade:
 
     # ==================== Search Operations ====================
 
-    def search_actions(self, by, query, stage=None):
+    def search_actions(self, by, query, stage=None, action_event_id_range=None,
+                       time_budget_ms=None, max_matches=None, start_event_id=None):
         """Search draw and dispatch actions by shader, texture or resource."""
-        return self._search.search_actions(by, query, stage)
+        return self._search.search_actions(
+            by, query, stage, action_event_id_range,
+            time_budget_ms, max_matches, start_event_id,
+        )
 
     # ==================== Resource Operations ====================
 
@@ -298,4 +304,25 @@ class RenderDocFacade:
         """Export mesh data to CSV file"""
         return self._mesh.export_mesh_csv(
             action_event_id, output_path, stage, attributes, instance=instance
+        )
+
+    def dump_draws(
+        self,
+        action_event_ids,
+        mesh_dir=None,
+        texture_dir=None,
+        export_meshes=True,
+        export_textures=True,
+        max_textures=48,
+        summary_path=None,
+    ):
+        """Dump meshes plus per-draw material facts for many draws in one request."""
+        return self._batch.dump_draws(
+            action_event_ids,
+            mesh_dir=mesh_dir,
+            texture_dir=texture_dir,
+            export_meshes=export_meshes,
+            export_textures=export_textures,
+            max_textures=max_textures,
+            summary_path=summary_path,
         )

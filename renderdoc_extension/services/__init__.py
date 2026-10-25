@@ -10,6 +10,7 @@ from .pipeline_service import PipelineService
 from .shader_edit_service import ShaderEditService
 from .mesh_service import MeshService
 from .analysis_service import AnalysisService
+from .batch_service import BatchService
 
 __all__ = [
     "CaptureManager",
@@ -20,4 +21,5 @@ __all__ = [
     "ShaderEditService",
     "MeshService",
     "AnalysisService",
+    "BatchService",
 ]

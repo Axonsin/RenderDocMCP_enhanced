@@ -18,7 +18,7 @@ REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
 CALL_LOCK_FILE = os.path.join(IPC_DIR, "call.lock")
 
 EDIT_METHODS = {"get_shader_edit_context", "replace_shader", "revert_shader",
-                "list_shader_replacements", "export_shader_source"}
+                "list_shader_replacements", "export_shader_source", "dump_draws"}
 
 
 class RenderDocBridgeError(Exception):

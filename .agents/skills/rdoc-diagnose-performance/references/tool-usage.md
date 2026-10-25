@@ -63,8 +63,47 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 - 纹理数据响应携带 `color_space`、`all_zero`、`warnings` 等诊断字段，消费前先读；
   纹理导出响应以 `mip_selection` 报告实际保存的 mip 范围。
 - 状态类工具返回回放健康与版本信息；把它的响应当作每次长程操作的入口检查点。
+- `get_buffer_contents` 按**数值 ID** 匹配（`ResourceId` 不能由 int 构造）；
+  单次内联上限 256 KiB，超出返回 `truncated=true` 与 `next_offset`，按该偏移分页；
+  资源不存在报 `BUFFER_NOT_FOUND`，`offset` 超出缓冲报 `INVALID_PAGINATION`。
+- `search_actions` 的 `complete=false` / `stopped_reason` / `next_event_id` 是**截断**而非
+  空结果；`scan_mode="usage"` 表示候选来自 Timeline usage 索引（较快），`"pipeline"`
+  表示逐 action 扫描。续扫用 `start_event_id=next_event_id`，大捕获上先给
+  `action_event_id_range` 缩小范围。
+- `get_mesh_summary` 的 `topology` 取自管线状态（`topology_source="pipeline"`）；
+  `num_vertices` 保留 draw 的 numIndices；新增 `unique_vertex_count` 为去重引用顶点数
+  （索引不可读时为 null，`indices_available=false`）；反射名被剥离时位置流由启发式推断，看
+  `bounding_box_source` / `bounding_box_basis` / `bounding_box_inferred`，并用
+  `bounding_boxes` 核对其它三分量属性。
+- `export_mesh_csv` 在没有任何可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`（不会再写出
+  只有 `VTX,IDX` 的“成功”文件）；`exported_attributes` / `skipped_attributes` 用于
+  核对实际写入磁盘的内容。
 
-## 6. 禁止事项
+## 6. 逐对象变换：先看 shader，再读第二个常量绑定
+
+阴影/角色/合批对象常常"用共享矩阵投影后落在错误位置"，这不代表几何不可还原。
+先确认 VS 实际怎么算位置，再决定读哪个绑定：
+
+1. `get_shader_info(event_id=<draw>, stage="vertex")` 读 SPIR-V 的 `main()`，找到写入
+   `BuiltIn(Position)` 的那条链。常见形态是 `clip = MVP @ (S @ position)`：`MVP` 来自
+   一个 `float4[4]`（std140 里通常是 `Offset(288)`），`S` 来自**另一个** `DescriptorSet`
+   的 `Binding`（例如 `set 1, binding 2` 的 `_child0`，`Offset(0)`）。
+2. `get_pipeline_stage(action_event_id, stage="vertex", section="constant_buffers")` 给出每个
+   绑定的 `buffer_range.byte_offset` 与 `byte_size`；`binding_name` 与反射索引可对上结构体。
+3. `get_buffer_contents(resource_id, offset, length)` 读块。`S` 只需前 **64 B**：按**列主序**
+   解 4×4（前 3 个 float4 是 3×3，第 4 个是平移，`w=1`）。校验 3×3 行/列正交且 `det≈1`，
+   否则说明选错了绑定或结构体。
+4. 闭合验证：`clip = MVP @ S @ v` 与 `get_mesh_data(stage="VSOut")` 的 clip 逐分量比对；
+   `z` 应到 1e-6 量级。**若 VSOut 全是同一个常量**（该 draw 的 post-VS 数据未落盘），
+   这只是采样不可用，不代表变换错误——改用 NDC 包围盒与参考截图核对。
+5. 放进 DCC 时不要重新推导相机：保持 `world = CameraToWorld @ ModelView @ S`，相机用
+   `CameraToWorld`，等价于让 DCC 复算 `P @ View @ world @ v = MVP @ S @ v`。
+
+槽位提示：同类 draw 的常量块常以固定步长连续分配且与 draw 顺序一致。用 2–3 个已知
+`byte_offset` 拟合 `offset = base + stride × index`，命中后再批量直读，可省掉逐 draw 的
+`get_pipeline_stage`。
+
+## 7. 禁止事项
 
 - 绕过 MCP 直接用原生脚本读取 RDC 或调用 RenderDoc 内部接口——除非用户显式授权，
   并如实标注来源。

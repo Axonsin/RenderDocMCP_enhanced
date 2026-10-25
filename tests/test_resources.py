@@ -2,6 +2,7 @@
 
 import enum
 import asyncio
+import base64
 import importlib.util
 import json
 import struct
@@ -69,7 +70,8 @@ def modules():
                 action = module
         services = packages["renderdoc_extension.services"]
         for name in ("CaptureManager", "ActionService", "SearchService", "ResourceService",
-                     "PipelineService", "ShaderEditService", "MeshService", "AnalysisService"):
+                     "PipelineService", "ShaderEditService", "MeshService", "AnalysisService",
+                     "BatchService"):
             setattr(services, name, object)
         facade = load("renderdoc_extension.renderdoc_facade",
                       "renderdoc_extension/renderdoc_facade.py")
@@ -488,7 +490,12 @@ class ResourceTests(unittest.TestCase):
         from mcp_server import server
 
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-        self.assertEqual(len(tools), 36)
+        self.assertEqual(len(tools), 37)
+        batch_schema = tools["dump_draws"].parameters
+        self.assertEqual(batch_schema["required"], ["action_event_ids"])
+        self.assertEqual(set(batch_schema["properties"]), {
+            "action_event_ids", "mesh_dir", "texture_dir", "export_meshes",
+            "export_textures", "max_textures", "summary_path"})
         for old in ("get_draw_call_details", "get_draw_calls", "search_draws",
                     "inspect_event", "diff_events", "trace_event_dependencies"):
             self.assertNotIn(old, tools)
@@ -636,7 +643,8 @@ class ResourceTests(unittest.TestCase):
         action = NS(eventId=343, flags=3, numIndices=3)
         self.ctx.GetAction = lambda _: action
         self.controller.SetFrameEvent = lambda *args: None
-        fmt = NS(Name=lambda: "R32G32B32_FLOAT", compCount=3, Special=lambda: False)
+        fmt = NS(Name=lambda: "R32G32B32_FLOAT", compCount=3, compByteWidth=4,
+                 compType="Float", Special=lambda: False)
         attribute = NS(name="POSITION", format=fmt, topology="TriangleList",
                        vertexResourceId=ResourceId(86983), vertexByteOffset=0, vertexByteStride=12)
         mesh._get_mesh_inputs = lambda *_: [attribute]
@@ -651,6 +659,7 @@ class ResourceTests(unittest.TestCase):
             return response["result"]
 
         with patch.object(ACTION.rd, "ActionFlags", NS(Drawcall=1, Indexed=2)), \
+                patch.object(ACTION.rd, "CompType", NS(Float="Float"), create=True), \
                 patch.object(server.bridge, "call", call), tempfile.TemporaryDirectory() as directory:
             summary = server.get_mesh_summary(action_event_id=343)
             self.assertEqual(summary["action_event_id"], 343)
@@ -677,6 +686,66 @@ class ResourceTests(unittest.TestCase):
         self.controller.GetBufferData = boom
         with self.assertRaisesRegex(ValueError, "RESOURCE_QUERY_FAILED"):
             self.service.get_buffer_contents("86983")
+
+    def test_buffer_contents_match_numeric_ids(self):
+        """Regression: ResourceId cannot be constructed from an int in the bindings."""
+        payload = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+        seen = {}
+        # An opaque binding-owned ID: no integer constructor or writable .id.
+        class OpaqueId:
+            __slots__ = ()
+
+            def __int__(self):
+                return 86983
+
+        rid = OpaqueId()
+        self.controller.GetBuffers = lambda: [NS(resourceId=rid, length=11040)]
+
+        def read(rid, offset, length):
+            seen["rid"] = rid
+            return payload[offset:offset + length]
+
+        self.controller.GetBufferData = read
+        data = self.service.get_buffer_contents("ResourceId::86983", 0, 8)
+
+        self.assertEqual(int(seen["rid"]), 86983)
+        self.assertIs(seen["rid"], rid)
+        self.assertEqual(data["resource_id"], "ResourceId::86983")
+        self.assertEqual(data["length"], 8)
+        self.assertEqual(data["total_size"], 11040)
+        self.assertFalse(data["truncated"])
+        self.assertEqual(base64.b64decode(data["content_base64"]), payload[:8])
+
+    def test_export_mesh_csv_rejects_attribute_less_export(self):
+        """Post-VS attributes with a special format must fail, not export VTX/IDX only."""
+        packages = {"renderdoc": ACTION.rd}
+        for name in ("renderdoc_extension", "renderdoc_extension.services"):
+            packages[name] = types.ModuleType(name)
+            packages[name].__path__ = []
+        with patch.dict(sys.modules, packages):
+            load("renderdoc_extension.services.replay_query",
+                 "renderdoc_extension/services/replay_query.py")
+            module = load("renderdoc_extension.services.mesh_service",
+                          "renderdoc_extension/services/mesh_service.py")
+        mesh = module.MeshService(self.ctx, self.invoke)
+        action = NS(eventId=343, flags=3, numIndices=3)
+        self.ctx.GetAction = lambda _: action
+        self.controller.SetFrameEvent = lambda *args: None
+        fmt = NS(Name=lambda: "Undefined", compCount=4, Special=lambda: True)
+        attribute = NS(name="_sig0", format=fmt, topology="TriangleList",
+                       vertexResourceId=ResourceId(86983), vertexByteOffset=0,
+                       vertexByteStride=16, numIndices=3,
+                       indexResourceId=ResourceId(0), indexByteOffset=0,
+                       indexByteStride=2, baseVertex=0)
+        mesh._get_postvs_inputs = lambda *_: [attribute]
+
+        with patch.object(ACTION.rd, "ActionFlags", NS(Drawcall=1, Indexed=2)), \
+                patch.object(mesh, "_batch_get_buffer_data") as read, \
+                patch("builtins.open") as write:
+            with self.assertRaisesRegex(ValueError, "MESH_SIGNATURE_UNAVAILABLE"):
+                mesh.export_mesh_csv(343, str(ROOT / "must-not-write.csv"), stage="VSOut")
+            read.assert_not_called()
+            write.assert_not_called()
 
     def test_action_details_rejects_an_intermediate_api_eid(self):
         action = self.prepare_api_action()

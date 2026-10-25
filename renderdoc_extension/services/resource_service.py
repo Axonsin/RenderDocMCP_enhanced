@@ -16,6 +16,10 @@ from .resource_catalog import (
 )
 from .structured_data import read_node
 
+# Inline responses stay small enough for the MCP transport; callers page with
+# offset/length for larger buffers.
+MAX_INLINE_BYTES = 256 * 1024
+
 
 class ResourceService:
     """Resource information service"""
@@ -374,40 +378,92 @@ class ResourceService:
         result = {"data": None, "error": None}
 
         def callback(controller):
-            # Parse resource ID
+            # Compare numeric IDs. Constructing a ResourceId from an int is not
+            # supported by the bindings (only default/copy constructors exist),
+            # and assigning `.id` leaves the underlying value null, so an ID
+            # equality check can never match.
             try:
-                rid = Parsers.parse_resource_id(resource_id)
-            except Exception:
+                numeric = Parsers.extract_numeric_id(resource_id)
+                if numeric <= 0:
+                    raise ValueError()
+            except (TypeError, ValueError):
                 result["error"] = "INVALID_RESOURCE_ID: %s" % resource_id
                 return
 
-            try:
-                # Find buffer
-                buf_desc = None
-                for buf in controller.GetBuffers():
-                    if buf.resourceId == rid:
-                        buf_desc = buf
-                        break
+            def find_buffer():
+                try:
+                    for buf in controller.GetBuffers():
+                        try:
+                            if int(buf.resourceId) == numeric:
+                                size = getattr(buf, "length", None)
+                                if size is None:
+                                    raise ValueError("buffer descriptor has no length")
+                                return buf, int(size)
+                        except (TypeError, OverflowError):
+                            continue
+                except AttributeError:
+                    pass
+                # ResourceDescription has no size field in the real API.
+                # Only accept explicitly typed buffer descriptors with a known
+                # length from adapters; never treat a texture byteSize as a buffer.
+                try:
+                    for res in controller.GetResources():
+                        try:
+                            if int(res.resourceId) != numeric:
+                                continue
+                            if str(getattr(res, "type", "")).split(".")[-1] != "Buffer":
+                                continue
+                            size = getattr(res, "length", None)
+                            if size is None:
+                                size = getattr(res, "byteSize", None)
+                            if size is not None:
+                                return res, int(size)
+                            raise ValueError("buffer size unavailable in ResourceDescription")
+                        except ValueError:
+                            raise
+                        except Exception:
+                            continue
+                except AttributeError:
+                    pass
+                return None, 0
 
+            try:
+                buf_desc, total_size = find_buffer()
                 if not buf_desc:
                     result["error"] = "BUFFER_NOT_FOUND: %s" % resource_id
                     return
+                if offset > total_size:
+                    result["error"] = (
+                        "INVALID_PAGINATION: offset %d exceeds buffer size %d"
+                        % (offset, total_size)
+                    )
+                    return
 
-                # Get data
-                actual_length = length if length > 0 else buf_desc.length
-                data = controller.GetBufferData(rid, offset, actual_length)
+                requested = (length if length > 0 else total_size - offset)
+                available = max(0, total_size - offset)
+                actual_length = min(requested, available, MAX_INLINE_BYTES)
+                # RenderDoc defines len=0 as 'read to end', not an empty read.
+                data = (controller.GetBufferData(buf_desc.resourceId, offset, actual_length)
+                        if actual_length else b"")
+                if actual_length and not data:
+                    raise ValueError("buffer read returned no bytes before end of buffer")
+                data = data[:actual_length]
+                consumed = offset + len(data)
+                truncated = len(data) < requested
+                result["data"] = {
+                    "resource_id": Parsers.canonical_resource_id(buf_desc.resourceId),
+                    "length": len(data),
+                    "total_size": total_size,
+                    "offset": offset,
+                    "requested_bytes": requested,
+                    "truncated": truncated,
+                    "next_offset": consumed if truncated and consumed < total_size else None,
+                    "max_inline_bytes": MAX_INLINE_BYTES,
+                    "content_base64": base64.b64encode(data).decode("ascii"),
+                }
             except Exception as exc:
                 # Exceptions must survive the SWIG BlockInvoke callback boundary.
                 result["error"] = "RESOURCE_QUERY_FAILED: failed to get buffer data: %s" % str(exc)
-                return
-
-            result["data"] = {
-                "resource_id": Parsers.canonical_resource_id(rid),
-                "length": len(data),
-                "total_size": buf_desc.length,
-                "offset": offset,
-                "content_base64": base64.b64encode(data).decode("ascii"),
-            }
 
         self._invoke(callback)
 

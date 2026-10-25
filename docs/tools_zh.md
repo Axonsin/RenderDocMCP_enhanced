@@ -189,16 +189,32 @@ get_actions(exclude_markers=["GUI.Repaint", "UIR.DrawChain"])
 | `by` | `"shader"` / `"texture"` / `"resource"` | 是 | 搜索模式 |
 | `query` | `str` | 是 | shader 名称、纹理名称或 resource ID |
 | `stage` | `str` | 否 | shader 阶段过滤（`"vertex"`、`"fragment"`、`"compute"` 等）— 仅在 `by="shader"` 时有效 |
+| `action_event_id_range` | `{"min": int, "max": int}` | 否 | 只扫描该 action EID 范围 |
+| `time_budget_ms` | `int` | 否 | 扫描预算，默认 8000；到点停止并返回续扫游标，不再让客户端超时 |
+| `max_matches` | `int` | 否 | 匹配数上限，默认 200 |
+| `start_event_id` | `int` | 否 | 上次截断结果里的 `next_event_id`，从该 EID 起续扫 |
 
 **返回值：** `{"matches": [...], "total_matches": 3, "scanned_count": 150}`，另含
+`complete`、`stopped_reason`（`null` / `"time_budget"` / `"max_matches"`）、
+`next_event_id`、`scan_mode`（`"usage"` 或 `"pipeline"`）、`elapsed_ms`、
 `scan_failures`（无法读取的 action 数）与 `scan_error`（首个失败原因）；全部扫描失败时
 报 `RESOURCE_QUERY_FAILED`，恢复 replay 位置失败时报 `REPLAY_RESTORE_FAILED`。
+
+`by="texture"` / `by="resource"` 先用 Timeline usage 索引把候选 action 缩到真正使用该
+资源的 draw/dispatch（`scan_mode="usage"`），只有 usage 为空时才退回逐 action 的
+pipeline 扫描。资源与 shader 一律按数值 ID 匹配（`ResourceId` 不能由 int 构造）。
+
+当 `complete=false` 时，用 `start_event_id=next_event_id` 续扫；该游标包含自身，指向
+下一个尚未处理的 action。`scanned_count` 为本次实际尝试数。预算包含候选准备，
+但无法中断单次 replay/API 调用。usage 路径不移动 replay，也不获取逐 action 管线状态。
 
 **示例：**
 ```
 search_actions(by="shader", query="Toon", stage="fragment")
 search_actions(by="texture", query="CharacterSkin")
 search_actions(by="resource", query="ResourceId::12345")
+search_actions(by="resource", query="ResourceId::12345",
+               action_event_id_range={"min": 940, "max": 1533})
 ```
 
 ---
@@ -554,20 +570,26 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 #### `get_buffer_contents`
 
-读取缓冲区资源的内容。返回 Base64 编码的字节。`offset`/`length` 为非负字节值，负值报
-`INVALID_PAGINATION`；回放读取失败报 `RESOURCE_QUERY_FAILED`，不再静默返回空数据。
+读取缓冲区资源的内容。返回 Base64 编码的字节。`offset`/`length` 为非负字节值，负值或
+`offset` 超过缓冲大小时报 `INVALID_PAGINATION`；回放读取失败报 `RESOURCE_QUERY_FAILED`，
+资源不存在报 `BUFFER_NOT_FOUND`，不再静默返回空数据。
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `resource_id` | `str` | 是 | | 资源 ID |
+| `resource_id` | `str` | 是 | | 资源 ID（`ResourceId::123` 或纯数字） |
 | `offset` | `int` | 否 | `0` | 开始读取的字节偏移量 |
-| `length` | `int` | 否 | `0` | 要读取的字节数（0 = 整个缓冲区） |
+| `length` | `int` | 否 | `0` | 要读取的字节数（0 = 从 offset 到末尾） |
 
-**返回值：** Base64 编码的缓冲区数据，含元数据。
+**返回值：** `resource_id`、`length`（本次字节数）、`total_size`、`offset`、
+`requested_bytes`、`truncated`、`next_offset`、`max_inline_bytes`、`content_base64`。
+
+单次内联上限 256 KiB；超过时 `truncated=true` 并给出 `next_offset`，按该偏移继续读取。
+资源查找按**数值 ID** 匹配（`ResourceId` 无法由 int 构造），因此 `ResourceId::123` 与
+`123` 等价。
 
 **示例：**
 ```
-# 获取整个缓冲区
+# 获取整个缓冲区（超过 256 KiB 会分页）
 get_buffer_contents(resource_id="ResourceId::123")
 
 # 从偏移量 256 获取 512 字节
@@ -585,14 +607,32 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 | `action_event_id` | `int` | 是 | | draw call 的 event ID |
 | `instance` | `int` | 否 | `0` | 实例索引，用于 per-instance 属性与 post-VS 数据选择 |
 
-**返回值：** 拓扑结构、顶点/索引数量、是否使用索引缓冲、顶点属性及其格式、包围盒。
+**返回值：** 拓扑结构、顶点/索引数量、是否使用索引缓冲、顶点属性及其格式、
+包围盒。字段包括 `topology`、`topology_source`（`"pipeline"`）、`num_vertices`、
+`unique_vertex_count`、`indices_available`、`num_indices`、`indexed`、`attributes`（含 `exportable`）、`bounding_box`、
+`bounding_box_source`、`bounding_box_basis`、`bounding_box_inferred`、`bounding_boxes`。
+
+- `topology` 取自管线状态（`GetPrimitiveTopology()`）；`ActionDescription.topology`
+  在部分捕获（如 Vulkan 动态状态）为 `Unknown`，不再直接透传。
+- `num_vertices` 保留历史语义：等于该 draw 的 `numIndices`（非索引绘制即顶点数）。
+  去重后的“被索引引用顶点数”在 `unique_vertex_count`；索引缓冲读不到时它为 `null`，
+  同时 `indices_available=false`。
+- 反射名被剥离时属性名可能是 `_input0`，因此位置流按启发式推断：优先 `POSITION`/`POS`
+  语义；否则取第一个“非单位长度”的三分量 float 属性（法线通常是单位长度）。
+  `bounding_boxes` 给出所有三分量 float 属性的包围盒，便于核对；推断结果
+  `bounding_box_inferred=true`。包围盒采样前 1000 个引用，跳过 special 格式、
+  越界与非有限值；`topology_source` 也可能是 `mesh` 或 `unavailable`。
 
 **示例：**
 ```
 get_mesh_summary(action_event_id=1234)
-# → {"topology": "TriangleList", "num_vertices": 3024, "num_indices": 9072, "indexed": true,
-#    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT", "components": 3}, ...],
-#    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]}}
+# → {"topology": "TriangleList", "topology_source": "pipeline",
+#    "num_vertices": 3024, "num_indices": 9072, "indexed": true,
+#    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT",
+#                    "components": 3, "exportable": true}, ...],
+#    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]},
+#    "bounding_box_source": "POSITION", "bounding_box_basis": "semantic",
+#    "bounding_box_inferred": false}
 ```
 
 ---
@@ -873,7 +913,11 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 | `attributes` | `list[str]` | 否 | | 过滤特定属性。省略时包含所有属性。 |
 | `instance` | `int` | 否 | `0` | 实例索引，用于 per-instance 属性与 post-VS 数据选择 |
 
-**返回值：** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
+**返回值：** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072, "exported_attributes": ["_input0", "_input1"], "skipped_attributes": []}`
+
+没有任何可导出属性时（例如 post-VS 签名格式为 `Undefined`，所有属性都被判定为
+special）直接报 `MESH_SIGNATURE_UNAVAILABLE`，**不会**再写出只有 `VTX,IDX` 的“成功”
+文件。`skipped_attributes` 列出被跳过的属性名。
 
 **CSV 格式说明：**
 - 第一行：`VTX,IDX,in_POSITION0.x,in_POSITION0.y,...`（VSOut/GSOut 列名来自输出签名，如 `SV_POSITION0.x`）
@@ -884,4 +928,42 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 **示例：**
 ```
 export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", attributes=["POSITION", "NORMAL", "TEXCOORD"])
+```
+
+---
+
+#### `dump_draws`
+
+一次 IPC 请求批量导出 draw 的几何与材质相关状态。需要已加载捕获。
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `action_event_ids` | `list[int]` | 是 | | 1–256 个 draw 的 action EID |
+| `mesh_dir` | `str` | 条件必填 | | `export_meshes=true` 时必须提供；保存 `vsIn_<EID>.csv` 和 `.idx` |
+| `texture_dir` | `str` | 条件必填 | | `export_textures=true` 时必须提供；保存 `tex_<资源数值ID>.png` |
+| `export_meshes` | `bool` | 否 | `true` | 导出 VSIn 网格，固定使用 instance 0 |
+| `export_textures` | `bool` | 否 | `true` | 导出 vertex/fragment 阶段输入贴图，本次请求内按资源 ID 去重 |
+| `max_textures` | `int` | 否 | `48` | 本次请求选取的不同贴图导出数量上限；复用已有同名文件也占额度 |
+| `summary_path` | `str` | 否 | | 完整结果的 JSON 路径；省略且提供 `mesh_dir` 时使用 `<mesh_dir>/_batch_summary.json` |
+
+**返回值：** 有汇总路径时返回 `summary_path`、`draw_count`、`ok_count`、
+`failed_count`、`textures_saved` 和最多前 5 个失败条目 `failed`。完整 JSON 包含
+`draws`、`textures`、`textures_deferred` 及 draw 计数；没有汇总路径时直接返回完整结果。
+每个成功 draw 包含网格路径（启用导出时）、`vertex_shader`、`pixel_shader`、
+`constants`（常量缓冲范围）、`textures`、`blend`、`depth` 和 `object_matrix`。
+单个 draw 处理失败时记录 `ok=false` 和 `error` 并继续；非 draw 条目记录
+`skipped="not_a_draw"`，不计入成功或失败数。
+
+**导出范围：** PNG 固定使用 mip 0、slice 0 并保留 alpha；跳过宽或高超过 4096
+以及匹配深度格式标记的纹理。已有同名 PNG 直接复用，网格和汇总 JSON 会覆盖。
+`object_matrix` 仅尝试读取 vertex 阶段大小为 720 字节的常量绑定，从绑定偏移取前
+16 个 float；这是特定布局假设，需核对 shader 后才能当作物体变换。未找到时为 `null`。
+
+**示例：**
+```python
+dump_draws(action_event_ids=[343, 350], mesh_dir="D:/output/meshes",
+           texture_dir="D:/output/textures")
+
+# 只查看状态，不导出文件；直接返回完整结果
+dump_draws(action_event_ids=[343], export_meshes=False, export_textures=False)
 ```

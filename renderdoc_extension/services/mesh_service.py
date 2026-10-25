@@ -17,6 +17,8 @@ import csv
 import os
 import re
 import struct
+import math
+from collections import OrderedDict
 from typing import Any, Optional, List
 
 import renderdoc as rd
@@ -441,6 +443,10 @@ class MeshService:
             comps = getattr(sig, "compCount", 0)
             comps = comps if comps and comps > 0 else 4
             fmt.compCount = comps
+            # ResourceFormat.Special() is driven by `type`; a default-constructed
+            # format leaves it non-regular, which made exporters skip every
+            # post-VS attribute as "special" and Name() report Undefined.
+            fmt.type = rd.ResourceFormatType.Regular
 
             size = fmt.compByteWidth * comps
             if offset + size > stride:
@@ -586,16 +592,93 @@ class MeshService:
             mesh_name = getattr(action, 'name', '')
         return mesh_name
 
+    @staticmethod
+    def _enum_name(value) -> str:
+        return getattr(value, "name", str(value).split(".")[-1])
+
+    @staticmethod
+    def _exportable(mesh):
+        return not mesh.format.Special() and 1 <= mesh.format.compCount <= 4
+
+    def _attribute_bounding_boxes(self, controller, mesh_inputs, indices):
+        """Bounding boxes for 3-component float attributes plus a position guess.
+
+        Reflection names are stripped on many mobile captures (attributes arrive
+        as `_input0`), so the position stream is inferred: a POSITION/POS
+        semantic wins; otherwise the first attribute whose samples are not
+        unit-length (i.e. not a normal) is used. Every computed box is returned
+        so callers can verify the choice.
+        """
+        sample = indices[:1000]
+        eligible = [mesh for mesh in mesh_inputs
+                    if not mesh.format.Special()
+                    and mesh.format.compCount >= 3
+                    and mesh.format.compType == rd.CompType.Float
+                    and not getattr(mesh, "instanced", False)]
+        buffer_cache = self._batch_get_buffer_data(controller, eligible) if sample else {}
+        boxes = OrderedDict()
+        normal_like = {}
+        for mesh in eligible:
+            fmt = mesh.format
+            buffer_data = buffer_cache.get(mesh.vertexResourceId)
+            if buffer_data is None:
+                continue
+            mn = [float("inf")] * 3
+            mx = [float("-inf")] * 3
+            unit = 0
+            counted = 0
+            for idx in sample:
+                try:
+                    offset = self._vertex_byte_offset(mesh, idx)
+                    size = fmt.compCount * fmt.compByteWidth
+                    if offset < 0 or offset + size > len(buffer_data):
+                        continue
+                    values = self._unpack_vertex_data(
+                        fmt, buffer_data, offset
+                    )
+                except Exception:
+                    continue
+                if len(values) < 3 or not all(math.isfinite(v) for v in values[:3]):
+                    continue
+                counted += 1
+                length = (values[0] ** 2 + values[1] ** 2 + values[2] ** 2) ** 0.5
+                if 0.9 <= length <= 1.1:
+                    unit += 1
+                for i in range(3):
+                    mn[i] = min(mn[i], values[i])
+                    mx[i] = max(mx[i], values[i])
+            if counted == 0 or mn[0] == float("inf"):
+                continue
+            boxes[mesh.name] = {"min": mn, "max": mx}
+            normal_like[mesh.name] = (float(unit) / counted) > 0.9
+
+        chosen = None
+        source = None
+        for name in boxes:
+            upper = name.upper()
+            if "POSITION" in upper or "POS" in upper:
+                chosen, source = name, "semantic"
+                break
+        if chosen is None:
+            for name in boxes:
+                if not normal_like.get(name, False):
+                    chosen, source = name, "inferred_non_unit_length"
+                    break
+        if chosen is None and boxes:
+            chosen = next(iter(boxes))
+            source = "first_three_component_attribute"
+        return boxes, chosen, source
+
     def get_mesh_summary(self, action_event_id: int, instance: int = 0) -> dict:
         """
         Get mesh summary information for an event.
 
         Args:
             action_event_id: Event ID of the draw call
-            instance: Instance index for instanced attributes and post-VS data
+            instance: Instance index for instanced attributes
 
         Returns:
-            Dict with topology, vertex/index counts, attributes, bounding box
+            Dict with topology, vertex/index counts, attributes and bounding box
         """
         _validate_instance(instance)
 
@@ -617,23 +700,57 @@ class MeshService:
                     "format": str(mesh.format.Name()),
                     "components": mesh.format.compCount,
                     "instanced": bool(getattr(mesh, "instanced", False)),
+                    "exportable": self._exportable(mesh),
                 })
 
+            # Topology comes from the pipeline state: ActionDescription.topology
+            # is Unknown on some captures (e.g. Vulkan dynamic state).
             topology = "Unknown"
-            if mesh_inputs:
-                topology = str(mesh_inputs[0].topology)
+            topology_source = "unavailable"
+            try:
+                topology = self._enum_name(controller.GetPipelineState().GetPrimitiveTopology())
+                topology_source = "pipeline"
+            except Exception:
+                if mesh_inputs:
+                    topology = self._enum_name(mesh_inputs[0].topology)
+                    topology_source = "mesh"
+
+            indexed = bool(action.flags & rd.ActionFlags.Indexed)
+            indices_available = True
+            if indexed:
+                try:
+                    if not mesh_inputs or mesh_inputs[0].indexResourceId == rd.ResourceId.Null():
+                        raise ValueError("index buffer unavailable")
+                    indices = self._get_indices(controller, mesh_inputs[0])
+                except Exception:
+                    indices = []
+                    indices_available = False
+                unique_vertex_count = len(set(indices)) if indices_available else None
+            else:
+                indices = list(range(action.numIndices))
+                unique_vertex_count = action.numIndices
+
+            boxes, bbox_name, bbox_source = self._attribute_bounding_boxes(
+                controller, mesh_inputs, indices
+            )
 
             return {
                 "action_event_id": action_event_id,
                 "instance": instance,
                 "name": self._resolve_mesh_name(controller, mesh_inputs, action),
                 "topology": topology,
+                "topology_source": topology_source,
                 "num_vertices": action.numIndices,
-                "num_indices": action.numIndices
-                if action.flags & rd.ActionFlags.Indexed else 0,
-                "indexed": bool(action.flags & rd.ActionFlags.Indexed),
+                "unique_vertex_count": unique_vertex_count,
+                "indices_available": indices_available,
+                "num_indices": action.numIndices if indexed else 0,
+                "indexed": indexed,
                 "attributes": attributes,
-                "bounding_box": self._compute_bounding_box(controller, mesh_inputs),
+                "bounding_box": boxes.get(bbox_name) if bbox_name else None,
+                "bounding_box_source": bbox_name,
+                "bounding_box_basis": bbox_source,
+                "bounding_box_inferred": bool(bbox_source and bbox_source != "semantic"),
+                "bounding_boxes": boxes,
             }
 
         return at_event(self.ctx, self._invoke, action_event_id, operation)
@@ -845,6 +962,14 @@ class MeshService:
                         % ", ".join(attributes)
                     )
 
+            # Fail before reading buffers when nothing is exportable: a
+            # special/undefined format cannot produce attribute columns.
+            if not any(self._exportable(mesh) for mesh in mesh_inputs):
+                raise ValueError(
+                    "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
+                    "at event %d" % (stage, action_event_id)
+                )
+
             # Get indices
             if stage == "VSIn":
                 indices = self._get_indices(controller, mesh_inputs[0])
@@ -860,7 +985,7 @@ class MeshService:
             # Build header
             header = ["VTX", "IDX"]
             for mesh in mesh_inputs:
-                if mesh.format.Special():
+                if not self._exportable(mesh):
                     continue
                 for i in range(mesh.format.compCount):
                     header.append("%s%s" % (mesh.name, component_suffixes[i]))
@@ -872,7 +997,7 @@ class MeshService:
                 if idx not in unique_vertices:
                     attribute_values = []
                     for mesh in mesh_inputs:
-                        if mesh.format.Special():
+                        if not self._exportable(mesh):
                             continue
                         if mesh.vertexResourceId in buffer_cache:
                             buffer_data = buffer_cache[mesh.vertexResourceId]
@@ -897,6 +1022,15 @@ class MeshService:
                 if idx in remap:
                     triangle_stream.append(remap[idx])
 
+            # A header without attribute columns means every attribute was
+            # dropped as "special": fail loudly instead of writing a file that
+            # only contains VTX/IDX and reporting success.
+            if len(header) <= 2:
+                raise ValueError(
+                    "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
+                    "at event %d" % (stage, action_event_id)
+                )
+
             # Ensure output directory exists
             output_dir = os.path.dirname(output_path)
             if output_dir and not os.path.exists(output_dir):
@@ -914,6 +1048,10 @@ class MeshService:
                 for remapped_idx in triangle_stream:
                     idx_file.write("%d\n" % remapped_idx)
 
+            exported = sorted(mesh.name for mesh in mesh_inputs if self._exportable(mesh))
+            skipped = sorted(
+                mesh.name for mesh in mesh_inputs if not self._exportable(mesh)
+            )
             return {
                 "success": True,
                 "action_event_id": action_event_id,
@@ -924,6 +1062,8 @@ class MeshService:
                 "index_count": len(triangle_stream),
                 "stage": stage,
                 "format": "CSV",
+                "exported_attributes": exported,
+                "skipped_attributes": skipped,
             }
 
         return at_event(self.ctx, self._invoke, action_event_id, operation)

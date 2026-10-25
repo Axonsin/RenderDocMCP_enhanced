@@ -194,17 +194,35 @@ Search draw and dispatch actions by shader, texture, or resource.
 | `by` | `"shader"` / `"texture"` / `"resource"` | Yes | Search mode |
 | `query` | `str` | Yes | Shader name, texture name, or resource ID |
 | `stage` | `str` | No | Shader stage filter (`"vertex"`, `"fragment"`, `"compute"`, etc.) — only for `by="shader"` |
+| `action_event_id_range` | `{"min": int, "max": int}` | No | Restrict the scan to this action EID range |
+| `time_budget_ms` | `int` | No | Scan budget, default 8000; stops with a resume cursor instead of letting the client time out |
+| `max_matches` | `int` | No | Match cap, default 200 |
+| `start_event_id` | `int` | No | Resume cursor (`next_event_id` from a truncated result) |
 
 **Returns:** `{"matches": [...], "total_matches": 3, "scanned_count": 150}` plus
+`complete`, `stopped_reason` (`null` / `"time_budget"` / `"max_matches"`),
+`next_event_id`, `scan_mode` (`"usage"` or `"pipeline"`), `elapsed_ms`,
 `scan_failures` (actions that could not be read) and `scan_error` (first failure reason).
 When every action fails to scan the tool raises `RESOURCE_QUERY_FAILED`; a failed
 replay-position restore raises `REPLAY_RESTORE_FAILED`.
+
+`by="texture"` / `by="resource"` first narrow candidates through the Timeline usage
+index (`scan_mode="usage"`), without moving replay or fetching pipeline state, and fall back to a per-action pipeline scan when no
+usage is recorded. Resources and shaders are matched by numeric ID (`ResourceId` cannot
+be constructed from an int).
+
+When `complete=false`, resume with `start_event_id=next_event_id`; do not treat the
+partial result as empty. The cursor is inclusive and identifies the next unprocessed
+action. `scanned_count` counts attempted actions in this response. The budget includes
+candidate preparation; an individual replay/API call cannot be interrupted.
 
 **Examples:**
 ```
 search_actions(by="shader", query="Toon", stage="fragment")
 search_actions(by="texture", query="CharacterSkin")
 search_actions(by="resource", query="ResourceId::12345")
+search_actions(by="resource", query="ResourceId::12345",
+               action_event_id_range={"min": 940, "max": 1533})
 ```
 
 ---
@@ -582,16 +600,22 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 #### `get_buffer_contents`
 
 Read the contents of a buffer resource. Returns base64-encoded bytes. `offset`/`length`
-must be non-negative byte values (`INVALID_PAGINATION` otherwise); replay read failures
-raise `RESOURCE_QUERY_FAILED` instead of silently returning no data.
+must be non-negative byte values (`INVALID_PAGINATION` otherwise, including an `offset`
+past the buffer end); replay read failures raise `RESOURCE_QUERY_FAILED` instead of
+silently returning no data, and a missing resource raises `BUFFER_NOT_FOUND`.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `resource_id` | `str` | Yes | | The resource ID |
+| `resource_id` | `str` | Yes | | The resource ID (`ResourceId::123` or a bare number) |
 | `offset` | `int` | No | `0` | Byte offset to start reading from |
-| `length` | `int` | No | `0` | Number of bytes to read (0 = entire buffer) |
+| `length` | `int` | No | `0` | Number of bytes to read (0 = from offset to end) |
 
-**Returns:** Base64-encoded buffer data with metadata.
+**Returns:** `resource_id`, `length` (bytes returned), `total_size`, `offset`,
+`requested_bytes`, `truncated`, `next_offset`, `max_inline_bytes`, `content_base64`.
+
+Inline responses are capped at 256 KiB; larger reads return `truncated=true` with
+`next_offset` for paging. Lookup compares numeric IDs (`ResourceId` cannot be built
+from an int), so `ResourceId::123` and `123` are equivalent.
 
 **Examples:**
 ```
@@ -613,14 +637,37 @@ Get a summary of mesh data for a specific draw call event.
 | `action_event_id` | `int` | Yes | | The event ID of the draw call |
 | `instance` | `int` | No | `0` | Instance index for per-instance attributes and post-VS data selection |
 
-**Returns:** Topology, vertex/index counts, whether indexed, vertex attributes with formats, bounding box.
+**Returns:** Topology, vertex/index counts, whether indexed,
+vertex attributes with formats, and bounding boxes. Fields: `topology`,
+`topology_source` (`"pipeline"`, `"mesh"`, or `"unavailable"`), `num_vertices`,
+`unique_vertex_count`, `indices_available`, `num_indices`, `indexed`,
+`attributes` (each with `exportable`), `bounding_box`, `bounding_box_source`,
+`bounding_box_basis`, `bounding_box_inferred`, `bounding_boxes`.
+
+- `topology` comes from the pipeline state (`GetPrimitiveTopology()`);
+  `ActionDescription.topology` is `Unknown` on some captures (Vulkan dynamic state)
+  and is no longer passed through.
+- `num_vertices` keeps its historical meaning: the draw's `numIndices` (the vertex
+  count for non-indexed draws). The deduplicated number of referenced vertices is
+  `unique_vertex_count`; it is `null` with `indices_available=false` when the index
+  buffer cannot be read.
+- When reflection names are stripped (attributes arrive as `_input0`), the position
+  stream is inferred: a `POSITION`/`POS` semantic wins; otherwise the first
+  three-component float attribute that is not unit-length (i.e. not a normal) is used.
+  `bounding_boxes` lists every three-component float attribute so the choice can be
+  verified; inferred results set `bounding_box_inferred=true`. Boxes sample the first
+  1000 references and ignore special formats, invalid ranges, and non-finite values.
 
 **Example:**
 ```
 get_mesh_summary(action_event_id=1234)
-# → {"topology": "TriangleList", "num_vertices": 3024, "num_indices": 9072, "indexed": true,
-#    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT", "components": 3}, ...],
-#    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]}}
+# → {"topology": "TriangleList", "topology_source": "pipeline",
+#    "num_vertices": 3024, "num_indices": 9072, "indexed": true,
+#    "attributes": [{"name": "POSITION", "format": "R32G32B32_FLOAT",
+#                    "components": 3, "exportable": true}, ...],
+#    "bounding_box": {"min": [-10.0, -5.0, -2.0], "max": [10.0, 5.0, 2.0]},
+#    "bounding_box_source": "POSITION", "bounding_box_basis": "semantic",
+#    "bounding_box_inferred": false}
 ```
 
 ---
@@ -907,7 +954,12 @@ Export mesh data to a CSV file.
 | `attributes` | `list[str]` | No | | Filter to specific attributes. If omitted, all attributes included. |
 | `instance` | `int` | No | `0` | Instance index for per-instance attributes and post-VS data selection |
 
-**Returns:** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072}`
+**Returns:** `{"success": true, "output_path": "D:/output/mesh.csv", "index_path": "D:/output/mesh.idx", "vertex_count": 3024, "index_count": 9072, "exported_attributes": ["_input0", "_input1"], "skipped_attributes": []}`
+
+When no attribute is exportable (for example a post-VS signature whose format is
+`Undefined`, where every attribute is treated as special) the tool raises
+`MESH_SIGNATURE_UNAVAILABLE` instead of writing a "successful" file containing only
+`VTX,IDX`. `skipped_attributes` lists the attributes that were dropped.
 
 **CSV format:**
 - First row: `VTX,IDX,in_POSITION0.x,in_POSITION0.y,...` (VSOut/GSOut column names come from the output signature, e.g. `SV_POSITION0.x`)
@@ -918,4 +970,47 @@ Export mesh data to a CSV file.
 **Example:**
 ```
 export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="VSIn", attributes=["POSITION", "NORMAL", "TEXCOORD"])
+```
+
+---
+
+#### `dump_draws`
+
+Export geometry and material facts for multiple draws in one IPC request. Requires a loaded capture.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `action_event_ids` | `list[int]` | Yes | | 1–256 draw action EIDs |
+| `mesh_dir` | `str` | Conditional | | Required when `export_meshes=true`; saves `vsIn_<EID>.csv` and `.idx` |
+| `texture_dir` | `str` | Conditional | | Required when `export_textures=true`; saves `tex_<numericResourceId>.png` |
+| `export_meshes` | `bool` | No | `true` | Export VSIn geometry using instance 0 |
+| `export_textures` | `bool` | No | `true` | Export vertex/fragment input textures, deduplicated by resource ID within this request |
+| `max_textures` | `int` | No | `48` | Maximum distinct texture exports selected per request; reusing an existing file also consumes a slot |
+| `summary_path` | `str` | No | | Full JSON output path; defaults to `<mesh_dir>/_batch_summary.json` when `mesh_dir` is supplied |
+
+**Returns:** With a summary path, returns `summary_path`, `draw_count`, `ok_count`,
+`failed_count`, `textures_saved`, and up to five failed entries in `failed`.
+The full JSON contains `draws`, `textures`, `textures_deferred`, and draw counts;
+without a summary path, this full result is returned directly.
+Each successful draw includes its mesh path (when enabled), `vertex_shader`,
+`pixel_shader`, `constants` (constant-buffer ranges), `textures`, `blend`, `depth`,
+and `object_matrix`. An individual draw failure records `ok=false` and `error`
+and processing continues. Non-draw entries record `skipped="not_a_draw"` and
+count as neither successes nor failures.
+
+**Export scope:** PNG uses mip 0, slice 0, and preserved alpha. Textures with a
+width or height above 4096 or matching depth-format markers are skipped.
+Existing PNG files are reused; mesh files and summary JSON are overwritten.
+`object_matrix` only attempts to read the first 16 floats at the binding offset
+of a 720-byte vertex-stage constant binding. This assumes a specific layout;
+verify the shader before interpreting it as an object transform. It is `null`
+when unavailable.
+
+**Examples:**
+```python
+dump_draws(action_event_ids=[343, 350], mesh_dir="D:/output/meshes",
+           texture_dir="D:/output/textures")
+
+# Inspect state without exporting files; return the full result inline.
+dump_draws(action_event_ids=[343], export_meshes=False, export_textures=False)
 ```
