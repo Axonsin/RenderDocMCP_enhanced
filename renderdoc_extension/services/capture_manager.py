@@ -54,8 +54,7 @@ class CaptureManager:
                 raise ValueError("REMOTE_FILE_UNAVAILABLE: capture download returned no data")
             return self._capture_file_facts(temporary)
 
-    def _android_query(self, serial, arguments):
-        """Read-only ADB queries using RenderDoc's documented tool precedence."""
+    def _configured_adb(self):
         import shutil
         import subprocess
         executable = "adb.exe" if os.name == "nt" else "adb"
@@ -77,6 +76,12 @@ class CaptureManager:
         adb = next((p for p in candidates if p and os.path.isfile(p)), None)
         if adb is None:
             raise RuntimeError("REMOTE_START_REQUIRES_MANUAL: cannot locate the configured ADB for read-only package checks")
+        return adb
+
+    def _android_query(self, serial, arguments):
+        """Read-only package preflight using the configured ADB."""
+        import subprocess
+        adb = self._configured_adb()
         command = [adb, "-s", serial, "shell"] + list(arguments)
         options = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
                    "universal_newlines": True, "encoding": "utf-8", "errors": "replace", "timeout": 10}
@@ -178,7 +183,9 @@ class CaptureManager:
         result["replay_probe"] = "not_loaded"
         result["active_job"] = self.jobs.active if self.jobs else None
         result["capabilities"] = {"async_jobs": True, "event_scoped_buffers": True,
-                                  "shader_bundles": True, "texture_comparison": True}
+                                  "shader_bundles": True, "texture_comparison": True,
+                                  "event_constant_exports": True, "texture_file_transport": True,
+                                  "offline_diagnostics": True, "depth_stencil_aspects": ["D16", "D24S8"]}
 
         if not self.ctx.IsCaptureLoaded():
             return result

@@ -4,6 +4,8 @@ Provides thread-safe access to RenderDoc's ReplayController and CaptureContext.
 Uses BlockInvoke to marshal calls to the replay thread.
 """
 
+from .services.replay_guard import ReplayGuard
+
 from .services import (
     CaptureManager,
     ActionService,
@@ -46,13 +48,21 @@ class RenderDocFacade:
 
         # Shared identity and jobs own all capture-scoped asynchronous work.
         self._session = SessionState(ctx)
+        self._guard = ReplayGuard(ctx, self._session, self.runtime_info)
         self._jobs = JobService(ctx, self._session)
         self._capture = CaptureManager(ctx, self._invoke, runtime_info, self._session, self._jobs)
+        import renderdoc as rd
+        self._guard.state["renderdoc_log"] = rd.GetLogFile()
+        try:
+            self._guard.state["adb_path"] = self._capture._configured_adb()
+        except Exception:
+            self._guard.state["adb_path"] = None
+        self._guard.publish()
         self._action = ActionService(ctx, self._invoke)
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke, self._session)
-        self._shader_edit = ShaderEditService(ctx, self._invoke)
+        self._shader_edit = ShaderEditService(ctx, self._invoke, self._session)
         self._mesh = MeshService(ctx, self._invoke)
         self._batch = BatchService(ctx, self._invoke, self._mesh, self._session, self._jobs)
         self._investigation = InvestigationService(ctx, self._session, self._jobs)
@@ -67,7 +77,22 @@ class RenderDocFacade:
 
     def _invoke(self, callback):
         """Invoke callback on replay thread via BlockInvoke"""
-        self.ctx.Replay().BlockInvoke(callback)
+        self._guard.preflight()
+        result = {}
+        def guarded(controller):
+            try:
+                self._guard.thread_state.active = True
+                self._guard.thread_state.event = self._guard.state.get("event_id")
+                self._guard.check(controller)
+                callback(controller)
+                self._guard.check(controller)
+            except Exception as exc:
+                result["error"] = str(exc)
+            finally:
+                self._guard.thread_state.active = False
+        self.ctx.Replay().BlockInvoke(guarded)
+        if "error" in result:
+            raise RuntimeError(result["error"])
 
     def dispose(self):
         """Revert owned shader edits before the extension unloads."""
@@ -75,6 +100,7 @@ class RenderDocFacade:
         self._shader_edit.dispose()
         self._session.dispose()
         self._pipeline.dispose()
+        self._guard.dispose()
 
     # ==================== Capture Management ====================
 
@@ -101,14 +127,14 @@ class RenderDocFacade:
     def resume_job(self, job_id, texture_budget=48):
         return self._jobs.resume(job_id, texture_budget)
 
-    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None):
-        return self._investigation.export_shader_bundle(action_event_id, stage, output_dir, job_id)
+    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None, include_event_context=True, export_constants=True):
+        return self._investigation.export_shader_bundle(action_event_id, stage, output_dir, job_id, include_event_context, export_constants)
 
     def compare_texture_events(self, resource_id, action_event_id_a, action_event_id_b, region, output_dir,
-                               mip=0, slice_index=0, sample=0, depth_slice=0, value_domain="storage", job_id=None):
+                               mip=0, slice_index=0, sample=0, depth_slice=0, value_domain="storage", job_id=None, aspect="all"):
         return self._investigation.compare_texture_events(resource_id, action_event_id_a, action_event_id_b,
                                                           region, output_dir, mip, slice_index, sample,
-                                                          depth_slice, value_domain, job_id)
+                                                          depth_slice, value_domain, job_id, aspect)
 
     def get_pixel_history(self, resource_id, x, y, action_event_id, output_dir,
                           mip=0, slice_index=0, sample=0, job_id=None):
@@ -198,9 +224,11 @@ class RenderDocFacade:
         """Get texture metadata"""
         return self._resource.get_texture_info(resource_id)
 
-    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None):
+    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None,
+                         output_mode="auto", output_dir=None, aspect="all", region=None):
         """Get texture pixel data"""
-        return self._resource.get_texture_data(resource_id, mip, slice_index, sample, depth_slice, action_event_id)
+        return self._resource.get_texture_data(resource_id, mip, slice_index, sample, depth_slice, action_event_id,
+                                               output_mode, output_dir, aspect, region)
 
     def save_texture(
         self,
@@ -352,7 +380,7 @@ class RenderDocFacade:
 
     def dump_draws(self, output_dir, action_event_ids=None, marker_filter=None, action_event_id_range=None,
                    mesh_stage="VSIn", instances=None, view_index=0, export_meshes=True, export_textures=True,
-                   max_textures=48, max_texture_edge=None, skip_depth=False, job_id=None):
+                   max_textures=48, max_texture_edge=None, skip_depth=False, job_id=None, export_constants=True):
         return self._batch.dump_draws(output_dir, action_event_ids, marker_filter, action_event_id_range,
                                      mesh_stage, instances, view_index, export_meshes, export_textures,
-                                     max_textures, max_texture_edge, skip_depth, job_id)
+                                     max_textures, max_texture_edge, skip_depth, job_id, export_constants)

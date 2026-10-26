@@ -8,6 +8,8 @@ import os
 import tempfile
 import time
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
 from typing import Any
 from mcp_server.bridge.job_status import read_status, request_cancel
@@ -75,8 +77,40 @@ class RenderDocBridge:
                     import fcntl
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+    def _journal(self, row):
+        handler = None
+        try:
+            directory = os.path.join(IPC_DIR, "diagnostics")
+            os.makedirs(directory, exist_ok=True)
+            handler = RotatingFileHandler(os.path.join(directory, "ipc.jsonl"), maxBytes=10*1024*1024,
+                                          backupCount=2, encoding="utf-8", delay=True)
+            record = logging.LogRecord("ipc", logging.INFO, "", 0, json.dumps(row), (), None)
+            handler.emit(record)
+        except OSError:
+            pass
+        finally:
+            if handler:
+                handler.close()
+
     def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        request_id = str(uuid.uuid4())
+        started = time.monotonic()
+        self._journal({"request_id": request_id, "method": method, "phase": "ipc_submit", "started_at": time.time()})
+        try:
+            result = self._call(method, params, request_id)
+            self._journal({"request_id": request_id, "method": method, "phase": "ipc_complete", "ended_at": time.time(),
+                           "elapsed_seconds": time.monotonic()-started})
+            return result
+        except Exception as exc:
+            self._journal({"request_id": request_id, "method": method, "phase": "ipc_error", "ended_at": time.time(),
+                           "elapsed_seconds": time.monotonic()-started, "error": str(exc)[:2048]})
+            raise
+
+    def _call(self, method: str, params: dict[str, Any] | None = None, request_id=None) -> Any:
         """Call a method on the RenderDoc extension"""
+        if method == "get_replay_diagnostics":
+            from .diagnostics import collect
+            return collect(os.path.join(IPC_DIR, "diagnostics"), **(params or {}))
         # Check if IPC directory exists
         if not os.path.exists(IPC_DIR):
             raise RenderDocBridgeError(
@@ -94,11 +128,12 @@ class RenderDocBridge:
         if method in JOB_METHODS and not params.get("job_id"):
             params["job_id"] = str(uuid.uuid4())
         request = {
-            "id": str(uuid.uuid4()),
+            "id": request_id or str(uuid.uuid4()),
             "method": method,
             "params": params or {},
             "ipc_version": 2,
-            "api_contract_version": 2,
+            "server_version": "3.0.0",
+            "api_contract_version": 3,
         }
         timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout
         response_file = os.path.join(IPC_DIR, "response_%s.json" % request["id"])
@@ -118,12 +153,23 @@ class RenderDocBridge:
                 while True:
                     # Per-request replies prevent a late response overwriting the next reply.
                     if os.path.exists(response_file):
-                        with open(response_file, "r", encoding="utf-8") as handle:
-                            response = json.load(handle)
-                        os.remove(response_file)
+                        try:
+                            with open(response_file, "r", encoding="utf-8") as handle:
+                                response = json.load(handle)
+                        except PermissionError:
+                            if time.monotonic() >= deadline:
+                                raise RenderDocBridgeError("RESULT_PENDING: response file is inaccessible; operation was submitted, do not resubmit")
+                            time.sleep(min(0.1, max(0, deadline-time.monotonic())))
+                            continue
+                        if response.get("id") != request["id"]:
+                            raise RenderDocBridgeError("IPC_RESPONSE_MISMATCH: response ID differs from submitted request")
+                        try:
+                            os.remove(response_file)
+                        except OSError:
+                            pass  # A validated result remains valid if cleanup fails.
                         if response.get("id") == request["id"]:
-                            if response.get("api_contract_version") != 2:
-                                raise RenderDocBridgeError("API_VERSION_MISMATCH: update both MCP server and RenderDoc extension to 2.x")
+                            if response.get("api_contract_version") != 3:
+                                raise RenderDocBridgeError("API_VERSION_MISMATCH: update both MCP server and RenderDoc extension to 3.x")
                             if "error" in response:
                                 error = response["error"]
                                 raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")

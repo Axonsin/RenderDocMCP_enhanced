@@ -11,6 +11,7 @@ from .mesh_service import MeshService
 from .pipeline_snapshot import Snapshot, plain
 from .replay_query import at_event, require_action
 from .shader_variables import reflected_layout
+from .constant_export import read_constants, write_constants
 
 
 class BatchService:
@@ -65,7 +66,7 @@ class BatchService:
     def dump_draws(self, output_dir, action_event_ids=None, marker_filter=None,
                    action_event_id_range=None, mesh_stage="VSIn", instances=None, view_index=0,
                    export_meshes=True, export_textures=True, max_textures=48,
-                   max_texture_edge=None, skip_depth=False, job_id=None):
+                   max_texture_edge=None, skip_depth=False, job_id=None, export_constants=True):
         selected, skipped = self._select(action_event_ids, marker_filter, action_event_id_range)
         if mesh_stage not in ("VSIn", "VSOut", "GSOut"):
             raise ValueError("INVALID_STAGE: invalid mesh_stage")
@@ -79,7 +80,7 @@ class BatchService:
             raise ValueError("INVALID_REQUEST: max_textures must be positive")
         if max_texture_edge is not None and (type(max_texture_edge) is not int or max_texture_edge < 1):
             raise ValueError("INVALID_REQUEST: max_texture_edge must be positive or null")
-        if any(type(v) is not bool for v in (export_meshes, export_textures, skip_depth)):
+        if any(type(v) is not bool for v in (export_meshes, export_textures, skip_depth, export_constants)):
             raise ValueError("INVALID_REQUEST: export options must be booleans")
         if not isinstance(output_dir, str) or not os.path.isabs(output_dir):
             raise ValueError("INVALID_OUTPUT_PATH: output_dir must be absolute")
@@ -91,7 +92,7 @@ class BatchService:
                       marker_filter=marker_filter, action_event_id_range=action_event_id_range,
                       mesh_stage=mesh_stage, instances=instances, view_index=view_index,
                       export_meshes=export_meshes, export_textures=export_textures,
-                      max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth)
+                      max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, export_constants=export_constants)
 
         def steps(key):
             directory = os.path.join(output_dir, key)
@@ -105,7 +106,8 @@ class BatchService:
                     entry = {"item_key": "%d:%d:%d" % (eid, instance, view_index),
                              "action_event_id": eid, "instance": instance, "view_index": view_index,
                              "complete": False}
-                    def facts(controller, eid=eid, instance=instance, entry=entry):
+                    constant_payload = {}
+                    def facts(controller, eid=eid, instance=instance, entry=entry, payload=constant_payload):
                         fatal = controller.GetFatalErrorStatus()
                         if not fatal.OK():
                             raise RuntimeError("REPLAY_UNHEALTHY: %s" % fatal.Message())
@@ -121,6 +123,9 @@ class BatchService:
                                 entry["textures"] = [copy.deepcopy(r) for r in snapshot.texture_rows()
                                                      if r.get("bound") and r.get("resource_kind") == "texture"
                                                      and "input" in r.get("roles", [])]
+                                if not export_textures:
+                                    for texture_row in entry["textures"]:
+                                        texture_row["export"] = {"skipped": "export_disabled"}
                                 entry["constant_layouts"] = []
                                 for binding in entry["bindings"]:
                                     source = snapshot.variable_sources.get(binding["binding_key"])
@@ -134,6 +139,8 @@ class BatchService:
                                         "name": declaration.name, "byte_size": declaration.byteSize,
                                         "source": "reflected_constant_layout", "semantic": "unknown",
                                         "variables": reflected_layout(declaration.variables)})
+                                if export_constants:
+                                    payload["records"] = read_constants(snapshot)
                                 if export_meshes:
                                     local = MeshService(self.ctx, lambda fn: fn(c))
                                     path = os.path.join(directory, "mesh_%d_i%d_v%d.csv" % (eid, instance, view_index))
@@ -147,9 +154,17 @@ class BatchService:
                             at_event(self.ctx, lambda fn: fn(controller), eid, read)
                         except Exception as exc:
                             entry.update(ok=False, error=str(exc))
-                        entry["complete"] = not entry.get("ok") or not export_textures
+                        entry["complete"] = not entry.get("ok") or (not export_textures and not export_constants)
                         return {"item": entry}
                     yield ("replay", "draw_%d_instance_%d" % (eid, instance), facts)
+                    if entry.get("ok") and export_constants:
+                        def constants(_, entry=entry, payload=constant_payload, eid=eid, instance=instance):
+                            entry["constants"] = write_constants(directory, payload.pop("records", []), entry["provenance"], "e%d_i%d" % (eid, instance))
+                            if any(r["status"] == "failed" for r in entry["constants"]):
+                                entry.update(ok=False, error="CONSTANT_EXPORT_FAILED: see constant details")
+                            entry["complete"] = not export_textures or not entry.get("ok")
+                            return {"item": entry}
+                        yield ("worker", "constants_%d" % eid, constants)
                     if not entry.get("ok") or not export_textures:
                         continue
                     for row in entry["textures"]:
@@ -205,7 +220,7 @@ class BatchService:
                     yield ("ui", "completed_draw_%d_instance_%d" % (eid, instance), complete)
             def finish(_):
                 record = self.jobs.records[key]
-                result = dict(provenance=self.session.describe(), draw_count=len(selected),
+                result = dict(provenance=record["provenance"], draw_count=len(selected),
                               item_count=len(record["items"]),
                               ok_count=sum(i.get("ok") is True for i in record["items"]),
                               failed_count=sum(i.get("ok") is False for i in record["items"]),

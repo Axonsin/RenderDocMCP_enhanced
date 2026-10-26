@@ -67,3 +67,7 @@ Skill）、需要先分析管线才知道取舍的（可先用管线分析 Skill
 | `references/reconstruction.md` | 开始步骤 3 前（坐标/实例/相机/材质方法与 Blender MCP 交接） |
 | `references/evidence-contract.md` | 记录证据、判定可疑数据、长程 checkpoint 时 |
 | `references/job-layout.md` | 建工作目录与报告时 |
+
+## RenderDoc MCP 3.0
+
+按 references/tool-usage.md 的 3.0 契约调用；优先消费完整事件常量/事件 shader 包与纹理文件产物。失效回放先取本机诊断，禁止使用占位数据；设备日志需显式授权。

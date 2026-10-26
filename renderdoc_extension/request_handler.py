@@ -57,6 +57,20 @@ class RequestHandler:
         }
 
     def handle(self, request):
+        guard = getattr(self.facade, "_guard", None)
+        if guard:
+            guard.begin(request)
+        response = self._handle(request)
+        if guard:
+            data = response.get("result")
+            if isinstance(data, dict):
+                guard.phase("result_ready", readback_bytes=data.get("source_data_length", data.get("data_length", data.get("returned_bytes"))))
+            if isinstance(data, dict) and data.get("replay_healthy") is False:
+                guard.observe_failure(data.get("replay_error"))
+            guard.finish(response.get("error", {}).get("message"))
+        return response
+
+    def _handle(self, request):
         """Handle a request and return response"""
         request_id = request.get("id")
         method = request.get("method")
@@ -69,8 +83,8 @@ class RequestHandler:
                 )
 
             runtime = getattr(self.facade, "runtime_info", {}) or {}
-            if runtime.get("api_contract_version") == 2 and request.get("api_contract_version") != 2:
-                raise ValueError("API_VERSION_MISMATCH: MCP server and extension must both use API contract 2")
+            if runtime.get("api_contract_version") == 3 and request.get("api_contract_version") != 3:
+                raise ValueError("API_VERSION_MISMATCH: MCP server and extension must both use API contract 3")
             jobs = getattr(self.facade, "_jobs", None)
             controls = {"ping", "get_capture_status", "get_replay_context", "get_job_status", "cancel_job"}
             resubmission = (jobs and params.get("job_id") in jobs.records and
@@ -84,8 +98,13 @@ class RequestHandler:
                 raise ValueError("INVALID_REQUEST: unexpected parameter(s): %s" %
                                  ", ".join(unexpected))
 
+            guard = getattr(self.facade, "_guard", None)
+            if guard and method not in controls | {"open_capture", "list_captures", "list_shader_replacements"}:
+                guard.preflight()
+            if runtime.get("extension_version") and request.get("server_version") != runtime["extension_version"]:
+                raise ValueError("API_VERSION_MISMATCH: deploy matching MCP server and extension versions")
             result = self._methods[method](params)
-            return {"id": request_id, "result": result, "api_contract_version": 2}
+            return {"id": request_id, "result": result, "api_contract_version": 3}
 
         except ValueError as e:
             code, message = self._classify_error(str(e))
@@ -97,7 +116,7 @@ class RequestHandler:
 
     def _error_response(self, request_id, code, message):
         """Create an error response"""
-        return {"id": request_id, "error": {"code": code, "message": message}, "api_contract_version": 2}
+        return {"id": request_id, "error": {"code": code, "message": message}, "api_contract_version": 3}
 
     def _classify_error(self, message):
         """Classify exception messages into stable JSON-RPC error responses."""
@@ -129,6 +148,7 @@ class RequestHandler:
             "INVALID_MIP_LEVEL",
             "INVALID_SLICE",
             "INVALID_SAMPLE",
+            "INVALID_ASPECT",
             "INVALID_DEPTH_SLICE",
             "INVALID_EDIT_ID",
             "INVALID_EDIT_MODE",
@@ -181,7 +201,7 @@ class RequestHandler:
             "renderdoc_version": runtime.get("renderdoc_version"),
             "ipc_version": runtime.get("ipc_version"),
             "capture_loaded": capture_loaded,
-            "api_contract_version": 2,
+            "api_contract_version": 3,
             "extension_build_hash": runtime.get("extension_build_hash"),
         }
 
@@ -324,7 +344,7 @@ class RequestHandler:
         slice_index = params.get("slice_index", 0)
         sample = params.get("sample", 0)
         depth_slice = params.get("depth_slice")  # None = full volume
-        return self.facade.get_texture_data(resource_id, mip, slice_index, sample, depth_slice, params.get("action_event_id"))
+        return self.facade.get_texture_data(**params)
 
     def _handle_save_texture(self, params):
         """Handle save_texture request"""

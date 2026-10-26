@@ -33,6 +33,15 @@ JOBS = standalone("job_service")
 VALUES = standalone("texture_values")
 NATIVE = pipeline_tests.MODULES["native_serialization"]
 VARIABLES = pipeline_tests.MODULES["shader_variables"]
+with patch.dict(sys.modules, {"renderdoc_extension.services.job_service": JOBS,
+    "renderdoc_extension.services.shader_variables": VARIABLES,
+    "renderdoc_extension.services.native_serialization": NATIVE,
+    "renderdoc_extension.services.resource_catalog": pipeline_tests.MODULES['resource_catalog']}):
+    spec = importlib.util.spec_from_file_location('renderdoc_extension.services.constant_export',
+        ROOT/'renderdoc_extension/services/constant_export.py')
+    CONSTANT_EXPORT = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(CONSTANT_EXPORT)
+
 
 
 class Session:
@@ -440,6 +449,8 @@ def investigation(tmp_path, monkeypatch):
     monkeypatch.setattr(rd, "Subresource", lambda: NS(), raising=False)
     dependencies = {"renderdoc": rd, "renderdoc_extension.services.job_service": JOBS,
                     "renderdoc_extension.services.texture_values": VALUES,
+                    "renderdoc_extension.services.constant_export": CONSTANT_EXPORT,
+                    "renderdoc_extension.services.pipeline_snapshot": pipeline_tests.MODULES["pipeline_snapshot"],
                     "renderdoc_extension.utils": NS(Parsers=pipeline_tests.MODULES['pipeline_snapshot'].Parsers)}
     for name in ('native_serialization', 'replay_query', 'resource_catalog'):
         dependencies['renderdoc_extension.services.'+name] = pipeline_tests.MODULES[name]
@@ -705,7 +716,8 @@ def test_duplicate_draw_and_instance_requests_have_consistent_progress(tmp_path)
         'renderdoc_extension.services.mesh_service':mesh_tests.MESH,
         'renderdoc_extension.services.pipeline_snapshot':pipeline_tests.MODULES['pipeline_snapshot'],
         'renderdoc_extension.services.replay_query':pipeline_tests.MODULES['replay_query'],
-        'renderdoc_extension.services.shader_variables':VARIABLES}
+        'renderdoc_extension.services.shader_variables':VARIABLES,
+        'renderdoc_extension.services.constant_export':CONSTANT_EXPORT}
     with patch.dict(sys.modules,dependencies):
         spec=importlib.util.spec_from_file_location('renderdoc_extension.services.batch_service',
                                                    ROOT/'renderdoc_extension/services/batch_service.py')

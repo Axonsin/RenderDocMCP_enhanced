@@ -8,6 +8,7 @@ import os
 import traceback
 import tempfile
 import uuid
+import time
 
 from PySide2.QtCore import QObject, QTimer
 
@@ -106,9 +107,14 @@ class MCPBridgeServer(QObject):
 
             response_path = os.path.join(IPC_DIR, "response_%s.json" % request_id)
             temporary = response_path + ".tmp"
+            serialization_start = time.monotonic()
             with open(temporary, "w", encoding="utf-8") as f:
                 json.dump(response, f)
+            response_bytes = os.path.getsize(temporary)
             os.replace(temporary, response_path)
+            guard = getattr(self.handler.facade, "_guard", None) if hasattr(self.handler, "facade") else None
+            if guard:
+                guard.phase("response_published", serialization_seconds=time.monotonic()-serialization_start, response_bytes=response_bytes)
 
         except Exception as e:
             print("[MCP Bridge] Error processing request: %s" % str(e))

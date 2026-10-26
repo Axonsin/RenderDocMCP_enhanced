@@ -1,6 +1,6 @@
 # RenderDoc MCP Server
 
-版本 2.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 2。迁移见 docs/migration_v2.md。
+版本 3.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 3。迁移见 docs/migration_v3.md。
 
 作为 RenderDoc UI 扩展运行的 MCP 服务器。帮助 AI 助手访问 RenderDoc 的捕获数据，辅助 DirectX 11/12 图形调试。
 
@@ -90,6 +90,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段与 instance 选择） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择；无可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`） |
 | `dump_draws` | 异步批量导出：output_dir + draw列表/marker/EID范围，状态、取消、纹理额度暂停及续跑 |
+| `get_replay_diagnostics` | 不等待 UI 的本机诊断包；设备日志需显式 include_device_logs=True |
 | `get_replay_context` | 当前/配置/官方协议发现的远端主机与服务状态 |
 | `get_job_status` | 分页作业状态、阶段、进度、错误与结果清单 |
 | `cancel_job` | 请求协作取消；原生加载不能强行中断 |
@@ -399,3 +400,42 @@ renderdoc-mcp
 - [FastMCP](https://github.com/PrefectHQ/fastmcp)
 - [RenderDoc Python API](https://renderdoc.org/docs/python_api/index.html)
 - [RenderDoc Extension Registration](https://renderdoc.org/docs/how/how_python_extension.html)
+
+## 3.0 完整证据与诊断
+
+API 契约为 **3**，文件 IPC 仍为 **2**；服务与扩展必须成套升级到 3.0.0。
+断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。
+所有服务共享 capture_session/replay_revision；编辑器自身代次为 edit_session。
+重开捕获后 binding_id 与旧作业失效。
+
+| 工具 | 新增参数与默认值 | 行为 |
+|---|---|---|
+| `dump_draws` | `export_constants=True` | 默认保存逐事件原始常量、完整布局和解码值 |
+| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | 默认关联事件绑定、采样器、签名和常量 |
+| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | 原始负载 <=256 KiB 内联，更大负载返回二进制文件和 sidecar |
+| `compare_texture_events` | `aspect="all"` | 对指定 MSAA 样本进行颜色/深度/模板数值比较，不隐式 resolve |
+| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | 不依赖 UI/回放的磁盘诊断包；设备日志需显式开启 |
+
+output_mode 为 auto/inline/file；强制 inline 超过 256 KiB 返回 RESOURCE_LIMIT。
+默认文件目录为系统临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，
+响应保留路径、字节数、SHA-256、metadata_path，不在结果里重复大块数据。
+aspect 为 all/depth/stencil；D16、D24S8 已支持，depth 输出归一化 float32 LE，
+stencil 输出 uint8；其他未验证格式只保留原始导出，拒绝猜测解码。
+region={x,y,width,height} 使用左上原点，上限 262144 像素；原始子资源上限 64 MiB。
+元数据区分 source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、
+原点、数值域、sample 和 provenance；未知布局标记 layout_available=false。
+`save_texture` 仍是可视图片转换，不能替代数值导出。
+
+常量按事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存，不重复叠加
+Vulkan dynamic offset。常量 JSON 保存类型、数组/矩阵 stride、存储与解码顺序，
+附原始字节文件和哈希；相同内容可去重，但来源记录分别保留。合法未绑定项标记 skipped；
+必要导出失败会进入错误清单并影响完成状态。完整值不进入工具响应或作业摘要。
+
+诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和 shader。
+请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志摘录各上限 2 MiB。
+设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和有界 crash logcat，总时限 20 秒，
+不执行安装、reset 或服务重启。ADB 服务不存在时降级为不可用；设备证据失败仍交付本机包。
+不自动上传证据。IPC 临时文件访问冲突只重读同一响应，不重复提交原生操作；清理失败不丢结果。
+RESULT_PENDING 代表提交后结果未知，不可自动重提。最后成功调用不能直接认定为断连原因。
+
+完整参数及默认值见 [tool_schemas.json](docs/tool_schemas.json)，迁移步骤见 [migration_v3.md](docs/migration_v3.md)。

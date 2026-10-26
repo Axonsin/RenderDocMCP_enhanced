@@ -22,9 +22,10 @@ class ShaderEditService(qrd.CaptureViewer):
     MODES = ("auto", "original", "glsl", "spirv_asm")
     SCOPE = "All draws referencing the original shader resource are affected."
 
-    def __init__(self, ctx, invoke_fn):
+    def __init__(self, ctx, invoke_fn, session=None):
         super(ShaderEditService, self).__init__()
         self.ctx = ctx
+        self.session = session
         self._invoke = invoke_fn
         self._generation = uuid.uuid4().hex
         self._edits = {}
@@ -331,7 +332,8 @@ class ShaderEditService(qrd.CaptureViewer):
         current = self.ctx.GetResourceReplacement(record["original"])
         applied = record["replacement"] is not None and current == record["replacement"]
         compiler = record["compiler"]
-        result = {"edit_id": record["edit_id"], "capture_session": record["generation"],
+        result = {"edit_id": record["edit_id"], "edit_session": record["generation"],
+                  "capture_session": self.session.capture_session if self.session else record["generation"],
                   "event_id": record["event_id"], "stage": record["stage"], "api": record["api"],
                   "remote_replay": record["remote_replay"],
                   "resource_id": record["resource_id"], "mode": record["mode"],
@@ -470,7 +472,8 @@ class ShaderEditService(qrd.CaptureViewer):
         sessions = [self._describe(e) for e in self._edits.values()] if self.ctx.IsCaptureLoaded() else []
         items = [e for e in sessions if e["applied"]]
         return {"items": items, "total_count": len(items), "sessions": sessions,
-                "capture_session": self._generation}
+                "edit_session": self._generation,
+                "capture_session": self.session.capture_session if self.session else self._generation}
 
     def export_shader_source(self, edit_id, output_path):
         record = self._record(edit_id)

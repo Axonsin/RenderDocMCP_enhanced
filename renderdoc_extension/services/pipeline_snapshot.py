@@ -494,7 +494,10 @@ class Snapshot:
                 pipelines.append(pipeline)
         action = {"action_event_id": self.event_id, "flags": enum_name(self.action.flags)}
         try:
-            action["name"] = self.action.GetName(self.ctx.GetStructuredFile())
+            import sys
+            module = sys.modules.get(__package__ + ".replay_guard")
+            guard = module.GUARDS.get(id(self.ctx)) if module else None
+            action["name"] = guard.action_names.get(self.event_id, "") if guard and getattr(guard.thread_state, "active", False) else self.action.GetName(self.ctx.GetStructuredFile())
         except Exception as exc:
             action["name_unavailable"] = str(exc)
         return {"action_event_id": self.event_id, "action": action,

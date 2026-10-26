@@ -58,3 +58,7 @@
 
 **恢复规则**：续接后先重新核对捕获哈希/加载代次与健康状态，一致才恢复工作；任何替换、
 重新加载之后，相关的旧快照与缓存一律失效，不得只凭资源标识命中旧数据。
+
+## 3.0 产物与诊断
+
+完整常量必须来自默认 export_constants=True 产物，保留事件、类型、布局、原始字节和解码值。纹理 auto/file 响应应读取返回的 path 与 metadata_path 并核验哈希，不要求 content_base64 恒存在。未知布局不得猜测解码。断连时先 get_replay_diagnostics；设备日志只有用户要求或明确同意采集时才设置 include_device_logs=True。不同服务的 capture_session 统一，edit_session 是独立编辑代次。

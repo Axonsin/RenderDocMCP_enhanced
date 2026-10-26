@@ -4,7 +4,7 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
-RenderDoc MCP **2.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v2.md).
+RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v3.md).
 
 ## Naming Conventions
 
@@ -573,7 +573,7 @@ get_texture_info(resource_id="ResourceId::2495")
 
 #### `get_texture_data`
 
-Read the pixel data of a texture resource. Returns base64-encoded bytes.
+Read the pixel data of a texture resource. Returns <=256 KiB inline, otherwise a hashed binary file plus sidecar.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -611,7 +611,7 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice
 
 Optional `action_event_id` reads **after** that action, then restores replay. Omission reads the current event. Returns actual `action_event_id`, `event_phase`, `read_range`, `replay_restored`, `source`; max inline 256 KiB.
 
-Read the contents of a buffer resource. Returns base64-encoded bytes. `offset`/`length`
+Read the contents of a buffer resource. Returns <=256 KiB inline, otherwise a hashed binary file plus sidecar. `offset`/`length`
 must be non-negative byte values (`INVALID_PAGINATION` otherwise, including an `offset`
 past the buffer end); replay read failures raise `RESOURCE_QUERY_FAILED` instead of
 silently returning no data, and a missing resource raises `BUFFER_NOT_FOUND`.
@@ -1004,7 +1004,7 @@ live under output_dir/job_id. Select exactly one: `action_event_ids` (1..256 rea
 `marker_filter`, `action_event_id_range={"min":...,"max":...}`. Ranges resolve real draws.
 
 Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=True`,
-`export_textures=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
+`export_textures=True`, `export_constants=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
 Texture budget exhaustion pauses the job; resume_job adds allowance. Cancellation is
 cooperative between native steps. No cross-session/revision resume is allowed.
 
@@ -1022,7 +1022,7 @@ resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
 ## 2.0 job control and investigation / 作业控制与调查
 
 Requires RenderDoc 1.46+. All paths are absolute. Upgrade server and extension together.
-See [2.0 migration](migration_v2.md) for complete lifecycle, limits and file formats.
+See [3.0 migration](migration_v3.md) for complete lifecycle, limits and file formats.
 
 | Tool | Parameters | Result |
 |---|---|---|
@@ -1044,3 +1044,64 @@ NaN/Inf are counted separately. Observed differences do not isolate a draw's con
 extension_build_hash, API contract/capabilities, current event and active job. Busy status
 does not run a health probe: replay_healthy is unknown and replay_probe explains why.
 Native serialization failures set section.available=false with a reason, including in composite tools.
+
+## 3.0 evidence and diagnostics contract
+
+API contract **3**, file IPC **2**; deploy matching 3.0.0 server/extension versions.
+Use `get_capture_status` after loading/recovery. Replay queries reject disconnected,
+fatal or API-mismatched controllers instead of returning plausible empty state.
+Shared `capture_session`/`replay_revision` applies to all services; shader editing
+also returns its separate `edit_session`. Reopening invalidates binding IDs and jobs.
+
+| Tool | New parameters and defaults | Result |
+|---|---|---|
+| `dump_draws` | `export_constants=True` | Default raw constant bytes, full layout/decoded values; compact status links to artifacts |
+| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | Event/stage bindings, samplers, signatures and the same constant artifacts |
+| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | <=256 KiB inline; larger data files; paths, SHA-256 and metadata sidecar |
+| `compare_texture_events` | `aspect="all"` | Numeric color/depth/stencil comparison at an explicit MSAA sample; no implicit resolve |
+| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | Offline persisted snapshot/log bundle, usable with disconnected or blocked UI |
+
+`output_mode`: auto/inline/file. Explicit inline above 256 KiB fails with RESOURCE_LIMIT.
+Default file location: system temp/renderdoc_mcp/artifacts/<session>/<unique-id>/.
+`aspect`: all/depth/stencil. D16 depth and D24S8 depth/stencil are decoded; depth is
+normalized float32 little-endian, stencil uint8. Other unverified depth formats
+retain opaque raw export and reject decoded selection. `region={x,y,width,height}`
+is top-left, bounded to 262144 pixels. Raw subresources are capped at 64 MiB.
+Metadata separates source/output format, endianness, row_pitch/slice_pitch,
+channel/bit layout, origin, value domain, sample and provenance. Unknown layouts
+have layout_available=false; no guessed decoding or PNG numerical fallback.
+`save_texture` remains an image-conversion export.
+
+Constants are read at each exact event/range; dynamic offsets are already included.
+Each binding JSON preserves type, array/matrix strides, storage/value order and raw
+file hash/size. Identical bytes may share a file; provenance is never merged across
+events. Unbound bindings are skipped, requested export failures are reported and
+prevent a clean completed status. Full values stay on disk.
+
+Diagnostics record metadata, phases, UTC timestamps, durations and readback sizes,
+not shader/buffer/texture bodies. Request and IPC journals each rotate through three
+10 MiB files. Local/device log excerpts are independently capped at 2 MiB. Device
+collection explicitly opts into configured ADB get-state, shell ps -A and bounded
+crash logcat, with a 20-second total deadline. No install/reset/restart commands.
+An absent ADB daemon yields unavailable rather than starting one. Missing device
+logs do not prevent a local bundle. No evidence is uploaded automatically.
+Transient IPC response-file access retries the same file within the existing deadline;
+cleanup failure preserves a validated result. RESULT_PENDING does not authorize
+resubmission of an unknown native operation. The last successful request is evidence,
+not proof of the cause of a later disconnection.
+
+```python
+job = dump_draws(output_dir="D:/exports", action_event_ids=[1922,1930])
+job = export_shader_bundle(action_event_id=1930, stage="fragment", output_dir="D:/exports")
+result = get_texture_data(resource_id="ResourceId::17571", action_event_id=218,
+                          aspect="depth", output_mode="file", output_dir="D:/exports")
+stencil = get_texture_data(resource_id="ResourceId::27187", action_event_id=2006,
+                           aspect="stencil", sample=0,
+                           region={"x":850,"y":600,"width":100,"height":100})
+get_replay_diagnostics(output_dir="D:/diagnostics")
+# Optional, explicitly requested device evidence:
+get_replay_diagnostics(output_dir="D:/diagnostics", include_device_logs=True,
+                       remote_host="adb://DEVICE_SERIAL")
+```
+
+The complete published parameter schemas are in [tool_schemas.json](tool_schemas.json).

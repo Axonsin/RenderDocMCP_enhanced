@@ -56,7 +56,10 @@ def identity(ctx, resource_id, catalog):
     desc = catalog["resources"].get(numeric)
     raw_id = desc.resourceId if desc is not None else resource_id
     try:
-        name = ctx.GetResourceName(raw_id)
+        import sys
+        module = sys.modules.get(__package__ + ".replay_guard")
+        guard = module.GUARDS.get(id(ctx)) if module else None
+        name = guard.resource_names.get(int(raw_id), "") if guard and getattr(guard.thread_state, "active", False) else ctx.GetResourceName(raw_id)
     except Exception:
         name = desc.name if desc is not None else ""
     result = {

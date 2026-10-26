@@ -45,7 +45,7 @@ class Handler:
     def handle(self, request):
         self.calls.append(request)
         time.sleep(request["params"].get("delay", 0))
-        return {"id": request["id"], "result": request["params"], "api_contract_version": 2}
+        return {"id": request["id"], "result": request["params"], "api_contract_version": 3}
 
 
 class BridgeTests(unittest.TestCase):
@@ -141,8 +141,50 @@ class BridgeTests(unittest.TestCase):
         self.start_server()
         client = CLIENT.RenderDocBridge()
         client.timeout = 0.15
-        with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "RESULT_PENDING"):
+        with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "IPC_RESPONSE_MISMATCH"):
             client.call("ping")
+
+    def test_transient_response_permission_retries_same_request(self):
+        import builtins
+        original = builtins.open
+        failures = []
+        def open_file(path, mode='r', *args, **kwargs):
+            if 'response_' in str(path) and mode == 'r' and not failures:
+                failures.append(str(path))
+                raise PermissionError('temporarily busy')
+            return original(path, mode, *args, **kwargs)
+        self.start_server()
+        with patch('builtins.open', side_effect=open_file):
+            result = CLIENT.RenderDocBridge().call('ping', {'marker': 'once'})
+        self.assertEqual(result['marker'], 'once')
+        self.assertEqual(len(self.handler.calls), 1)
+        self.assertEqual(len(failures), 1)
+
+    def test_response_cleanup_failure_preserves_result(self):
+        original = os.remove
+        def remove_file(path):
+            if 'response_' in str(path):
+                raise PermissionError('cleanup busy')
+            return original(path)
+        self.start_server()
+        with patch.object(CLIENT.os, 'remove', side_effect=remove_file):
+            self.assertEqual(CLIENT.RenderDocBridge().call('ping', {'marker': 'valid'})['marker'], 'valid')
+        self.assertEqual(len(self.handler.calls), 1)
+
+    def test_permanent_response_permission_is_pending_without_resubmit(self):
+        import builtins
+        original = builtins.open
+        def open_file(path, mode='r', *args, **kwargs):
+            if 'response_' in str(path) and mode == 'r':
+                raise PermissionError('permanently busy')
+            return original(path, mode, *args, **kwargs)
+        self.start_server()
+        client = CLIENT.RenderDocBridge()
+        client.timeout = .15
+        with patch('builtins.open', side_effect=open_file):
+            with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, 'RESULT_PENDING'):
+                client.call('ping')
+        self.assertEqual(len(self.handler.calls), 1)
 
     def test_pending_request_is_not_overwritten_after_timeout(self):
         pending = {"id": "pending", "method": "slow"}
@@ -174,7 +216,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_error_reply_is_not_a_success(self):
         self.server.handler = types.SimpleNamespace(handle=lambda request: {
-            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}, "api_contract_version": 2})
+            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}, "api_contract_version": 3})
         self.start_server()
         with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "SHADER_TOOL_MISSING"):
             CLIENT.RenderDocBridge().call("get_shader_edit_context")

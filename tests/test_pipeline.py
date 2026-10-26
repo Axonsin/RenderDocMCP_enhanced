@@ -47,7 +47,7 @@ def modules():
     packages = {"renderdoc": rd, "qrenderdoc": qrd}
     for name in ("renderdoc_extension", "renderdoc_extension.services", "renderdoc_extension.utils"):
         packages[name] = types.ModuleType(name)
-        packages[name].__path__ = []
+        packages[name].__path__ = [str(ROOT / name.replace(".", "/"))]
     with patch.dict(sys.modules, packages):
         utils = packages["renderdoc_extension.utils"]
         utils.Parsers = load("renderdoc_extension.utils.parsers",

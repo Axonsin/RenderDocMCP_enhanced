@@ -1,6 +1,6 @@
 # RenderDoc MCP Server Enhanced
 
-Version **2.0.0** — [2.0 migration / 迁移说明](docs/migration_v2.md). Upgrade server and extension together.
+Version **3.0.0** — [3.0 migration / 迁移说明](docs/migration_v3.md). Upgrade server and extension together.
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
@@ -253,3 +253,9 @@ Future work will continue to clean up compatibility layer tools based on testing
 ## License
 
 MIT
+
+## 3.0 export and diagnostics
+
+Default exports now include full event-bound constants and shader event context. Texture reads use auto inline/file transport (256 KiB threshold), with explicit depth/stencil and ROI selection. Replay validity is checked across operations; offline diagnostics remain available during disconnection. Device evidence requires explicit opt-in.
+
+[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)

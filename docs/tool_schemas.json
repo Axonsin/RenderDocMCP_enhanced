@@ -1,0 +1,1586 @@
+{
+  "get_capture_status": {
+    "additionalProperties": false,
+    "properties": {
+      "probe_replay": {
+        "default": true,
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "get_actions": {
+    "additionalProperties": false,
+    "properties": {
+      "include_children": {
+        "default": true,
+        "type": "boolean",
+        "description": "Include child actions in the hierarchy (default: True)"
+      },
+      "marker_filter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Only include actions under markers containing this string (partial match)"
+      },
+      "exclude_markers": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Exclude actions under markers containing these strings (list of partial matches)"
+      },
+      "action_event_id_range": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional action_event_id range as {\"min\": ..., \"max\": ...}"
+      },
+      "exclude_marker_actions": {
+        "default": false,
+        "type": "boolean",
+        "description": "If True, exclude marker actions (PushMarker/PopMarker/SetMarker)"
+      },
+      "flags_filter": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Only include actions with these flags (list of flag names, e.g. [\"Drawcall\", \"Dispatch\"])"
+      }
+    },
+    "type": "object"
+  },
+  "get_frame_summary": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "inspect_action": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer",
+        "description": "The exact action EID to inspect"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "summarize_capture": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "search_actions": {
+    "additionalProperties": false,
+    "properties": {
+      "by": {
+        "enum": [
+          "shader",
+          "texture",
+          "resource"
+        ],
+        "type": "string",
+        "description": "Search mode - shader, texture, or resource"
+      },
+      "query": {
+        "type": "string",
+        "description": "Shader name, texture name, or resource ID query"
+      },
+      "stage": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional shader stage filter; uses the same canonical names/aliases as Pipeline State"
+      },
+      "action_event_id_range": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional {\"min\": ..., \"max\": ...} action EID range"
+      },
+      "time_budget_ms": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional scan budget (default 8000). On expiry the scan\nstops and returns complete=false plus next_event_id instead of hanging."
+      },
+      "max_matches": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional match cap (default 200)"
+      },
+      "start_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Resume cursor from a previous truncated result"
+      }
+    },
+    "required": [
+      "by",
+      "query"
+    ],
+    "type": "object"
+  },
+  "get_action_api_calls": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      },
+      "api_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "child_path": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "get_action_details": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "get_action_timings": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional list of specific event IDs to get timings for.\n       If not specified, returns timings for all actions."
+      },
+      "marker_filter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Only include actions under markers containing this string (partial match)."
+      },
+      "exclude_markers": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Exclude actions under markers containing these strings."
+      }
+    },
+    "type": "object"
+  },
+  "get_shader_info": {
+    "additionalProperties": false,
+    "properties": {
+      "event_id": {
+        "type": "integer",
+        "description": "The event ID to inspect the shader at"
+      },
+      "stage": {
+        "type": "string",
+        "description": "Canonical shader stage (vertex, tess_control, tess_eval, geometry, fragment,\ncompute, task, mesh); aliases such as VS/HS/DS/PS/FS/pixel are accepted"
+      }
+    },
+    "required": [
+      "event_id",
+      "stage"
+    ],
+    "type": "object"
+  },
+  "get_shader_source": {
+    "additionalProperties": false,
+    "properties": {
+      "event_id": {
+        "type": "integer",
+        "description": "The event ID to inspect the shader at"
+      },
+      "stage": {
+        "type": "string",
+        "description": "Canonical shader stage (vertex, tess_control, tess_eval, geometry, fragment,\ncompute, task, mesh); aliases such as VS/HS/DS/PS/FS/pixel are accepted"
+      }
+    },
+    "required": [
+      "event_id",
+      "stage"
+    ],
+    "type": "object"
+  },
+  "get_shader_edit_context": {
+    "additionalProperties": false,
+    "properties": {
+      "event_id": {
+        "type": "integer"
+      },
+      "stage": {
+        "type": "string"
+      },
+      "mode": {
+        "default": "auto",
+        "enum": [
+          "auto",
+          "original",
+          "glsl",
+          "spirv_asm"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "event_id",
+      "stage"
+    ],
+    "type": "object"
+  },
+  "replace_shader": {
+    "additionalProperties": false,
+    "properties": {
+      "edit_id": {
+        "type": "string"
+      },
+      "source_text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "edit_id",
+      "source_text"
+    ],
+    "type": "object"
+  },
+  "revert_shader": {
+    "additionalProperties": false,
+    "properties": {
+      "edit_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "edit_id"
+    ],
+    "type": "object"
+  },
+  "list_shader_replacements": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "export_shader_source": {
+    "additionalProperties": false,
+    "properties": {
+      "edit_id": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "edit_id",
+      "output_path"
+    ],
+    "type": "object"
+  },
+  "get_buffer_contents": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string",
+        "description": "The resource ID of the buffer to read"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "description": "Byte offset to start reading from (default: 0)"
+      },
+      "length": {
+        "default": 0,
+        "type": "integer",
+        "description": "Number of bytes to read, 0 for entire buffer (default: 0)"
+      },
+      "action_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "list_resources": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_type": {
+        "default": "all",
+        "type": "string",
+        "description": "all, or a snake_case RenderDoc ResourceType such as texture,\nbuffer, device, memory, shader, view, pipeline_state, command_buffer,\nswapchain_image, descriptor_store, or acceleration_structure."
+      },
+      "name_filter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional partial name match (case-insensitive)"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "description": "Starting index for pagination (default: 0)"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer",
+        "description": "Maximum number of resources to return (default: 50)"
+      },
+      "sort_by": {
+        "default": "name",
+        "enum": [
+          "name",
+          "resource_id"
+        ],
+        "type": "string",
+        "description": "Stable name or numeric resource_id order."
+      }
+    },
+    "type": "object"
+  },
+  "inspect_resource": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string"
+      },
+      "related_offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "related_limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "get_resource_initialization": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string"
+      },
+      "chunk_index": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "child_path": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "get_texture_info": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string",
+        "description": "The resource ID of the texture"
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "get_texture_data": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string",
+        "description": "The resource ID of the texture to read"
+      },
+      "mip": {
+        "default": 0,
+        "type": "integer",
+        "description": "Mip level to retrieve (default: 0)"
+      },
+      "slice_index": {
+        "default": 0,
+        "type": "integer",
+        "description": "Array slice or cube face index (default: 0)\n   For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-"
+      },
+      "sample": {
+        "default": 0,
+        "type": "integer",
+        "description": "MSAA sample index (default: 0)"
+      },
+      "depth_slice": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "For 3D textures only, extract a specific depth slice (default: None = full volume)\n         When specified, returns only the 2D slice at that depth index"
+      },
+      "action_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "output_mode": {
+        "default": "auto",
+        "enum": [
+          "auto",
+          "inline",
+          "file"
+        ],
+        "type": "string"
+      },
+      "output_dir": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "aspect": {
+        "default": "all",
+        "enum": [
+          "all",
+          "depth",
+          "stencil"
+        ],
+        "type": "string"
+      },
+      "region": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "save_texture": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string",
+        "description": "The resource ID of the texture to save (e.g. \"ResourceId::2495\")"
+      },
+      "output_path": {
+        "type": "string",
+        "description": "Output file path (e.g. \"D:/output/texture.png\")"
+      },
+      "format_type": {
+        "default": "PNG",
+        "enum": [
+          "PNG",
+          "JPG",
+          "BMP",
+          "TGA",
+          "EXR",
+          "DDS",
+          "HDR"
+        ],
+        "type": "string",
+        "description": "Output format - PNG (default), JPG, BMP, TGA, EXR, DDS, HDR"
+      },
+      "mip": {
+        "default": 0,
+        "type": "integer",
+        "description": "Mip level to save, -1 for all mips (default: 0)"
+      },
+      "slice_index": {
+        "default": 0,
+        "type": "integer",
+        "description": "Array slice or cube face index (default: 0)\n         For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-"
+      },
+      "alpha_mode": {
+        "default": "preserve",
+        "enum": [
+          "preserve",
+          "discard",
+          "blend_to_black"
+        ],
+        "type": "string",
+        "description": "Alpha channel handling (default: preserve)\n        - preserve: Keep alpha channel\n        - discard: Remove alpha channel\n        - blend_to_black: Blend alpha with black background"
+      },
+      "action_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "resource_id",
+      "output_path"
+    ],
+    "type": "object"
+  },
+  "get_pipeline_state": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "get_pipeline_stage": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      },
+      "stage": {
+        "type": "string"
+      },
+      "section": {
+        "default": "overview",
+        "type": "string"
+      },
+      "show_unused": {
+        "default": false,
+        "type": "boolean"
+      },
+      "show_empty": {
+        "default": false,
+        "type": "boolean"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id",
+      "stage"
+    ],
+    "type": "object"
+  },
+  "inspect_pipeline_binding": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      },
+      "binding_id": {
+        "type": "string"
+      },
+      "section": {
+        "default": "details",
+        "enum": [
+          "details",
+          "variables"
+        ],
+        "type": "string"
+      },
+      "child_path": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id",
+      "binding_id"
+    ],
+    "type": "object"
+  },
+  "get_action_textures": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      },
+      "direction": {
+        "default": "all",
+        "enum": [
+          "all",
+          "input",
+          "output"
+        ],
+        "type": "string"
+      },
+      "stage": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "show_unused": {
+        "default": false,
+        "type": "boolean"
+      },
+      "show_empty": {
+        "default": false,
+        "type": "boolean"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "trace_resource_usage": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string",
+        "description": "The resource to trace"
+      },
+      "marker_filter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional marker-path substring filter"
+      },
+      "exclude_markers": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional marker substrings to exclude"
+      },
+      "event_id_range": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional event range as {\"min\": ..., \"max\": ...}"
+      },
+      "before_event_id": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional event ID used to compute the latest prior writer"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "description": "First usage record to return after filtering."
+      },
+      "limit": {
+        "default": 100,
+        "type": "integer",
+        "description": "Page size, from 1 to 500 (default 100)."
+      },
+      "categories": {
+        "anyOf": [
+          {
+            "items": {
+              "enum": [
+                "read",
+                "write",
+                "read_write",
+                "barrier",
+                "clear"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional Timeline categories, combined with OR. None selects all;\n[] selects none. Other event/marker filters are combined with AND."
+      }
+    },
+    "required": [
+      "resource_id"
+    ],
+    "type": "object"
+  },
+  "trace_action_dependencies": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer",
+        "description": "The exact action EID to inspect"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "diff_actions": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id_a": {
+        "type": "integer",
+        "description": "The first event ID"
+      },
+      "action_event_id_b": {
+        "type": "integer",
+        "description": "The second event ID"
+      }
+    },
+    "required": [
+      "action_event_id_a",
+      "action_event_id_b"
+    ],
+    "type": "object"
+  },
+  "analyze_pass": {
+    "additionalProperties": false,
+    "properties": {
+      "marker_filter": {
+        "type": "string",
+        "description": "Marker-path substring selecting the pass subtree"
+      },
+      "exclude_markers": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional marker substrings to exclude"
+      }
+    },
+    "required": [
+      "marker_filter"
+    ],
+    "type": "object"
+  },
+  "list_captures": {
+    "additionalProperties": false,
+    "properties": {
+      "directory": {
+        "type": "string",
+        "description": "The directory path to search for capture files"
+      }
+    },
+    "required": [
+      "directory"
+    ],
+    "type": "object"
+  },
+  "open_capture": {
+    "additionalProperties": false,
+    "properties": {
+      "capture_path": {
+        "type": "string"
+      },
+      "file_location": {
+        "default": "local",
+        "enum": [
+          "local",
+          "remote"
+        ],
+        "type": "string"
+      },
+      "replay_target": {
+        "default": "current",
+        "enum": [
+          "current",
+          "local",
+          "remote"
+        ],
+        "type": "string"
+      },
+      "remote_host": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "job_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "capture_path"
+    ],
+    "type": "object"
+  },
+  "get_mesh_summary": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer",
+        "description": "The event ID of the draw call to inspect"
+      },
+      "instance": {
+        "default": 0,
+        "type": "integer",
+        "description": "Instance index for instanced attributes and post-VS data (default: 0)"
+      },
+      "view_index": {
+        "default": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "get_mesh_data": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer",
+        "description": "The event ID of the draw call to inspect"
+      },
+      "stage": {
+        "default": "VSIn",
+        "enum": [
+          "VSIn",
+          "VSOut",
+          "GSOut"
+        ],
+        "type": "string",
+        "description": "Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "description": "Starting draw-reference offset for pagination (default: 0)"
+      },
+      "limit": {
+        "default": 100,
+        "type": "integer",
+        "description": "Maximum draw references to return (default: 100, maximum: 500)"
+      },
+      "attributes": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional list of attribute names to include (e.g., [\"POSITION\", \"NORMAL\", \"TEXCOORD\"])\n       If None, all attributes are included."
+      },
+      "instance": {
+        "default": 0,
+        "type": "integer",
+        "description": "Instance index for instanced attributes and post-VS data (default: 0)"
+      },
+      "view_index": {
+        "default": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id"
+    ],
+    "type": "object"
+  },
+  "export_mesh_csv": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer",
+        "description": "The event ID of the draw call to export"
+      },
+      "output_path": {
+        "type": "string",
+        "description": "Output file path (e.g. \"D:/output/mesh.csv\")"
+      },
+      "stage": {
+        "default": "VSIn",
+        "enum": [
+          "VSIn",
+          "VSOut",
+          "GSOut"
+        ],
+        "type": "string",
+        "description": "Mesh data stage - VSIn (input), VSOut (vertex shader output), GSOut (geometry output)"
+      },
+      "attributes": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional list of attributes to include\n               If None, all available attributes are included."
+      },
+      "instance": {
+        "default": 0,
+        "type": "integer",
+        "description": "Instance index for instanced attributes and post-VS data (default: 0)"
+      },
+      "view_index": {
+        "default": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "action_event_id",
+      "output_path"
+    ],
+    "type": "object"
+  },
+  "dump_draws": {
+    "additionalProperties": false,
+    "properties": {
+      "output_dir": {
+        "type": "string"
+      },
+      "action_event_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "marker_filter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "action_event_id_range": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "mesh_stage": {
+        "default": "VSIn",
+        "enum": [
+          "VSIn",
+          "VSOut",
+          "GSOut"
+        ],
+        "type": "string"
+      },
+      "instances": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "view_index": {
+        "default": 0,
+        "type": "integer"
+      },
+      "export_meshes": {
+        "default": true,
+        "type": "boolean"
+      },
+      "export_textures": {
+        "default": true,
+        "type": "boolean"
+      },
+      "max_textures": {
+        "default": 48,
+        "type": "integer"
+      },
+      "max_texture_edge": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "skip_depth": {
+        "default": false,
+        "type": "boolean"
+      },
+      "job_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "export_constants": {
+        "default": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "output_dir"
+    ],
+    "type": "object"
+  },
+  "get_replay_context": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "get_replay_diagnostics": {
+    "additionalProperties": false,
+    "properties": {
+      "output_dir": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "include_device_logs": {
+        "default": false,
+        "type": "boolean"
+      },
+      "remote_host": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "type": "object"
+  },
+  "get_job_status": {
+    "additionalProperties": false,
+    "properties": {
+      "job_id": {
+        "type": "string"
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "default": 100,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "job_id"
+    ],
+    "type": "object"
+  },
+  "cancel_job": {
+    "additionalProperties": false,
+    "properties": {
+      "job_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "job_id"
+    ],
+    "type": "object"
+  },
+  "resume_job": {
+    "additionalProperties": false,
+    "properties": {
+      "job_id": {
+        "type": "string"
+      },
+      "texture_budget": {
+        "default": 48,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "job_id"
+    ],
+    "type": "object"
+  },
+  "export_shader_bundle": {
+    "additionalProperties": false,
+    "properties": {
+      "action_event_id": {
+        "type": "integer"
+      },
+      "stage": {
+        "type": "string"
+      },
+      "output_dir": {
+        "type": "string"
+      },
+      "job_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "include_event_context": {
+        "default": true,
+        "type": "boolean"
+      },
+      "export_constants": {
+        "default": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "action_event_id",
+      "stage",
+      "output_dir"
+    ],
+    "type": "object"
+  },
+  "compare_texture_events": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string"
+      },
+      "action_event_id_a": {
+        "type": "integer"
+      },
+      "action_event_id_b": {
+        "type": "integer"
+      },
+      "region": {
+        "additionalProperties": {
+          "type": "integer"
+        },
+        "type": "object"
+      },
+      "output_dir": {
+        "type": "string"
+      },
+      "mip": {
+        "default": 0,
+        "type": "integer"
+      },
+      "slice_index": {
+        "default": 0,
+        "type": "integer"
+      },
+      "sample": {
+        "default": 0,
+        "type": "integer"
+      },
+      "depth_slice": {
+        "default": 0,
+        "type": "integer"
+      },
+      "value_domain": {
+        "default": "storage",
+        "enum": [
+          "storage",
+          "linear"
+        ],
+        "type": "string"
+      },
+      "job_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "aspect": {
+        "default": "all",
+        "enum": [
+          "all",
+          "depth",
+          "stencil"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "resource_id",
+      "action_event_id_a",
+      "action_event_id_b",
+      "region",
+      "output_dir"
+    ],
+    "type": "object"
+  },
+  "get_pixel_history": {
+    "additionalProperties": false,
+    "properties": {
+      "resource_id": {
+        "type": "string"
+      },
+      "x": {
+        "type": "integer"
+      },
+      "y": {
+        "type": "integer"
+      },
+      "action_event_id": {
+        "type": "integer"
+      },
+      "output_dir": {
+        "type": "string"
+      },
+      "mip": {
+        "default": 0,
+        "type": "integer"
+      },
+      "slice_index": {
+        "default": 0,
+        "type": "integer"
+      },
+      "sample": {
+        "default": 0,
+        "type": "integer"
+      },
+      "job_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "resource_id",
+      "x",
+      "y",
+      "action_event_id",
+      "output_dir"
+    ],
+    "type": "object"
+  }
+}

@@ -17,7 +17,23 @@ def _ufloat(bits, mantissa):
     return math.ldexp(1.0 + fraction / float(1 << mantissa), exponent - 15)
 
 
-def decoder(fmt):
+def decoder(fmt, aspect="all"):
+    if aspect not in ("all", "depth", "stencil"):
+        raise ValueError("INVALID_ASPECT: expected all, depth or stencil")
+    name = str(fmt.Name()).upper() if hasattr(fmt, "Name") else ""
+    kind_name = str(getattr(getattr(fmt, 'type', None), 'name', getattr(fmt, 'type', '')))
+    if name.startswith('D16') or kind_name == 'D16':
+        if aspect == 'stencil':
+            raise ValueError('INVALID_ASPECT: D16 has no stencil')
+        return 2, 1, lambda data, offset, domain: [struct.unpack_from('<H', data, offset)[0]/65535.0]
+    if name.startswith('D24') or kind_name == 'D24S8':
+        def depth_stencil(data, offset, domain):
+            value = struct.unpack_from('<I', data, offset)[0]
+            values = [(value & 0xffffff)/16777215.0, value >> 24]
+            return values if aspect == 'all' else [values[0 if aspect == 'depth' else 1]]
+        return 4, 2 if aspect == 'all' else 1, depth_stencil
+    if aspect != 'all':
+        raise ValueError('UNSUPPORTED_FORMAT: depth/stencil decoding verified only for D16 and D24S8')
     kind = str(fmt.type).split(".")[-1]
     comp = str(fmt.compType).split(".")[-1]
     # Real IntEnums expose .name; SWIG enum stringification also works.

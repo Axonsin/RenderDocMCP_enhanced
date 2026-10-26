@@ -68,7 +68,7 @@ def install():
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
     import json
     manifest = json.loads((staging / "extension.json").read_text(encoding="utf-8"))
-    if manifest["version"] != "2.0.0":
+    if manifest["version"] != "3.0.0":
         raise RuntimeError("Unexpected staged extension version")
     build_hash = fingerprint(extension_src)
     if fingerprint(staging) != build_hash:

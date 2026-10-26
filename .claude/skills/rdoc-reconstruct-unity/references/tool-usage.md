@@ -79,9 +79,9 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   只有 `VTX,IDX` 的“成功”文件）；`exported_attributes` / `skipped_attributes` 用于
   核对实际写入磁盘的内容。
 
-## 6. 2.0 作业、来源与数值验证
+## 6. 3.0 作业、来源与数值验证
 
-- 要求 MCP 与扩展均为 2.0.0、RenderDoc >=1.46、API contract=2；核对构建指纹。
+- 要求 MCP 与扩展均为 3.0.0、RenderDoc >=1.46、API contract=3；核对构建指纹。
 - open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history
   返回 job_id。通过 get_job_status 查询；paused 可补充纹理额度，cancel/resume 为协作操作。
   原生调用不能强行取消。stalled 或提交超时不证明失败，保留原 job_id 查询，勿盲目重试。
@@ -104,3 +104,42 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   并如实标注来源。
 - 把 UI 或原生补取的结果记成纯 MCP 成功。
 - 在未核对健康的情况下把空结果当真值进入下游。
+
+## 3.0 完整证据与诊断
+
+API 契约为 **3**，文件 IPC 仍为 **2**；服务与扩展必须成套升级到 3.0.0。
+断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。
+所有服务共享 capture_session/replay_revision；编辑器自身代次为 edit_session。
+重开捕获后 binding_id 与旧作业失效。
+
+| 工具 | 新增参数与默认值 | 行为 |
+|---|---|---|
+| `dump_draws` | `export_constants=True` | 默认保存逐事件原始常量、完整布局和解码值 |
+| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | 默认关联事件绑定、采样器、签名和常量 |
+| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | 原始负载 <=256 KiB 内联，更大负载返回二进制文件和 sidecar |
+| `compare_texture_events` | `aspect="all"` | 对指定 MSAA 样本进行颜色/深度/模板数值比较，不隐式 resolve |
+| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | 不依赖 UI/回放的磁盘诊断包；设备日志需显式开启 |
+
+output_mode 为 auto/inline/file；强制 inline 超过 256 KiB 返回 RESOURCE_LIMIT。
+默认文件目录为系统临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，
+响应保留路径、字节数、SHA-256、metadata_path，不在结果里重复大块数据。
+aspect 为 all/depth/stencil；D16、D24S8 已支持，depth 输出归一化 float32 LE，
+stencil 输出 uint8；其他未验证格式只保留原始导出，拒绝猜测解码。
+region={x,y,width,height} 使用左上原点，上限 262144 像素；原始子资源上限 64 MiB。
+元数据区分 source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、
+原点、数值域、sample 和 provenance；未知布局标记 layout_available=false。
+`save_texture` 仍是可视图片转换，不能替代数值导出。
+
+常量按事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存，不重复叠加
+Vulkan dynamic offset。常量 JSON 保存类型、数组/矩阵 stride、存储与解码顺序，
+附原始字节文件和哈希；相同内容可去重，但来源记录分别保留。合法未绑定项标记 skipped；
+必要导出失败会进入错误清单并影响完成状态。完整值不进入工具响应或作业摘要。
+
+诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和 shader。
+请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志摘录各上限 2 MiB。
+设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和有界 crash logcat，总时限 20 秒，
+不执行安装、reset 或服务重启。ADB 服务不存在时降级为不可用；设备证据失败仍交付本机包。
+不自动上传证据。IPC 临时文件访问冲突只重读同一响应，不重复提交原生操作；清理失败不丢结果。
+RESULT_PENDING 代表提交后结果未知，不可自动重提。最后成功调用不能直接认定为断连原因。
+
+完整参数及默认值见 仓库 docs/tool_schemas.json，迁移步骤见 仓库 docs/migration_v3.md。

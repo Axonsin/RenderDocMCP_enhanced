@@ -63,3 +63,7 @@ description: >
 | `references/troubleshooting.md` | 开始第 4 步分类前（故障树、已知失败模式、恢复手段） |
 | `references/evidence-contract.md` | 记录失败证据与状态恢复时 |
 | `references/job-layout.md` | 排障过程需要交付复现包/报告时 |
+
+## RenderDoc MCP 3.0
+
+按 references/tool-usage.md 的 3.0 契约调用；优先消费完整事件常量/事件 shader 包与纹理文件产物。失效回放先取本机诊断，禁止使用占位数据；设备日志需显式授权。

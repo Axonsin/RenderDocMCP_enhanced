@@ -1,6 +1,6 @@
 # RenderDoc MCP Server Enhanced
 
-Version **2.0.0** — [2.0 migration / 迁移说明](docs/migration_v2.md). Upgrade server and extension together.
+Version **3.0.0** — [3.0 migration / 迁移说明](docs/migration_v3.md). Upgrade server and extension together.
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
@@ -247,3 +247,9 @@ action の引数と応答は `action_event_id` に統一しました。ツール
 ## ライセンス
 
 MIT
+
+## 3.0 エクスポートと診断
+
+イベント単位の定数と shader コンテキストを既定で保存します。テクスチャは 256 KiB 以下をインライン、それ以上をファイルで返し、depth/stencil と ROI を指定できます。無効なリプレイはエラーになり、診断は UI の応答を待ちません。端末ログの取得は明示的な指定が必要です。
+
+[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)

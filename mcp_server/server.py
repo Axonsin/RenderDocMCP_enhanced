@@ -12,7 +12,7 @@ from .bridge.client import RenderDocBridge, RenderDocBridgeError
 # Initialize FastMCP server
 mcp = FastMCP(
     name="RenderDoc MCP Server",
-    version="2.0.0",
+    version="3.0.0",
 )
 
 # RenderDoc bridge client
@@ -426,6 +426,10 @@ def get_texture_data(
     sample: int = 0,
     depth_slice: int | None = None,
     action_event_id: int | None = None,
+    output_mode: Literal["auto", "inline", "file"] = "auto",
+    output_dir: str | None = None,
+    aspect: Literal["all", "depth", "stencil"] = "all",
+    region: dict[str, int] | None = None,
 ) -> dict:
     """
     Read texture pixels after action_event_id (or the current UI event if omitted).
@@ -439,11 +443,14 @@ def get_texture_data(
         depth_slice: For 3D textures only, extract a specific depth slice (default: None = full volume)
                      When specified, returns only the 2D slice at that depth index
 
-    Returns texture pixel data as base64-encoded bytes along with metadata
+    Auto returns <=256 KiB inline, otherwise a hashed binary file and sidecar.
+    D16/D24S8 depth/stencil and verified ROI selection are numeric, never PNG.
+    Returns raw texture pixel data along with metadata
     including dimensions at the requested mip level and format information.
     """
     params = {"resource_id": resource_id, "mip": mip, "slice_index": slice_index, "sample": sample,
-              "action_event_id": action_event_id}
+              "action_event_id": action_event_id, "output_mode": output_mode, "output_dir": output_dir,
+              "aspect": aspect, "region": region}
     if depth_slice is not None:
         params["depth_slice"] = depth_slice
     return bridge.call("get_texture_data", params)
@@ -802,7 +809,8 @@ def dump_draws(output_dir: str, action_event_ids: list[int] | None = None,
                instances: list[int] | None = None, view_index: int = 0,
                export_meshes: bool = True, export_textures: bool = True,
                max_textures: int = 48, max_texture_edge: int | None = None,
-               skip_depth: bool = False, job_id: str | None = None) -> dict:
+               skip_depth: bool = False, job_id: str | None = None,
+               export_constants: bool = True) -> dict:
     """Submit a resumable export into output_dir/<job_id>/.
 
     Select exactly one of explicit draw IDs, a marker, or an EID range. Range/marker
@@ -813,13 +821,27 @@ def dump_draws(output_dir: str, action_event_ids: list[int] | None = None,
     return bridge.call("dump_draws", dict(output_dir=output_dir, action_event_ids=action_event_ids,
         marker_filter=marker_filter, action_event_id_range=action_event_id_range, mesh_stage=mesh_stage,
         instances=instances, view_index=view_index, export_meshes=export_meshes, export_textures=export_textures,
-        max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, job_id=job_id))
+        max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, job_id=job_id,
+        export_constants=export_constants))
 
 
 @mcp.tool()
 def get_replay_context() -> dict:
     """Get the current/known replay hosts and cached service states without moving replay."""
     return bridge.call("get_replay_context")
+
+
+@mcp.tool()
+def get_replay_diagnostics(output_dir: str | None = None, include_device_logs: bool = False,
+                           remote_host: str | None = None) -> dict:
+    """Collect persisted local diagnostics without the UI/replay thread.
+
+    Device logs require explicit opt-in; configured ADB read-only commands are
+    bounded to 20 seconds and 2 MiB. Never restarts or installs device services.
+    Returns artifact paths/hashes, warnings and manifest_path, not full logs.
+    """
+    return bridge.call("get_replay_diagnostics", dict(output_dir=output_dir,
+        include_device_logs=include_device_logs, remote_host=remote_host))
 
 
 @mcp.tool()
@@ -848,21 +870,24 @@ def resume_job(job_id: str, texture_budget: int = 48) -> dict:
 
 @mcp.tool()
 def export_shader_bundle(action_event_id: int, stage: str, output_dir: str,
-                         job_id: str | None = None) -> dict:
+                         job_id: str | None = None, include_event_context: bool = True,
+                         export_constants: bool = True) -> dict:
     """Submit a shader evidence export: raw bytes, reflection, disassembly and embedded sources.
 
     Source text is only included when actually preserved in the capture. Returns a
     job_id; large shader payloads remain on disk with hashes, not in tool replies.
     """
     return bridge.call("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
-                                                   output_dir=output_dir, job_id=job_id))
+                                                   output_dir=output_dir, job_id=job_id,
+                                                   include_event_context=include_event_context, export_constants=export_constants))
 
 
 @mcp.tool()
 def compare_texture_events(resource_id: str, action_event_id_a: int, action_event_id_b: int,
                            region: dict[str, int], output_dir: str, mip: int = 0, slice_index: int = 0,
                            sample: int = 0, depth_slice: int = 0,
-                           value_domain: Literal["storage", "linear"] = "storage", job_id: str | None = None) -> dict:
+                           value_domain: Literal["storage", "linear"] = "storage", job_id: str | None = None,
+                           aspect: Literal["all", "depth", "stencil"] = "all") -> dict:
     """Submit typed b-minus-a ROI comparison of the same texture after two actions.
 
     region={x,y,width,height}, origin top-left. Max ROI 262144 pixels; max raw
@@ -874,7 +899,7 @@ def compare_texture_events(resource_id: str, action_event_id_a: int, action_even
     return bridge.call("compare_texture_events", dict(resource_id=resource_id,
         action_event_id_a=action_event_id_a, action_event_id_b=action_event_id_b,
         region=region, output_dir=output_dir, mip=mip, slice_index=slice_index,
-        sample=sample, depth_slice=depth_slice, value_domain=value_domain, job_id=job_id))
+        sample=sample, depth_slice=depth_slice, value_domain=value_domain, job_id=job_id, aspect=aspect))
 
 
 @mcp.tool()

@@ -7,7 +7,9 @@ import base64
 
 import renderdoc as rd
 
-from .replay_query import at_event
+from .replay_query import at_event, guard_for
+from .texture_export import select as select_texture, transport as transport_texture
+from .texture_values import MAX_SUBRESOURCE_BYTES, decoder
 
 from ..utils import Parsers
 from .resource_catalog import (
@@ -517,11 +519,14 @@ class ResourceService:
             raise ValueError(result["error"])
         return result["texture"]
 
-    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None):
+    def get_texture_data(self, resource_id, mip=0, slice_index=0, sample=0, depth_slice=None, action_event_id=None,
+                         output_mode="auto", output_dir=None, aspect="all", region=None):
         """Get texture pixel data."""
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("CAPTURE_NOT_LOADED: no capture loaded")
 
+        if output_mode not in ("auto", "inline", "file") or aspect not in ("all", "depth", "stencil"):
+            raise ValueError("INVALID_REQUEST: invalid texture output_mode or aspect")
         result = {"data": None, "error": None}
 
         def callback(controller):
@@ -583,6 +588,14 @@ class ResourceService:
             sub.slice = slice_index
             sub.sample = sample
 
+            # Reject known oversized subresources before native readback.
+            try:
+                size = decoder(tex_desc.format)[0]
+                if mip_width*mip_height*mip_depth*size > MAX_SUBRESOURCE_BYTES:
+                    raise ValueError("RESOURCE_LIMIT: raw subresource exceeds 64 MiB")
+            except (AttributeError, ValueError) as exc:
+                if str(exc).startswith("RESOURCE_LIMIT:"):
+                    raise
             # Get texture data
             try:
                 data = controller.GetTextureData(tex_desc.resourceId, sub)
@@ -590,6 +603,12 @@ class ResourceService:
                 result["error"] = "RESOURCE_QUERY_FAILED: failed to get texture data: %s" % str(e)
                 return
 
+            data = bytes(data)
+            source_data_length = len(data)
+            if not data:
+                raise ValueError("RESOURCE_QUERY_FAILED: empty texture subresource readback")
+            if len(data) > MAX_SUBRESOURCE_BYTES:
+                raise ValueError("RESOURCE_LIMIT: raw subresource exceeds 64 MiB")
             # Extract depth slice for 3D textures if requested
             output_depth = mip_depth
             if is_3d and depth_slice is not None:
@@ -600,6 +619,9 @@ class ResourceService:
                 data = data[slice_start:slice_end]
                 output_depth = 1
 
+            api = str(controller.GetAPIProperties().pipelineType).split(".")[-1]
+            data, layout, selected_width, selected_height = select_texture(data, tex_desc.format, mip_width, mip_height, output_depth, aspect, region, api in ("Vulkan", "D3D11", "D3D12"))
+            layout["api"] = api
             # Data diagnostics: zero-length indicates an unreadable subresource;
             # all-zero bytes can be legitimate (cleared resource) but is worth flagging.
             warnings = []
@@ -636,9 +658,12 @@ class ResourceService:
                     else "linear"
                 ),
                 "data_length": len(data),
+                "source_data_length": source_data_length,
+                "source_dimensions": [mip_width, mip_height, mip_depth],
                 "all_zero": all_zero,
-                "content_base64": base64.b64encode(data).decode("ascii"),
+                "_raw": data,
             }
+            result["data"].update(layout, width=selected_width, height=selected_height)
             if warnings:
                 result["data"]["warnings"] = warnings
 
@@ -654,4 +679,11 @@ class ResourceService:
 
         if result["error"]:
             raise ValueError(result["error"])
-        return result["data"]
+        metadata = result["data"]
+        guard = guard_for(self.ctx)
+        session = guard.session.capture_session if guard else "unknown"
+        if guard:
+            metadata["provenance"] = guard.session.describe()
+            guard.phase("texture_transport", readback_bytes=metadata["source_data_length"], output_bytes=len(metadata["_raw"]))
+        raw = metadata.pop("_raw")
+        return transport_texture(raw, metadata, output_mode, output_dir, session)

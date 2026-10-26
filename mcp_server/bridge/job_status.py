@@ -19,6 +19,10 @@ def item_summary(item, details_path):
         "pending": len(textures) - len(exports)}
     result["artifact_paths"] = list(dict.fromkeys([mesh[k] for k in ("output_path", "index_path") if k in mesh] +
                                                 [e["path"] for e in exports if "path" in e]))
+    constants = item.get("constants", [])
+    result["constant_exports"] = {"total": len(constants), "saved": sum(r.get("status") == "exported" for r in constants),
+                                  "failed": sum(r.get("status") == "failed" for r in constants)}
+    result["artifact_paths"].extend(p for r in constants for p in [r.get("details_path"), r.get("raw", {}).get("path")] if p)
     return result
 
 
@@ -32,8 +36,8 @@ def read_status(directory, job_id, offset=0, limit=100):
             record = json.load(handle)
     except FileNotFoundError:
         raise ValueError("JOB_NOT_FOUND: %s (submission may still be pending)" % job_id)
-    if record.get("api_contract_version") != 2:
-        raise ValueError("API_VERSION_MISMATCH: job snapshot requires API contract 2")
+    if record.get("api_contract_version") != 3:
+        raise ValueError("API_VERSION_MISMATCH: job snapshot requires API contract 3")
     result = {k: v for k, v in record.items() if k not in ("items", "item_files")}
     files = record.get("item_files")
     if files is None:

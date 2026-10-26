@@ -6,7 +6,7 @@ import uuid
 import qrenderdoc as qrd
 
 
-API_CONTRACT_VERSION = 2
+API_CONTRACT_VERSION = 3
 
 
 def build_fingerprint():
@@ -30,6 +30,7 @@ class SessionState(qrd.CaptureViewer):
         self.capture_session = uuid.uuid4().hex
         self.replay_revision = 0
         self.replacements = None
+        self.expected_api = None
         self.build_hash = build_fingerprint()
         ctx.AddCaptureViewer(self)
 
@@ -37,6 +38,7 @@ class SessionState(qrd.CaptureViewer):
         self.capture_session = uuid.uuid4().hex
         self.replay_revision = 0
         self.replacements = None
+        self.expected_api = None
 
     def OnCaptureClosed(self):
         self.OnCaptureLoaded()

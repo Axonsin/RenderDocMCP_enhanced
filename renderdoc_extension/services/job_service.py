@@ -43,6 +43,10 @@ def item_summary(item, details_path):
         "pending": len(textures) - len(exports)}
     result["artifact_paths"] = list(dict.fromkeys([mesh[k] for k in ("output_path", "index_path") if k in mesh] +
                                                 [e["path"] for e in exports if "path" in e]))
+    constants = item.get("constants", [])
+    result["constant_exports"] = {"total": len(constants), "saved": sum(r.get("status") == "exported" for r in constants),
+                                  "failed": sum(r.get("status") == "failed" for r in constants)}
+    result["artifact_paths"].extend(p for r in constants for p in [r.get("details_path"), r.get("raw", {}).get("path")] if p)
     return result
 
 
@@ -71,7 +75,7 @@ class JobService:
                 continue
 
     def _save(self, record):
-        record["api_contract_version"] = 2
+        record["api_contract_version"] = 3
         if record["kind"] == "dump_draws" and record["items"] is not None:
             complete = sum(bool(i.get("complete")) for i in record["items"])
             record["counts"] = {
@@ -109,7 +113,7 @@ class JobService:
                           last_progress_at=time.time(), steps_completed=0, items=[],
                           cancel_requested=False, cancel_supported=True, texture_budget=48,
                           capture_bound=capture_bound, session=list(self.session.token()),
-                          result=None, error=None)
+                          result=None, error=None, provenance=self.session.describe())
             self.records[job_id] = record
             self.runners[job_id] = iter(factory(job_id))
             self._save(record)
@@ -258,7 +262,16 @@ class JobService:
                 if record["capture_bound"]:
                     if record["session"] != list(self.session.token()):
                         raise RuntimeError("STALE_JOB: external shader replacement changed")
+                import sys
+                module = sys.modules.get(__package__ + ".replay_guard")
+                guard = module.GUARDS.get(id(self.ctx)) if module else None
+                if guard and controller is not None:
+                    guard.thread_state.active = True
+                    guard.thread_state.event = guard.state.get("event_id")
+                    guard.check(controller)
                 output = function(controller) or {}
+                if guard and controller is not None:
+                    guard.check(controller)
                 if record["capture_bound"] and record["session"] != list(self.session.token()):
                     raise RuntimeError("STALE_JOB: capture or revision changed during operation")
                 with self.lock:
@@ -283,12 +296,20 @@ class JobService:
                 with self.lock:
                     record.update(status="interrupted" if "STALE_JOB" in str(exc) else "failed", error=str(exc))
             finally:
+                if "guard" in locals() and guard and controller is not None:
+                    guard.thread_state.active = False
                 with self.lock:
                     self.inflight = False
                     self._save(record)
 
         if kind == "replay":
             try:
+                import sys
+                module = sys.modules.get(__package__ + ".replay_guard")
+                guard = module.GUARDS.get(id(self.ctx)) if module else None
+                if guard:
+                    guard.preflight()
+                    guard.phase("job_replay", job_id=key, job_phase=phase)
                 self.ctx.Replay().AsyncInvoke(run)
             except Exception as exc:
                 with self.lock:

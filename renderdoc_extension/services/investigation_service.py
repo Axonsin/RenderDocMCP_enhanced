@@ -13,6 +13,8 @@ from .native_serialization import plain
 from .replay_query import at_event, require_action
 from .resource_catalog import enum_name
 from .texture_values import decoder, validate_region, MAX_SUBRESOURCE_BYTES
+from .constant_export import read_constants, write_constants
+from .pipeline_snapshot import Snapshot
 
 
 def _digest(path):
@@ -47,11 +49,15 @@ class InvestigationService:
         os.makedirs(path, exist_ok=True)
         return path
 
-    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None):
+    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None,
+                             include_event_context=True, export_constants=True):
         require_action(self.ctx, action_event_id)
+        if any(type(x) is not bool for x in (include_event_context, export_constants)):
+            raise ValueError("INVALID_REQUEST: export options must be booleans")
         stage_enum = Parsers.parse_stage(stage)
         def steps(key):
             directory = self._directory(output_dir, key)
+            payload = {}
             def export(controller):
                 def read(c, event):
                     pipe = c.GetPipelineState()
@@ -97,6 +103,18 @@ class InvestigationService:
                     path = os.path.join(directory, "reflection.json")
                     atomic_json(path, reflection)
                     files.append(path)
+                    if include_event_context or export_constants:
+                        snapshot = Snapshot(self.ctx, c, require_action(self.ctx, event), self.session.token())
+                        stage_name = Parsers.parse_stage_name(stage)
+                        if include_event_context:
+                            context = {"action_event_id": event, "event_phase": "after", "provenance": self.session.describe(),
+                                "stage": stage_name, "bindings": [b for b in snapshot.bindings if b["stage"] == stage_name],
+                                "input_signature": reflection["input_signature"], "output_signature": reflection["output_signature"]}
+                            context_path = os.path.join(directory, "event_context.json")
+                            atomic_json(context_path, context)
+                            files.append(context_path)
+                        if export_constants:
+                            payload["constants"] = read_constants(snapshot, stage_name)
                     result = dict(provenance=self.session.describe(), action_event_id=event, event_phase="after",
                                   shader_id="ResourceId::%d" % int(ref.resourceId), stage=Parsers.parse_stage_name(stage),
                                   entry_point=ref.entryPoint, encoding=encoding, source="capture_shader",
@@ -104,15 +122,25 @@ class InvestigationService:
                                   files=[{"path": p, "sha256": _digest(p)} for p in files])
                     manifest = os.path.join(directory, "manifest.json")
                     atomic_json(manifest, result)
-                    return {"result": dict(result, manifest_path=manifest)}
+                    payload["result"] = dict(result, manifest_path=manifest)
+                    return {"result": payload["result"]}
                 return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
             yield ("replay", "export_shader", export)
+            if export_constants:
+                def constants(_):
+                    result = payload["result"]
+                    result["constants"] = write_constants(directory, payload.pop("constants", []), result["provenance"], "shader")
+                    ok = not any(r["status"] == "failed" for r in result["constants"])
+                    atomic_json(result["manifest_path"], result)
+                    return {"result": result, "item": {"item_key": "shader_constants", "ok": ok, "complete": True, "constants": result["constants"]}}
+                yield ("worker", "writing_shader_constants", constants)
         return self.jobs.submit("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
-                                                             output_dir=output_dir), steps, job_id)
+                                                             output_dir=output_dir, include_event_context=include_event_context,
+                                                             export_constants=export_constants), steps, job_id)
 
     def compare_texture_events(self, resource_id, action_event_id_a, action_event_id_b,
                                region, output_dir, mip=0, slice_index=0, sample=0,
-                               depth_slice=0, value_domain="storage", job_id=None):
+                               depth_slice=0, value_domain="storage", job_id=None, aspect="all"):
         for eid in (action_event_id_a, action_event_id_b):
             require_action(self.ctx, eid)
         if value_domain not in ("storage", "linear"):
@@ -121,7 +149,7 @@ class InvestigationService:
             raise ValueError("INVALID_REQUEST: invalid subresource")
         params = dict(resource_id=resource_id, action_event_id_a=action_event_id_a,
                       action_event_id_b=action_event_id_b, region=region, output_dir=output_dir,
-                      mip=mip, slice_index=slice_index, sample=sample, depth_slice=depth_slice, value_domain=value_domain)
+                      mip=mip, slice_index=slice_index, sample=sample, depth_slice=depth_slice, value_domain=value_domain, aspect=aspect)
         def steps(key):
             directory = self._directory(output_dir, key)
             values = []
@@ -141,7 +169,7 @@ class InvestigationService:
                         width, height, depth = max(1, td.width >> mip), max(1, td.height >> mip), max(1, td.depth >> mip)
                         if depth_slice >= depth:
                             raise ValueError("INVALID_DEPTH_SLICE: outside mip")
-                        size, count, read_pixel = decoder(td.format)
+                        size, count, read_pixel = decoder(td.format, aspect)
                         expected = width * height * depth * size
                         if expected > MAX_SUBRESOURCE_BYTES:
                             raise ValueError("RESOURCE_LIMIT: subresource exceeds 64 MiB")
@@ -155,7 +183,7 @@ class InvestigationService:
                                 for yy in range(y, y + h) for xx in range(x, x + w)]
                         metadata.update(format=td.format.Name(), channels=count, coordinate_origin="top_left",
                                         api=api, mip=mip, slice_index=slice_index, sample=sample,
-                                        depth_slice=depth_slice, value_domain=value_domain, region=region)
+                                        depth_slice=depth_slice, value_domain=value_domain, region=region, aspect=aspect)
                         values.append(rows)
                     at_event(self.ctx, lambda fn: fn(controller), eid, read)
                 yield ("replay", "read_texture_event_%d" % eid, fetch)

@@ -1,6 +1,6 @@
 # RenderDoc MCP Server Enhanced
 
-Version **2.0.0** — [2.0 migration / 迁移说明](docs/migration_v2.md). Upgrade server and extension together.
+Version **3.0.0** — [3.0 migration / 迁移说明](docs/migration_v3.md). Upgrade server and extension together.
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 
@@ -198,8 +198,8 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 #### 资源数据读取
 
 - `get_texture_info` - 获取纹理元数据
-- `get_texture_data` - 获取纹理像素数据（Base64）
-- `get_buffer_contents` - 获取缓冲区内容（Base64）
+- `get_texture_data` - 获取纹理像素数据（auto 内联或文件）
+- `get_buffer_contents` - 获取缓冲区内容（auto 内联或文件）
 - `get_mesh_summary` - 获取网格拓扑、数量、属性和包围盒
 - `get_mesh_data` - 分页获取网格数据
 
@@ -245,3 +245,9 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 ## 许可证
 
 MIT
+
+## 3.0 导出与诊断
+
+默认完整导出逐事件常量和 shader 事件上下文；纹理按 256 KiB 阈值自动选择内联/文件，支持深度、模板和 ROI。回放失效明确报错；离线诊断不等待 UI，设备日志需显式开启。
+
+[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)

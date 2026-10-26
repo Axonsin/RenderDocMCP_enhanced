@@ -23,7 +23,7 @@ from typing import Any, Optional, List
 
 import renderdoc as rd
 
-from .replay_query import at_event
+from .replay_query import at_event, action_for
 
 _MESH_STAGES = ("VSIn", "VSOut", "GSOut")
 _NO_REGISTER = 0xFFFFFFFF  # rd.SigParameter.NoIndex
@@ -726,7 +726,7 @@ class MeshService:
             raise ValueError("INVALID_VIEW_INDEX: VSIn does not have a multiview selection")
 
         def operation(controller, target):
-            action = self.ctx.GetAction(action_event_id)
+            action = action_for(self.ctx, action_event_id)
             if not (action.flags & rd.ActionFlags.Drawcall):
                 raise ValueError(
                     "INVALID_ACTION_EVENT_ID: event %d is not a draw call"
@@ -838,7 +838,7 @@ class MeshService:
             raise ValueError("INVALID_PAGINATION: offset >= 0, 1 <= limit <= 500 required")
 
         def operation(controller, target):
-            action = self.ctx.GetAction(action_event_id)
+            action = action_for(self.ctx, action_event_id)
             if not (action.flags & rd.ActionFlags.Drawcall):
                 raise ValueError(
                     "INVALID_ACTION_EVENT_ID: event %d is not a draw call"
@@ -990,7 +990,7 @@ class MeshService:
             raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
 
         def operation(controller, target):
-            action = self.ctx.GetAction(action_event_id)
+            action = action_for(self.ctx, action_event_id)
             if not (action.flags & rd.ActionFlags.Drawcall):
                 raise ValueError(
                     "INVALID_ACTION_EVENT_ID: event %d is not a draw call"

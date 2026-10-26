@@ -51,7 +51,7 @@ def modules():
     packages = {"renderdoc": rd}
     for name in ("renderdoc_extension", "renderdoc_extension.services", "renderdoc_extension.utils"):
         packages[name] = types.ModuleType(name)
-        packages[name].__path__ = []
+        packages[name].__path__ = [str(ROOT / name.replace(".", "/"))]
     with patch.dict(sys.modules, packages):
         utils = packages["renderdoc_extension.utils"]
         utils.Parsers = load("renderdoc_extension.utils.parsers",
@@ -493,7 +493,7 @@ class ResourceTests(unittest.TestCase):
         from mcp_server import server
 
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-        self.assertEqual(len(tools), 44)
+        self.assertEqual(len(tools), 45)
         batch_schema = tools["dump_draws"].parameters
         self.assertEqual(batch_schema["required"], ["output_dir"])
         self.assertIn("marker_filter", batch_schema["properties"])
@@ -634,7 +634,7 @@ class ResourceTests(unittest.TestCase):
         packages = {"renderdoc": ACTION.rd}
         for name in ("renderdoc_extension", "renderdoc_extension.services"):
             packages[name] = types.ModuleType(name)
-            packages[name].__path__ = []
+            packages[name].__path__ = [str(ROOT / name.replace(".", "/"))]
         with patch.dict(sys.modules, packages):
             load("renderdoc_extension.services.replay_query",
                  "renderdoc_extension/services/replay_query.py")
@@ -723,7 +723,7 @@ class ResourceTests(unittest.TestCase):
         packages = {"renderdoc": ACTION.rd}
         for name in ("renderdoc_extension", "renderdoc_extension.services"):
             packages[name] = types.ModuleType(name)
-            packages[name].__path__ = []
+            packages[name].__path__ = [str(ROOT / name.replace(".", "/"))]
         with patch.dict(sys.modules, packages):
             load("renderdoc_extension.services.replay_query",
                  "renderdoc_extension/services/replay_query.py")
