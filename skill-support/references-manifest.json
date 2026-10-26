@@ -4,43 +4,43 @@
     "targets": [
       {
         "path": ".agents/skills/rdoc-analyze-pipeline/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".agents/skills/rdoc-diagnose-performance/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-blender/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-unity/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".claude/skills/rdoc-analyze-pipeline/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".claude/skills/rdoc-diagnose-performance/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-blender/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-unity/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       },
       {
         "path": ".claude/skills/rdoc-troubleshoot-capture/references/evidence-contract.md",
-        "sha256": "a6601429746426531b80f9434303dc9594a93ac145961ade1d2b80470343440e"
+        "sha256": "42c04ae75017f096271a1627a180940bd383140e59f627cc6e07ac5047fbaf96"
       }
     ]
   },
@@ -94,43 +94,43 @@
     "targets": [
       {
         "path": ".agents/skills/rdoc-analyze-pipeline/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".agents/skills/rdoc-diagnose-performance/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-blender/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-unity/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".claude/skills/rdoc-analyze-pipeline/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".claude/skills/rdoc-diagnose-performance/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-blender/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-unity/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       },
       {
         "path": ".claude/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
-        "sha256": "35e0cf3c66dbf83902d0f7dae3360ce5ed886004746c81d2c78910e456817178"
+        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
       }
     ]
   }

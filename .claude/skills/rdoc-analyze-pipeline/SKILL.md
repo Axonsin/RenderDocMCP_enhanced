@@ -30,7 +30,9 @@ description: >
 ## 工作步骤
 
 1. **健康核对（固定第一步）**：按共用契约 `references/tool-usage.md` §2 核对捕获
-   加载状态、回放健康与版本。不健康先排障；版本与既往分析不一致时，旧结论作废。
+   加载状态、回放健康与版本。不健康先排障（回放失效时先 `get_replay_diagnostics`
+   取本机诊断，禁止用占位数据继续；设备日志需显式授权）；版本与既往分析不一致
+   时，旧结论作废。
 2. **确定范围**：向用户确认或从请求推断分析范围（整帧 / 某 marker 子树 / 某资源 /
    某个 Pass），写入 job 的 `context.json`（跨阶段任务时，见 `references/job-layout.md`）。
 3. **帧概览**：读帧统计与 action 树（按 marker 过滤、排除纯 UI 噪声），识别真实的
@@ -40,6 +42,7 @@ description: >
    - 功能 Pass（名称相似但语义不同，如多个同名的相机渲染）。
 4. **管线细读**：对范围内关键 action 依次读管线总览 → 阶段状态 → 绑定详情 →
    输入/输出纹理。绑定接口返回的 `binding_id` 是临时令牌，只在同一 action 的响应内有效。
+   常量与纹理证据优先消费文件产物（事件常量导出、纹理 auto/file 落盘结果）。
 5. **资源追踪**：对用户关心的资源做整帧使用追踪与 action 级依赖追溯，注意：
    - 资源有版本/子资源概念，读写的是哪个 mip/slice 要记录；
    - 部分写入与混合依赖常见——**最近绑定该资源的 action 不一定是像素的最终生产者**；
@@ -65,6 +68,3 @@ description: >
 | `references/evidence-contract.md` | 需要记录证据、遇到可疑空结果、或长程任务需要 checkpoint 时 |
 | `references/job-layout.md` | 任务跨多阶段、用户要求产出目录与报告时 |
 
-## RenderDoc MCP 3.0
-
-按 references/tool-usage.md 的 3.0 契约调用；优先消费完整事件常量/事件 shader 包与纹理文件产物。失效回放先取本机诊断，禁止使用占位数据；设备日志需显式授权。

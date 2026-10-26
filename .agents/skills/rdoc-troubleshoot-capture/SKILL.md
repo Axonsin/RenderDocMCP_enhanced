@@ -29,11 +29,14 @@ description: >
 
 1. **建立基线**：调用状态/健康类工具，读全响应——捕获是否加载、图形 API、回放健康
    （`replay_healthy`/`replay_error`）、扩展与 RenderDoc 版本、IPC 协议版本。
-   `replay_healthy` 为 false 或字段缺失本身就是重要结论，继续第 4 步。
+   `replay_healthy` 为 false 或字段缺失本身就是重要结论，继续第 4 步。回放失效时
+   先 `get_replay_diagnostics` 取不依赖 UI/回放线程的本机诊断包（路径、哈希与
+   告警）；设备日志仅在用户要求或明确同意时设置 `include_device_logs=True`。
 2. **核对版本链**：客户端 → MCP 服务器进程 → RenderDoc 扩展三方版本是否匹配；
    协议版本不一致时先升级/对齐，不要在错配版本上调参重试。
 3. **构造最小失败请求**：把失败操作缩减到最小（单个工具、最小参数、无过滤器），与
-   失败的原请求对比，定位是参数问题、数据问题还是传输问题。每次尝试记录请求与响应。
+   失败的原请求对比，定位是参数问题、数据问题还是传输问题。每次尝试记录请求与
+   响应（常量/纹理证据优先用事件常量导出与纹理文件产物，便于维护者直接复核）。
 4. **分类**：按 `references/troubleshooting.md` 的故障树归类——环境问题（进程、
    驱动、设备、版本）、数据问题（该资源/子资源本身）、工具缺陷（疑似实现 bug）。
    每类给出证据，不凭感觉定责。
@@ -64,6 +67,3 @@ description: >
 | `references/evidence-contract.md` | 记录失败证据与状态恢复时 |
 | `references/job-layout.md` | 排障过程需要交付复现包/报告时 |
 
-## RenderDoc MCP 3.0
-
-按 references/tool-usage.md 的 3.0 契约调用；优先消费完整事件常量/事件 shader 包与纹理文件产物。失效回放先取本机诊断，禁止使用占位数据；设备日志需显式授权。

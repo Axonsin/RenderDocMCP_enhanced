@@ -46,11 +46,13 @@ argument-hint: "[对象/场景范围] [--effects] [--pipeline]"
 
 ## 工作步骤
 
-1. **健康核对（固定第一步）**：按 `references/tool-usage.md` §2 执行。
+1. **健康核对（固定第一步）**：按 `references/tool-usage.md` §2 执行；回放失效时
+   先 `get_replay_diagnostics` 取本机诊断，禁止用占位数据继续（设备日志需显式授权）。
 2. **锁定范围与契约**：目标工程、Unity/URP 版本、还原对象清单、验收标准（编译通过/
    场景可开/渲染对照）、坐标系与颜色空间（Linear/Gamma）写入 `context.json`。
 3. **取证**：几何、纹理（含数值域标注）、常量与绑定（材质参数推导）、观测 Shader
-   反汇编（识别分支与关键字/缓冲布局）。可疑数据先按证据契约判定再使用。
+   反汇编（识别分支与关键字/缓冲布局）。常量与纹理优先消费事件常量导出与文件
+   产物（auto/file 落盘并核验哈希）。可疑数据先按证据契约判定再使用。
 4. **设计还原结构**：按 `references/reconstruction.md` §2 规划——默认只用标准 URP
    内建能力（Lit/Complex 材质、内建光照/阴影、Volume 参数）；粒子/特效系统仅在带
    `--effects`、Renderer Feature/自定义 Pass 仅在带 `--pipeline` 时纳入计划，未带
@@ -89,6 +91,3 @@ argument-hint: "[对象/场景范围] [--effects] [--pipeline]"
 | `references/evidence-contract.md` | 记录证据、判定可疑数据、长程 checkpoint 时 |
 | `references/job-layout.md` | 建工作目录、组织工程产出与报告时 |
 
-## RenderDoc MCP 3.0
-
-按 references/tool-usage.md 的 3.0 契约调用；优先消费完整事件常量/事件 shader 包与纹理文件产物。失效回放先取本机诊断，禁止使用占位数据；设备日志需显式授权。

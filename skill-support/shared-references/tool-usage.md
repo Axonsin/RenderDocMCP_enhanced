@@ -2,7 +2,8 @@
 
 本契约自包含：不依赖仓库内其他文档即可使用。工具名与响应字段以**实际发现的 MCP 工具
 schema 与响应为准**——以下记录的是当前已知的能力面与语义，作为阅读 schema 时的地图，
-不是替你跳过发现步骤。
+不是替你跳过发现步骤。完整参数及默认值见仓库 `docs/tool_schemas.json`，版本迁移
+历史见 `docs/migration_v3.md`。
 
 ## 1. 工具发现优先
 
@@ -16,10 +17,19 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 
 - 捕获是否加载、图形 API、文件名；
 - **回放健康**：响应中的 replay 健康字段（如 `replay_healthy`/`replay_error`）；
-- 版本与协议一致性：扩展版本、RenderDoc 版本、IPC 协议版本与预期是否相符。
+- 版本与协议一致性：扩展版本、RenderDoc 版本、IPC 协议版本与预期是否相符
+  （当前 API 契约为 **3**、文件 IPC 为 **2**；MCP 服务器与扩展必须成套同版本，
+  混部直接报 `API_VERSION_MISMATCH`，不会进入部分兼容模式）。
 
-健康核对不通过时先排障（见故障诊断方法），不要带病进入分析或重建。版本不符的旧捕获
-结论不能直接沿用。
+断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。健康核对不通过
+时先排障（见故障诊断方法），不要带病进入分析或重建；需要证据时用
+`get_replay_diagnostics` 取不依赖 UI/回放线程的本机诊断包（返回路径、哈希与告警）。
+诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和
+shader；请求/IPC 日志各轮转三份、每份 10 MiB，本机/设备日志摘录各上限 2 MiB，不自动
+上传证据。设备日志默认关闭，只有用户要求或明确同意采集时才设置
+`include_device_logs=True`：设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和
+有界 crash logcat，总时限 20 秒，不执行安装、reset 或服务重启；ADB 服务不存在时降级为
+不可用，设备证据失败仍交付本机包。版本不符的旧捕获结论不能直接沿用。
 
 ## 3. 读取策略：先概要，后分页，大文件落盘
 
@@ -62,6 +72,18 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   检查该阶段是否真的有输出），不要自行猜偏移解析原始缓冲。
 - 纹理数据响应携带 `color_space`、`all_zero`、`warnings` 等诊断字段，消费前先读；
   纹理导出响应以 `mip_selection` 报告实际保存的 mip 范围。
+- `get_texture_data` 的 `output_mode` 为 auto/inline/file：auto 下原始负载 <=256 KiB
+  内联返回，更大负载落盘为带 SHA-256 的二进制文件 + JSON sidecar（默认目录为系统
+  临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，响应保留路径、字节数与
+  `metadata_path`，不重复大块数据）；强制 inline 超过 256 KiB 报 `RESOURCE_LIMIT`。
+  消费时按 `output_mode` 分支，auto/file 读取返回的 path 与 `metadata_path` 并核验
+  哈希，不要求 `content_base64` 恒存在。
+- `aspect` 为 all/depth/stencil：D16、D24S8 已验证，depth 输出归一化 float32 LE、
+  stencil 输出 uint8；其他未验证格式只保留原始导出并标记 `layout_available=false`，
+  拒绝猜测解码。`region={x,y,width,height}` 用左上原点选择 ROI，上限 262144 像素，
+  原始子资源上限 64 MiB；元数据区分 source_format/output_format、端序、
+  row_pitch/slice_pitch、通道/位布局、原点、数值域、sample 和 provenance。
+- `save_texture` 仍是可视图片转换，不能替代上述数值导出。
 - 状态类工具返回回放健康与版本信息；把它的响应当作每次长程操作的入口检查点。
 - `get_buffer_contents` 按**数值 ID** 匹配（`ResourceId` 不能由 int 构造）；
   单次内联上限 256 KiB，超出返回 `truncated=true` 与 `next_offset`，按该偏移分页；
@@ -79,15 +101,27 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   只有 `VTX,IDX` 的“成功”文件）；`exported_attributes` / `skipped_attributes` 用于
   核对实际写入磁盘的内容。
 
-## 6. 3.0 作业、来源与数值验证
+## 6. 作业、来源与数值验证
 
 - 要求 MCP 与扩展均为 3.0.0、RenderDoc >=1.46、API contract=3；核对构建指纹。
 - open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history
   返回 job_id。通过 get_job_status 查询；paused 可补充纹理额度，cancel/resume 为协作操作。
   原生调用不能强行取消。stalled 或提交超时不证明失败，保留原 job_id 查询，勿盲目重试。
+  RESULT_PENDING 代表提交后结果未知，不可自动重提；IPC 临时文件访问冲突只重读同一
+  响应，不重复提交原生操作，清理失败不丢已验证结果；排查断连时最后成功调用不能直接
+  认定为原因。
 - file_location 区分本地/远端文件；replay_target 区分回放位置。远端路径不创建本地占位。
 - 作业期间其它回放查询返回 REPLAY_BUSY；健康探针未运行时不把 null 当健康成功。
 - 缓存和产物绑定 capture_session、replay_revision、事件与子资源；跨加载或替换失效。
+  所有服务共享 capture_session/replay_revision；shader 编辑器自身代次是独立的
+  edit_session；重开捕获后 binding_id 与旧作业一并失效。
+- dump_draws 默认 `export_constants=True`，export_shader_bundle 默认
+  `include_event_context=True` 且 `export_constants=True`：逐事件保存原始常量、完整
+  布局与解码值，并关联事件绑定、采样器与签名；只要 shader 证据时可显式关闭。常量按
+  事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存。常量 JSON 保存
+  类型、数组/矩阵 stride、存储与解码顺序，附原始字节文件和哈希；相同内容可去重，但
+  来源记录分别保留。合法未绑定项标记 skipped；必要导出失败进入错误清单并影响完成
+  状态。完整常量值不进入工具响应或作业摘要。
 - 常量按绑定反射路径与布局读取；GetConstantBlock 已含 dynamic offset。原始字节的矩阵
   主序/stride 与 ShaderVariable 解码后的 row-major 数值分开记录。SInt 使用 s32v。
 - 不从块大小、槽位、固定步长或数值形状推断 ObjectToWorld。矩阵只来自反射确认；
@@ -95,7 +129,8 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 - post-VS 使用原生返回的重映射索引；分页按绘制引用，CSV 顶点表去重，.idx 保留 restart。
   用完整 xyzw、NDC 或屏幕位置核验。恒值输出先核对独立原生读取，不预判未落盘或不可用。
 - Shader 大文本用 export_shader_bundle 落盘。ROI 使用 compare_texture_events 数值差分；
-  默认 storage 域，linear 仅转换 sRGB RGB。差分是观测结果，不等于独立 draw 贡献。
+  默认 storage 域，linear 仅转换 sRGB RGB；`aspect=all/depth/stencil` 可对指定 MSAA
+  样本做颜色/深度/模板数值比较，不隐式 resolve。差分是观测结果，不等于独立 draw 贡献。
 - get_pixel_history 是原生历史；先核对能力与数值有效性，不能用 ROI 差分冒充。
 
 ## 7. 禁止事项
@@ -104,42 +139,3 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
   并如实标注来源。
 - 把 UI 或原生补取的结果记成纯 MCP 成功。
 - 在未核对健康的情况下把空结果当真值进入下游。
-
-## 3.0 完整证据与诊断
-
-API 契约为 **3**，文件 IPC 仍为 **2**；服务与扩展必须成套升级到 3.0.0。
-断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。
-所有服务共享 capture_session/replay_revision；编辑器自身代次为 edit_session。
-重开捕获后 binding_id 与旧作业失效。
-
-| 工具 | 新增参数与默认值 | 行为 |
-|---|---|---|
-| `dump_draws` | `export_constants=True` | 默认保存逐事件原始常量、完整布局和解码值 |
-| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | 默认关联事件绑定、采样器、签名和常量 |
-| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | 原始负载 <=256 KiB 内联，更大负载返回二进制文件和 sidecar |
-| `compare_texture_events` | `aspect="all"` | 对指定 MSAA 样本进行颜色/深度/模板数值比较，不隐式 resolve |
-| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | 不依赖 UI/回放的磁盘诊断包；设备日志需显式开启 |
-
-output_mode 为 auto/inline/file；强制 inline 超过 256 KiB 返回 RESOURCE_LIMIT。
-默认文件目录为系统临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，
-响应保留路径、字节数、SHA-256、metadata_path，不在结果里重复大块数据。
-aspect 为 all/depth/stencil；D16、D24S8 已支持，depth 输出归一化 float32 LE，
-stencil 输出 uint8；其他未验证格式只保留原始导出，拒绝猜测解码。
-region={x,y,width,height} 使用左上原点，上限 262144 像素；原始子资源上限 64 MiB。
-元数据区分 source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、
-原点、数值域、sample 和 provenance；未知布局标记 layout_available=false。
-`save_texture` 仍是可视图片转换，不能替代数值导出。
-
-常量按事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存，不重复叠加
-Vulkan dynamic offset。常量 JSON 保存类型、数组/矩阵 stride、存储与解码顺序，
-附原始字节文件和哈希；相同内容可去重，但来源记录分别保留。合法未绑定项标记 skipped；
-必要导出失败会进入错误清单并影响完成状态。完整值不进入工具响应或作业摘要。
-
-诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和 shader。
-请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志摘录各上限 2 MiB。
-设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和有界 crash logcat，总时限 20 秒，
-不执行安装、reset 或服务重启。ADB 服务不存在时降级为不可用；设备证据失败仍交付本机包。
-不自动上传证据。IPC 临时文件访问冲突只重读同一响应，不重复提交原生操作；清理失败不丢结果。
-RESULT_PENDING 代表提交后结果未知，不可自动重提。最后成功调用不能直接认定为断连原因。
-
-完整参数及默认值见 仓库 docs/tool_schemas.json，迁移步骤见 仓库 docs/migration_v3.md。
