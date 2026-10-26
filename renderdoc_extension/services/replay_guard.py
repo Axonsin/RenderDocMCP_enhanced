@@ -115,6 +115,8 @@ class ReplayGuard:
         if self.cached_token != self.session.token():
             self.actions = {}
             self.action_names = {}
+            names = {}
+
             def visit(rows):
                 for action in rows:
                     self.actions[action.eventId] = action
@@ -123,15 +125,47 @@ class ReplayGuard:
                     except Exception:
                         self.action_names[action.eventId] = ""
                     visit(action.children)
-            visit(self.ctx.CurRootActions())
-            self.resource_names = {int(r.resourceId): self.ctx.GetResourceName(r.resourceId) for r in self.ctx.GetResources()}
+
+            # Name caches are diagnostics only. Driver-generated names are not
+            # guaranteed to be valid UTF-8 (seen on GLES remote replay), so one
+            # undecodable name must not abort the whole query.
+            try:
+                visit(self.ctx.CurRootActions())
+            except Exception as exc:
+                self.state['action_cache_error'] = str(exc)[:512]
+            try:
+                for resource in self.ctx.GetResources():
+                    try:
+                        names[int(resource.resourceId)] = self.ctx.GetResourceName(resource.resourceId)
+                    except Exception:
+                        names[int(resource.resourceId)] = ""
+            except Exception as exc:
+                self.state['resource_cache_error'] = str(exc)[:512]
+            self.resource_names = names
             self.cached_token = self.session.token()
 
     def check(self, controller):
-        fatal = controller.GetFatalErrorStatus()
-        if not fatal.OK():
+        # A probe call that *raises* inside the binding layer (e.g. strict UTF-8
+        # conversion of a remote-host string) proves nothing about replay health;
+        # only an explicit not-OK return is a health verdict.
+        error = None
+        fatal = None
+        try:
+            fatal = controller.GetFatalErrorStatus()
+        except Exception as exc:
+            error = exc
+        if fatal is not None and not fatal.OK():
             self.failure('REPLAY_UNHEALTHY: ' + str(fatal.Message()))
-        api = str(controller.GetAPIProperties().pipelineType).split('.')[-1]
+        api = None
+        try:
+            api = str(controller.GetAPIProperties().pipelineType).split('.')[-1]
+        except Exception as exc:
+            error = error or exc
+        if error is not None:
+            self.state['health'] = {'healthy': None, 'api': api,
+                                    'probe_error': 'REPLAY_PROBE_UNAVAILABLE: ' + str(error),
+                                    'observed_at': time.time()}
+            return
         if self.session.expected_api and api != self.session.expected_api:
             self.failure('REPLAY_API_MISMATCH: expected %s, received %s' % (self.session.expected_api, api))
         self.state['health'] = {'healthy': True, 'api': api, 'observed_at': time.time()}

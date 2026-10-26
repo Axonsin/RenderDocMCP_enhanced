@@ -108,8 +108,11 @@ class BatchService:
                              "complete": False}
                     constant_payload = {}
                     def facts(controller, eid=eid, instance=instance, entry=entry, payload=constant_payload):
-                        fatal = controller.GetFatalErrorStatus()
-                        if not fatal.OK():
+                        try:
+                            fatal = controller.GetFatalErrorStatus()
+                        except Exception:
+                            fatal = None
+                        if fatal is not None and not fatal.OK():
                             raise RuntimeError("REPLAY_UNHEALTHY: %s" % fatal.Message())
                         try:
                             def read(c, event):

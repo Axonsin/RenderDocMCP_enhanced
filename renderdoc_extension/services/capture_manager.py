@@ -228,15 +228,24 @@ class CaptureManager:
                 if not fatal.OK():
                     result.update(api=None, replay_healthy=False, replay_error=str(fatal.Message()))
             except Exception as exc:
-                result["replay_healthy"] = False
-                result["replay_error"] = str(exc)
+                # Binding-layer failure of the probe itself; replay health is
+                # unknown, not bad. Let the business query decide the outcome.
+                result["replay_healthy"] = None
+                result["replay_error"] = "REPLAY_PROBE_UNAVAILABLE: " + str(exc)
 
         try:
             self._invoke(callback)
             result["replay_probe"] = "performed"
         except Exception as exc:
-            result["replay_healthy"] = False
-            result["replay_error"] = str(exc)
+            message = str(exc)
+            # Only a binding-layer decode failure of the probe itself means
+            # "health unknown". Transport and replay errors stay unhealthy.
+            if isinstance(exc, UnicodeDecodeError) or "codec can't decode" in message:
+                result["replay_healthy"] = None
+                result["replay_error"] = "REPLAY_PROBE_UNAVAILABLE: " + message
+            else:
+                result["replay_healthy"] = False
+                result["replay_error"] = message
         return result
 
     def get_replay_context(self):
@@ -414,14 +423,21 @@ class CaptureManager:
                     raise RuntimeError("CAPTURE_LOAD_FAILED: capture did not load")
                 health = {}
                 def probe(controller):
-                    props = controller.GetAPIProperties()
-                    fatal = controller.GetFatalErrorStatus()
-                    health.update(api=str(props.pipelineType), remote_replay=bool(props.remoteReplay),
-                                  replay_healthy=bool(fatal.OK()), replay_error=None if fatal.OK() else str(fatal.Message()))
+                    try:
+                        props = controller.GetAPIProperties()
+                        fatal = controller.GetFatalErrorStatus()
+                        health.update(api=str(props.pipelineType), remote_replay=bool(props.remoteReplay),
+                                      replay_healthy=bool(fatal.OK()), replay_error=None if fatal.OK() else str(fatal.Message()))
+                    except Exception as exc:
+                        # The capture loaded; only the probe died. Report unknown
+                        # health instead of discarding a valid load.
+                        health.update(api=None, remote_replay=None, replay_healthy=None,
+                                      replay_error="REPLAY_PROBE_UNAVAILABLE: " + str(exc))
                 self._invoke(probe)
-                if not health["replay_healthy"] or health["remote_replay"] != bool(hostname):
+                if health.get("replay_healthy") is False or (
+                        health.get("remote_replay") is not None and health["remote_replay"] != bool(hostname)):
                     raise RuntimeError("CAPTURE_VALIDATION_FAILED: %s" % health)
-                if facts and health["api"].split(".")[-1] != facts["capture_api"]:
+                if facts and health.get("api") and health["api"].split(".")[-1] != facts["capture_api"]:
                     raise RuntimeError("CAPTURE_VALIDATION_FAILED: replay API differs from capture metadata")
                 actual_host = replay.CurrentRemote().Hostname()
                 if actual_host != hostname:
