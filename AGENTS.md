@@ -1,6 +1,7 @@
 # RenderDoc MCP Server
 
-版本 3.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 3。迁移见 docs/migration_v3.md。
+版本 3.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 3。完整参数及默认值见
+[tool_schemas.json](docs/tool_schemas.json)，迁移步骤见 [migration_v3.md](docs/migration_v3.md)。
 
 作为 RenderDoc UI 扩展运行的 MCP 服务器。帮助 AI 助手访问 RenderDoc 的捕获数据，辅助 DirectX 11/12 图形调试。
 
@@ -89,13 +90,13 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `get_mesh_summary` | 获取网格概要信息（管线拓扑、`num_vertices` 保留 `numIndices` 语义、`unique_vertex_count` 为去重引用数、多属性包围盒；支持 instance 选择） |
 | `get_mesh_data` | 获取网格顶点/索引数据（支持 VSIn/VSOut/GSOut 阶段与 instance 选择） |
 | `export_mesh_csv` | 将网格导出为 CSV 文件（支持 instance 选择；无可导出属性时报 `MESH_SIGNATURE_UNAVAILABLE`） |
-| `dump_draws` | 异步批量导出：output_dir + draw列表/marker/EID范围，状态、取消、纹理额度暂停及续跑 |
+| `dump_draws` | 异步批量导出：output_dir + draw列表/marker/EID范围，状态、取消、纹理额度暂停及续跑；`export_constants=True` 默认逐事件保存常量证据（完整值只落盘，不进响应） |
 | `get_replay_diagnostics` | 不等待 UI 的本机诊断包；设备日志需显式 include_device_logs=True |
 | `get_replay_context` | 当前/配置/官方协议发现的远端主机与服务状态 |
 | `get_job_status` | 分页作业状态、阶段、进度、错误与结果清单 |
 | `cancel_job` | 请求协作取消；原生加载不能强行中断 |
 | `resume_job` | 同会话/修订内续跑暂停或已取消作业 |
-| `export_shader_bundle` | 异步导出原始 Shader、反射、反汇编、已捕获源码及哈希 |
+| `export_shader_bundle` | 异步导出原始 Shader、反射、反汇编、已捕获源码及哈希；默认关联事件绑定、采样器、签名与常量（include_event_context/export_constants） |
 | `compare_texture_events` | 异步比较两个 action 后同一纹理 ROI 的数值 |
 | `get_pixel_history` | 异步原生像素历史；按设备能力与原生有效性返回 |
 
@@ -199,6 +200,8 @@ get_texture_data(resource_id="ResourceId::487", action_event_id=343)
 - 阶段和纹理列表支持 offset/limit（1–500），show_unused/show_empty 默认 false，异常条目仍保留。
 - 纹理列表按绑定保留多次引用，不按 resource_id 去重；read-write 同时匹配 input/output。
 - binding_id 限当前捕获/action/绑定内容；resource.resource_id 继续关联资源 Inspector 工具。
+  所有服务共享 capture_session/replay_revision（shader 编辑器自身代次为独立的 edit_session）；
+  重开捕获后 binding_id 与旧作业一并失效。
 - 常量范围包含 Vulkan dynamic offset；不要再次相加。变量只在显式 variables 查询时解码。
 - get_texture_data/save_texture 的可选 action_event_id 指定 action 执行后的内容，查询后恢复 UI replay 事件。
 - inspect_action/diff_actions 使用完整共享快照，包含 buffer/sampler/固定功能状态，比较不受公开工具分页影响。
@@ -248,7 +251,15 @@ save_texture(
 # 立方体贴图面索引: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
 ```
 
-**注意**: 这是推荐的纹理保存方式，会自动处理格式转换。
+**注意**: 这是推荐的纹理保存方式，会自动处理格式转换；但它是可视图片转换，不能替代数值导出。
+
+数值导出用 `get_texture_data`：`output_mode` 为 auto/inline/file（auto 对 <=256 KiB 内联，
+更大负载落盘为带 SHA-256 的二进制文件 + JSON sidecar，默认目录
+renderdoc_mcp/artifacts/<session>/<unique-id>/，响应保留路径与 metadata_path，不重复大块数据）；
+`aspect` 为 all/depth/stencil（D16/D24S8 已验证：深度为归一化 float32 LE、模板为 uint8，
+其他未验证格式保留原始导出并拒绝猜测解码）；`region={x,y,width,height}` 为左上原点 ROI，
+上限 262144 像素，原始子资源上限 64 MiB；元数据区分端序、row_pitch/slice_pitch、
+source_format/output_format 与 layout_available。
 
 ### 网格数据工具
 
@@ -384,6 +395,9 @@ renderdoc-mcp
 - `jobs/controls/<job_id>.cancel.json`：MCP 原子发布取消请求，由扩展在步骤间协作处理
 - `get_job_status` 直接读取作业快照；UI 模态停滞时仍能报告阶段与持续时间，不能据此认定原生调用失败
 - 批处理状态页只返回紧凑条目，完整绑定／常量布局从 details_path 对应文件读取；不要反复倾倒完整清单进上下文
+- IPC 响应文件暂时不可读时在原超时内重读同一响应；清理失败保留已验证结果。RESULT_PENDING 表示提交后结果未知，不可自动重提
+- API 契约为 3、文件 IPC 为 2；服务与扩展必须成套同版本，混部直接报 API_VERSION_MISMATCH。断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线
+- 诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数；请求与 IPC 日志各轮转三份、每份 10 MiB，本机/设备摘录各上限 2 MiB，不自动上传。设备诊断复用已配置 ADB（get-state、ps -A、有界 crash logcat，总时限 20 秒，不安装/重置/重启服务）；ADB 不存在时降级为不可用，设备证据失败仍交付本机包
 - 轮询间隔: 100ms（RenderDoc 端）
 
 ## 开发注意事项
@@ -400,42 +414,3 @@ renderdoc-mcp
 - [FastMCP](https://github.com/PrefectHQ/fastmcp)
 - [RenderDoc Python API](https://renderdoc.org/docs/python_api/index.html)
 - [RenderDoc Extension Registration](https://renderdoc.org/docs/how/how_python_extension.html)
-
-## 3.0 完整证据与诊断
-
-API 契约为 **3**，文件 IPC 仍为 **2**；服务与扩展必须成套升级到 3.0.0。
-断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。
-所有服务共享 capture_session/replay_revision；编辑器自身代次为 edit_session。
-重开捕获后 binding_id 与旧作业失效。
-
-| 工具 | 新增参数与默认值 | 行为 |
-|---|---|---|
-| `dump_draws` | `export_constants=True` | 默认保存逐事件原始常量、完整布局和解码值 |
-| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | 默认关联事件绑定、采样器、签名和常量 |
-| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | 原始负载 <=256 KiB 内联，更大负载返回二进制文件和 sidecar |
-| `compare_texture_events` | `aspect="all"` | 对指定 MSAA 样本进行颜色/深度/模板数值比较，不隐式 resolve |
-| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | 不依赖 UI/回放的磁盘诊断包；设备日志需显式开启 |
-
-output_mode 为 auto/inline/file；强制 inline 超过 256 KiB 返回 RESOURCE_LIMIT。
-默认文件目录为系统临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，
-响应保留路径、字节数、SHA-256、metadata_path，不在结果里重复大块数据。
-aspect 为 all/depth/stencil；D16、D24S8 已支持，depth 输出归一化 float32 LE，
-stencil 输出 uint8；其他未验证格式只保留原始导出，拒绝猜测解码。
-region={x,y,width,height} 使用左上原点，上限 262144 像素；原始子资源上限 64 MiB。
-元数据区分 source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、
-原点、数值域、sample 和 provenance；未知布局标记 layout_available=false。
-`save_texture` 仍是可视图片转换，不能替代数值导出。
-
-常量按事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存，不重复叠加
-Vulkan dynamic offset。常量 JSON 保存类型、数组/矩阵 stride、存储与解码顺序，
-附原始字节文件和哈希；相同内容可去重，但来源记录分别保留。合法未绑定项标记 skipped；
-必要导出失败会进入错误清单并影响完成状态。完整值不进入工具响应或作业摘要。
-
-诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和 shader。
-请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志摘录各上限 2 MiB。
-设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和有界 crash logcat，总时限 20 秒，
-不执行安装、reset 或服务重启。ADB 服务不存在时降级为不可用；设备证据失败仍交付本机包。
-不自动上传证据。IPC 临时文件访问冲突只重读同一响应，不重复提交原生操作；清理失败不丢结果。
-RESULT_PENDING 代表提交后结果未知，不可自动重提。最后成功调用不能直接认定为断连原因。
-
-完整参数及默认值见 [tool_schemas.json](docs/tool_schemas.json)，迁移步骤见 [migration_v3.md](docs/migration_v3.md)。

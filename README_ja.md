@@ -200,8 +200,8 @@ action の引数と応答は `action_event_id` に統一しました。ツール
 #### リソースデータ読み取り
 
 - `get_texture_info` - テクスチャメタデータを取得
-- `get_texture_data` - テクスチャピクセルデータを取得 (Base64)
-- `get_buffer_contents` - バッファ内容を取得 (Base64)
+- `get_texture_data` - テクスチャピクセルデータを取得（数値取得：256 KiB 以下はインライン、超過はハッシュ付きファイル。depth/stencil と ROI 選択に対応）
+- `get_buffer_contents` - バッファ内容を取得（256 KiB 以下はインライン、ページネーション対応）
 - `get_mesh_summary` - メッシュトポロジ、数量、属性、境界を取得
 - `get_mesh_data` - ページネーションでメッシュデータを取得
 
@@ -228,6 +228,16 @@ action の引数と応答は `action_event_id` に統一しました。ツール
 - `save_texture` - テクスチャを画像ファイルに保存 (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
 - `export_mesh_csv` - ダウンストリームワークフロー向けにメッシュ CSV をエクスポート
 
+#### バッチエクスポートと診断
+
+- `dump_draws` - 再開可能なバッチエクスポート：メッシュ、テクスチャ、イベント単位の定数
+- `export_shader_bundle` - 生 shader、リフレクション、逆アセンブリ、イベントコンテキストと定数をエクスポート
+- `compare_texture_events` - 2 つの action 後の同一テクスチャに対する型付き数値 ROI 差分
+- `get_pixel_history` - action までのネイティブピクセル履歴
+- `get_job_status` / `cancel_job` / `resume_job` - ジョブライフサイクル管理
+- `get_replay_context` - 現在／設定済みのリプレイホストとサービス状態
+- `get_replay_diagnostics` - UI／リプレイスレッドを待たないオフライン診断バンドル。端末ログは明示的な指定が必要
+
 #### Shader 編集/置換
 
 - `get_shader_edit_context` - GLSL/SPIR-V の編集可能テキストとコンパイルパスを取得
@@ -236,7 +246,8 @@ action の引数と応答は `action_event_id` に統一しました。ツール
 
 ## 使用例
 
-詳細な使用例は [MCP Tools Reference](docs/tools.md) を参照してください。
+詳細な使用例は [MCP Tools Reference](docs/tools.md) を参照してください。完全なパラメータスキーマは
+[tool_schemas.json](docs/tool_schemas.json)·[移行ガイド](docs/migration_v3.md)·[検証記録](docs/validation_v3.md)。
 
 ## TODO
 
@@ -247,9 +258,3 @@ action の引数と応答は `action_event_id` に統一しました。ツール
 ## ライセンス
 
 MIT
-
-## 3.0 エクスポートと診断
-
-イベント単位の定数と shader コンテキストを既定で保存します。テクスチャは 256 KiB 以下をインライン、それ以上をファイルで返し、depth/stencil と ROI を指定できます。無効なリプレイはエラーになり、診断は UI の応答を待ちません。端末ログの取得は明示的な指定が必要です。
-
-[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)

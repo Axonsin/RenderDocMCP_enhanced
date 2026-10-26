@@ -55,10 +55,10 @@ rm -rf .claude/skills && for s in .agents/skills/*/; do \
 ## 当前状态
 
 - 2026-10-24：五个 Skill 首版成稿，**静态验证通过**（结构、红线、触发用例集）。
+- 2026-10-26：共享参考随 MCP 3.0 更新，覆盖 API 3、默认完整常量、纹理
+  auto/file/aspect 与离线诊断；更新共享源后执行 sync_references.py，再以
+  `--check` 验证 .agents/.claude 与 manifest。旧验证记录保留其历史版本含义；
+  3.0 实测结果见 docs/validation_v3.md。
 - 尚未经实机（真实 RenderDoc 捕获 + Blender/Unity MCP）行为验证；描述未跑触发
   优化循环（依赖 claude CLI 的 run_loop，可在 Claude Code 中补跑）。
 - scripts/ 按设计要求留空：只在实机验证过的确定性辅助才发布。
-
-## MCP 3.0 同步
-
-共享参考已覆盖 API 3、默认完整常量、纹理 auto/file/aspect 和离线诊断。更新共享源后执行 sync_references.py，再以 --check 验证 .agents/.claude 与 manifest。旧验证记录保留其历史版本含义；3.0 实测结果见 docs/validation_v3.md。

@@ -4,7 +4,8 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
-RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v3.md).
+RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. Complete published parameter schemas:
+[tool_schemas.json](tool_schemas.json). [Migration / 迁移说明](migration_v3.md).
 
 ## Naming Conventions
 
@@ -121,6 +122,36 @@ verify which extension and protocol they are talking to.
 **Example:**
 ```
 get_capture_status()
+```
+
+---
+
+#### `get_replay_diagnostics`
+
+Collect persisted local diagnostics without the UI/replay thread — usable while the UI
+is blocked, disconnected, or the capture failed to load. Returns artifact paths,
+SHA-256 hashes, warnings and `manifest_path`; full logs stay on disk.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `output_dir` | `str` | No | null | Absolute directory for the bundle; defaults to the system temp `renderdoc_mcp/artifacts/...` area |
+| `include_device_logs` | `bool` | No | `false` | Explicit opt-in device evidence through the configured ADB |
+| `remote_host` | `str` | No | null | e.g. `adb://DEVICE_SERIAL` for device collection |
+
+Diagnostic journals record request metadata, phases, UTC timestamps, durations and
+readback sizes — never shader/buffer/texture bodies. Request and IPC journals each
+rotate through three 10 MiB files; local/device log excerpts are independently capped
+at 2 MiB. Device collection only runs configured-ADB `get-state`, `shell ps -A` and a
+bounded crash `logcat` within a 20-second deadline: no install/reset/restart, an
+absent ADB daemon yields unavailable rather than starting one, missing device logs
+still deliver the local bundle, and no evidence is uploaded automatically.
+
+**Example:**
+```
+get_replay_diagnostics(output_dir="D:/diagnostics")
+# Optional, explicitly requested device evidence:
+get_replay_diagnostics(output_dir="D:/diagnostics", include_device_logs=True,
+                       remote_host="adb://DEVICE_SERIAL")
 ```
 
 ---
@@ -583,12 +614,22 @@ Read the pixel data of a texture resource. Returns <=256 KiB inline, otherwise a
 | `slice_index` | `int` | No | `0` | Array slice or cube face index (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-) |
 | `sample` | `int` | No | `0` | MSAA sample index |
 | `depth_slice` | `int` | No | | For 3D textures only, extract a specific depth slice. If omitted, returns full volume. |
+| `output_mode` | `str` | No | `"auto"` | `auto` / `inline` / `file`. Auto inlines payloads up to 256 KiB; explicit inline above the threshold fails with `RESOURCE_LIMIT`; `file` always writes a binary file plus JSON sidecar |
+| `output_dir` | `str` | No | null | Absolute directory for file transport; defaults to the system temp `renderdoc_mcp/artifacts/<session>/<unique-id>/` area |
+| `aspect` | `str` | No | `"all"` | `all` / `depth` / `stencil`. D16 depth and D24S8 depth/stencil are verified: depth is normalized float32 little-endian, stencil is uint8. Other unverified depth formats keep the opaque raw export and reject decoded selection |
+| `region` | `dict` | No | null | `{"x","y","width","height"}` top-left ROI, bounded to 262144 pixels; raw subresources are capped at 64 MiB |
 
-**Returns:** Base64-encoded pixel data with metadata (dimensions, format). `color_space`
-states the stored color space of the source data (`srgb`/`linear`, derived from the format
-compType); `all_zero` flags all-zero bytes (legitimate for cleared resources, but also a
-possible replay fault — verify against the texture viewer); `warnings` carries diagnostics
-when the data length is 0 or all bytes are zero.
+**Returns:** Inline responses carry `content_base64` plus metadata; file responses carry
+the path, byte size, SHA-256 and `metadata_path` instead — branch on `output_mode` and
+do not assume `content_base64` is always present. `color_space` states the stored color
+space of the source data (`srgb`/`linear`, derived from the format compType); `all_zero`
+flags all-zero bytes (legitimate for cleared resources, but also a possible replay
+fault — verify against the texture viewer); `warnings` carries diagnostics when the
+data length is 0 or all bytes are zero. Metadata separates source/output format,
+endianness, row_pitch/slice_pitch, channel/bit layout, origin, value domain, sample and
+provenance; unknown layouts report `layout_available=false` — no guessed decoding and
+no PNG numerical fallback. `save_texture` remains an image-conversion export and does
+not replace this numeric path.
 
 **Examples:**
 ```
@@ -603,6 +644,15 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice_index
 
 # Get a specific depth slice of a 3D texture
 get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
+
+# Numeric depth export to a file
+get_texture_data(resource_id="ResourceId::17571", action_event_id=218,
+                 aspect="depth", output_mode="file", output_dir="D:/exports")
+
+# Stencil ROI at an explicit MSAA sample
+get_texture_data(resource_id="ResourceId::27187", action_event_id=2006,
+                 aspect="stencil", sample=0,
+                 region={"x":850,"y":600,"width":100,"height":100})
 ```
 
 ---
@@ -642,7 +692,7 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 
 #### `get_mesh_summary`
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount); native status and sampled quality diagnostics are returned.
 
 Get a summary of mesh data for a specific draw call event.
 
@@ -690,7 +740,7 @@ get_mesh_summary(action_event_id=1234)
 
 Pagination units and `total_count` count draw references. `indices` is populated for all stages; post-VS uses the returned native index buffer, offset/width/base vertex. `unique_vertex_count` counts distinct references. Primitive restart is -1.
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount); native status and sampled quality diagnostics are returned.
 
 Get mesh vertex and index data for a specific draw call with pagination support.
 
@@ -964,7 +1014,7 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 CSV contains unique vertices; .idx contains real remapped references (-1 for restart). Retain topology. Short reads, invalid addresses and missing required streams are errors.
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount); native status and sampled quality diagnostics are returned.
 
 Export mesh data to a CSV file.
 
@@ -1013,25 +1063,38 @@ identity, vertex layout, quality warnings and provenance. No object_matrix field
 automatic UV/albedo/normal naming. Same filenames never authorize cache reuse;
 event/subresource/revision reads precede content-hash deduplication. Filtering is explicit.
 
+`export_constants=True` (default) writes per-event constant evidence: raw constant
+bytes, full reflected layout and decoded values, read at each exact event/range with
+dynamic offsets already included. Each binding JSON preserves type, array/matrix
+strides, storage/value order and the raw file hash/size; identical bytes may share a
+file while provenance stays per-event. Unbound bindings are marked skipped; requested
+export failures are reported and prevent a clean completed status. Full values stay on
+disk and never enter tool responses or job summaries.
+
 ```python
 job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
 get_job_status(job_id=job["job_id"])
 resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
 ```
 
-## 2.0 job control and investigation / 作业控制与调查
+## Job control and investigation / 作业控制与调查
 
-Requires RenderDoc 1.46+. All paths are absolute. Upgrade server and extension together.
-See [3.0 migration](migration_v3.md) for complete lifecycle, limits and file formats.
+Requires RenderDoc 1.46+. All paths are absolute. Upgrade server and extension together:
+API contract **3** with file IPC **2**, and mismatched versions fail fast with
+`API_VERSION_MISMATCH` instead of returning plausible empty state. Replay queries reject
+disconnected, fatal or API-mismatched controllers. Shared `capture_session`/
+`replay_revision` applies to all services, shader editing also returns its separate
+`edit_session`, and reopening a capture invalidates binding IDs and jobs.
+See [migration](migration_v3.md) for the complete lifecycle, limits and file formats.
 
 | Tool | Parameters | Result |
 |---|---|---|
 | `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
-| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | State, phase, timestamps, progress, compact draw summaries with details_path/artifact_paths, error and manifests; pixel-history rows retain native fields |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | State, phase, timestamps, progress, compact draw summaries with details_path/artifact_paths (including constant export counts), error and manifests; pixel-history rows retain native fields |
 | `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
 | `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
-| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources and SHA256 files |
-| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
+| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, `aspect="all"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts; numeric color/depth/stencil comparison at an explicit MSAA sample without implicit resolve |
 | `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
 
 The default texture comparison domain is stored numeric values; `linear` converts only sRGB RGB,
@@ -1045,63 +1108,15 @@ extension_build_hash, API contract/capabilities, current event and active job. B
 does not run a health probe: replay_healthy is unknown and replay_probe explains why.
 Native serialization failures set section.available=false with a reason, including in composite tools.
 
-## 3.0 evidence and diagnostics contract
-
-API contract **3**, file IPC **2**; deploy matching 3.0.0 server/extension versions.
-Use `get_capture_status` after loading/recovery. Replay queries reject disconnected,
-fatal or API-mismatched controllers instead of returning plausible empty state.
-Shared `capture_session`/`replay_revision` applies to all services; shader editing
-also returns its separate `edit_session`. Reopening invalidates binding IDs and jobs.
-
-| Tool | New parameters and defaults | Result |
-|---|---|---|
-| `dump_draws` | `export_constants=True` | Default raw constant bytes, full layout/decoded values; compact status links to artifacts |
-| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | Event/stage bindings, samplers, signatures and the same constant artifacts |
-| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | <=256 KiB inline; larger data files; paths, SHA-256 and metadata sidecar |
-| `compare_texture_events` | `aspect="all"` | Numeric color/depth/stencil comparison at an explicit MSAA sample; no implicit resolve |
-| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | Offline persisted snapshot/log bundle, usable with disconnected or blocked UI |
-
-`output_mode`: auto/inline/file. Explicit inline above 256 KiB fails with RESOURCE_LIMIT.
-Default file location: system temp/renderdoc_mcp/artifacts/<session>/<unique-id>/.
-`aspect`: all/depth/stencil. D16 depth and D24S8 depth/stencil are decoded; depth is
-normalized float32 little-endian, stencil uint8. Other unverified depth formats
-retain opaque raw export and reject decoded selection. `region={x,y,width,height}`
-is top-left, bounded to 262144 pixels. Raw subresources are capped at 64 MiB.
-Metadata separates source/output format, endianness, row_pitch/slice_pitch,
-channel/bit layout, origin, value domain, sample and provenance. Unknown layouts
-have layout_available=false; no guessed decoding or PNG numerical fallback.
-`save_texture` remains an image-conversion export.
-
-Constants are read at each exact event/range; dynamic offsets are already included.
-Each binding JSON preserves type, array/matrix strides, storage/value order and raw
-file hash/size. Identical bytes may share a file; provenance is never merged across
-events. Unbound bindings are skipped, requested export failures are reported and
-prevent a clean completed status. Full values stay on disk.
-
-Diagnostics record metadata, phases, UTC timestamps, durations and readback sizes,
-not shader/buffer/texture bodies. Request and IPC journals each rotate through three
-10 MiB files. Local/device log excerpts are independently capped at 2 MiB. Device
-collection explicitly opts into configured ADB get-state, shell ps -A and bounded
-crash logcat, with a 20-second total deadline. No install/reset/restart commands.
-An absent ADB daemon yields unavailable rather than starting one. Missing device
-logs do not prevent a local bundle. No evidence is uploaded automatically.
 Transient IPC response-file access retries the same file within the existing deadline;
-cleanup failure preserves a validated result. RESULT_PENDING does not authorize
-resubmission of an unknown native operation. The last successful request is evidence,
-not proof of the cause of a later disconnection.
+cleanup failure preserves a validated result. `RESULT_PENDING` means a native operation
+was submitted with an unknown outcome and does not authorize resubmission. The last
+successful request is evidence, not proof of the cause of a later disconnection — use
+`get_replay_diagnostics` for post-mortem evidence.
 
 ```python
-job = dump_draws(output_dir="D:/exports", action_event_ids=[1922,1930])
 job = export_shader_bundle(action_event_id=1930, stage="fragment", output_dir="D:/exports")
-result = get_texture_data(resource_id="ResourceId::17571", action_event_id=218,
-                          aspect="depth", output_mode="file", output_dir="D:/exports")
-stencil = get_texture_data(resource_id="ResourceId::27187", action_event_id=2006,
-                           aspect="stencil", sample=0,
-                           region={"x":850,"y":600,"width":100,"height":100})
-get_replay_diagnostics(output_dir="D:/diagnostics")
-# Optional, explicitly requested device evidence:
-get_replay_diagnostics(output_dir="D:/diagnostics", include_device_logs=True,
-                       remote_host="adb://DEVICE_SERIAL")
+job = compare_texture_events(resource_id="ResourceId::17571", action_event_id_a=1900,
+                             action_event_id_b=1930, region={"x":0,"y":0,"width":256,"height":256},
+                             output_dir="D:/exports", aspect="depth")
 ```
-
-The complete published parameter schemas are in [tool_schemas.json](tool_schemas.json).

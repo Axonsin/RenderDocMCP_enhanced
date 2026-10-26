@@ -206,8 +206,8 @@ is TODO. See [Session-scoped Shader Editing](docs/tools.md#session-scoped-shader
 #### Resource Data Access
 
 - `get_texture_info` - Get texture metadata
-- `get_texture_data` - Get texture pixel data (Base64)
-- `get_buffer_contents` - Get buffer contents (Base64)
+- `get_texture_data` - Get texture pixel data (numeric; <=256 KiB inline, larger payloads as hashed files, with depth/stencil and ROI selection)
+- `get_buffer_contents` - Get buffer contents (<=256 KiB inline, paginated)
 - `get_mesh_summary` - Get mesh topology, counts, attributes, and bounds
 - `get_mesh_data` - Get paginated mesh data
 
@@ -234,6 +234,16 @@ Cross-dimensional queries that orchestrate multiple services on top of atomic to
 - `save_texture` - Save texture to image file (PNG/JPG/BMP/TGA/EXR/DDS/HDR)
 - `export_mesh_csv` - Export mesh CSV for downstream workflows
 
+#### Batch Export & Diagnostics
+
+- `dump_draws` - Resumable batch export of draws: meshes, textures and per-event constants
+- `export_shader_bundle` - Export raw shader, reflection, disassembly, event context and constants
+- `compare_texture_events` - Typed numeric B-minus-A ROI comparison of one texture after two actions
+- `get_pixel_history` - Native pixel history up to an action
+- `get_job_status` / `cancel_job` / `resume_job` - Job lifecycle control
+- `get_replay_context` - Current/configured replay hosts and service state
+- `get_replay_diagnostics` - Offline diagnostics bundle that never waits on the UI/replay thread; device evidence requires explicit opt-in
+
 #### Shader Edit/Replace
 
 - `get_shader_edit_context` - Prepare editable GLSL/SPIR-V text and its compilation path
@@ -242,7 +252,9 @@ Cross-dimensional queries that orchestrate multiple services on top of atomic to
 
 ## Examples
 
-For detailed usage examples, see [MCP Tools Reference](docs/tools.md).
+For detailed usage examples, see [MCP Tools Reference](docs/tools.md). Complete parameter
+schemas: [tool_schemas.json](docs/tool_schemas.json). [Migration](docs/migration_v3.md) ·
+[Validation](docs/validation_v3.md).
 
 ## TODO
 
@@ -253,9 +265,3 @@ Future work will continue to clean up compatibility layer tools based on testing
 ## License
 
 MIT
-
-## 3.0 export and diagnostics
-
-Default exports now include full event-bound constants and shader event context. Texture reads use auto inline/file transport (256 KiB threshold), with explicit depth/stencil and ROI selection. Replay validity is checked across operations; offline diagnostics remain available during disconnection. Device evidence requires explicit opt-in.
-
-[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)

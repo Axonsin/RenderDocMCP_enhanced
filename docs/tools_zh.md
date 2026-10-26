@@ -4,7 +4,8 @@
 
 [English](tools.md)
 
-RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. [Migration / 迁移说明](migration_v3.md).
+RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. 完整参数 schema 见
+[tool_schemas.json](tool_schemas.json)，[Migration / 迁移说明](migration_v3.md)。
 
 ## 术语与字段约定
 
@@ -117,6 +118,33 @@ list_captures(directory="D:/captures")
 **示例：**
 ```
 get_capture_status()
+```
+
+---
+
+#### `get_replay_diagnostics`
+
+不依赖 UI/回放线程收集本机诊断包——UI 卡死、断连或捕获加载失败时仍可用。
+返回产物路径、SHA-256 哈希、告警和 `manifest_path`；完整日志留在磁盘。
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `output_dir` | `str` | 否 | null | 诊断包的绝对目录；默认使用系统临时目录 `renderdoc_mcp/artifacts/...` |
+| `include_device_logs` | `bool` | 否 | `false` | 显式开启设备证据（复用已配置 ADB） |
+| `remote_host` | `str` | 否 | null | 如 `adb://DEVICE_SERIAL`，用于设备采集 |
+
+诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整
+像素、缓冲和 shader。请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志
+摘录各上限 2 MiB。设备诊断仅调用已配置 ADB 的 get-state、shell ps -A 和有界
+crash logcat，总时限 20 秒：不执行安装/reset/服务重启，ADB 服务不存在时降级为
+不可用，设备证据失败仍交付本机包，且不自动上传任何证据。
+
+**示例：**
+```
+get_replay_diagnostics(output_dir="D:/diagnostics")
+# 可选：显式要求的设备证据
+get_replay_diagnostics(output_dir="D:/diagnostics", include_device_logs=True,
+                       remote_host="adb://DEVICE_SERIAL")
 ```
 
 ---
@@ -556,11 +584,19 @@ get_texture_info(resource_id="ResourceId::2495")
 | `slice_index` | `int` | 否 | `0` | 数组切片或立方体贴图面索引（0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-） |
 | `sample` | `int` | 否 | `0` | MSAA 采样索引 |
 | `depth_slice` | `int` | 否 | | 仅限 3D 纹理，提取特定深度切片。省略时返回完整体积。 |
+| `output_mode` | `str` | 否 | `"auto"` | `auto` / `inline` / `file`：auto 对 <=256 KiB 负载内联；强制 inline 超过阈值报 `RESOURCE_LIMIT`；`file` 总是写二进制文件 + JSON sidecar |
+| `output_dir` | `str` | 否 | null | 文件传输的绝对目录；默认为系统临时目录 `renderdoc_mcp/artifacts/<session>/<unique-id>/` |
+| `aspect` | `str` | 否 | `"all"` | `all` / `depth` / `stencil`：D16 深度与 D24S8 深度/模板已验证——深度为归一化 float32 小端、模板为 uint8；其他未验证格式保留不透明的原始导出并拒绝解码选择 |
+| `region` | `dict` | 否 | null | `{"x","y","width","height"}` 左上原点 ROI，上限 262144 像素；原始子资源上限 64 MiB |
 
-**返回值：** 按 output_mode 返回内联数据或文件路径、哈希及布局元数据；完整 3.0 参数见文末及 tool_schemas.json。`color_space` 标明源数据的
-存储色彩域（`srgb`/`linear`，按格式 compType 判定）；`all_zero` 表示全部字节为零（可能是
-合法的清零资源，也可能是回放故障，需对照纹理查看器确认）；`warnings` 在数据长度为 0 或
-全零时给出诊断提示。
+**返回值：** 内联响应携带 `content_base64` 和元数据；文件响应改为返回路径、字节数、
+SHA-256 和 `metadata_path`——按 `output_mode` 分支处理，不要假设 `content_base64`
+恒存在。`color_space` 标明源数据的存储色彩域（`srgb`/`linear`，按格式 compType 判定）；
+`all_zero` 表示全部字节为零（可能是合法的清零资源，也可能是回放故障，需对照纹理查看器
+确认）；`warnings` 在数据长度为 0 或全零时给出诊断提示。元数据区分
+source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、原点、数值域、
+sample 和 provenance；未知布局报 `layout_available=false`——不猜测解码，也不用 PNG
+冒充数值导出。`save_texture` 仍是可视图片转换，不能替代本数值路径。
 
 **示例：**
 ```
@@ -575,6 +611,15 @@ get_texture_data(action_event_id=123, resource_id="ResourceId::456", slice_index
 
 # 获取 3D 纹理的特定深度切片
 get_texture_data(action_event_id=123, resource_id="ResourceId::789", depth_slice=5)
+
+# 深度数值导出到文件
+get_texture_data(resource_id="ResourceId::17571", action_event_id=218,
+                 aspect="depth", output_mode="file", output_dir="D:/exports")
+
+# 指定 MSAA 样本的模板 ROI
+get_texture_data(resource_id="ResourceId::27187", action_event_id=2006,
+                 aspect="stencil", sample=0,
+                 region={"x":850,"y":600,"width":100,"height":100})
 ```
 
 ---
@@ -613,7 +658,7 @@ get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
 
 #### `get_mesh_summary`
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0`（VSIn 要求为 0；post-VS 校验 MultiviewBroadcastCount）；返回原生状态与采样质量诊断。
 
 获取特定 draw call 事件的网格数据摘要。
 
@@ -656,7 +701,7 @@ get_mesh_summary(action_event_id=1234)
 
 Pagination units and `total_count` count draw references. `indices` is populated for all stages; post-VS uses the returned native index buffer, offset/width/base vertex. `unique_vertex_count` counts distinct references. Primitive restart is -1.
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0`（VSIn 要求为 0；post-VS 校验 MultiviewBroadcastCount）；返回原生状态与采样质量诊断。
 
 获取特定 draw call 的网格顶点和索引数据，支持分页。
 
@@ -924,7 +969,7 @@ save_texture(action_event_id=123, resource_id="ResourceId::2495", output_path="D
 
 CSV contains unique vertices; .idx contains real remapped references (-1 for restart). Retain topology. Short reads, invalid addresses and missing required streams are errors.
 
-2.0: `view_index=0` (VSIn requires 0; post-VS validates MultiviewBroadcastCount), native status and sampled quality diagnostics are returned.
+`view_index=0`（VSIn 要求为 0；post-VS 校验 MultiviewBroadcastCount）；返回原生状态与采样质量诊断。
 
 将网格数据导出为 CSV 文件。
 
@@ -971,25 +1016,35 @@ Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=Tr
 移除 object_matrix 特判，不自动命名 UV/albedo/normal。相同文件名不代表可复用；
 跨事件重新读取后，才按导出内容哈希去重。过滤条件必须显式配置。
 
+`export_constants=True`（默认）逐事件保存常量证据：原始常量字节、完整反射布局与
+解码值，按每个确切事件/范围读取（dynamic offset 已包含）。每个绑定 JSON 保留类型、
+数组/矩阵 stride、存储/解码顺序及原始文件哈希/大小；相同字节可共享文件，但来源
+记录按事件分别保留。合法未绑定项标记 skipped；请求的导出失败会进入错误清单并阻止
+干净的完成状态。完整值只留在磁盘，不进入工具响应或作业摘要。
+
 ```python
 job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
 get_job_status(job_id=job["job_id"])
 resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
 ```
 
-## 2.0 job control and investigation / 作业控制与调查
+## Job control and investigation / 作业控制与调查
 
-要求 RenderDoc 1.46+，路径必须为绝对路径，服务器与扩展一起升级。
-完整生命周期、限制与文件格式见 [2.0 迁移说明](migration_v3.md)。
+要求 RenderDoc 1.46+，路径必须为绝对路径，服务器与扩展一起升级：API 契约为 **3**、
+文件 IPC 为 **2**，版本不匹配直接报 `API_VERSION_MISMATCH`，不会返回看似合法的空状态。
+回放查询拒绝断连、fatal 或 API 不一致的控制器。所有服务共享
+`capture_session`/`replay_revision`，shader 编辑另返回独立的 `edit_session`；
+重开捕获后 binding ID 与旧作业失效。完整生命周期、限制与文件格式见
+[迁移说明](migration_v3.md)。
 
 | Tool | Parameters | Result |
 |---|---|---|
 | `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
-| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | 状态、阶段、进度、紧凑 draw 摘要、details_path／artifact_paths、错误及清单；像素历史页保留原生字段 |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | 状态、阶段、进度、紧凑 draw 摘要、details_path／artifact_paths（含常量导出计数）、错误及清单；像素历史页保留原生字段 |
 | `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
 | `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
-| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources and SHA256 files |
-| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
+| `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, `aspect="all"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts；可对指定 MSAA 样本做颜色/深度/模板数值比较，不隐式 resolve |
 | `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
 
 纹理差分默认比较存储数值；`linear` 仅转换 sRGB RGB，alpha 不转换。
@@ -1003,41 +1058,13 @@ extension_build_hash, API contract/capabilities, current event and active job. B
 does not run a health probe: replay_healthy is unknown and replay_probe explains why.
 Native serialization failures set section.available=false with a reason, including in composite tools.
 
-## 3.0 完整证据与诊断
+IPC 响应文件暂时不可读时，在原超时内重读同一文件；清理失败保留已验证的结果。
+`RESULT_PENDING` 表示原生操作已提交但结果未知，不可据此重提。最后一次成功调用只是
+证据，不能直接认定为后续断连的原因——事后取证用 `get_replay_diagnostics`。
 
-API 契约为 **3**，文件 IPC 仍为 **2**；服务与扩展必须成套升级到 3.0.0。
-断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。
-所有服务共享 capture_session/replay_revision；编辑器自身代次为 edit_session。
-重开捕获后 binding_id 与旧作业失效。
-
-| 工具 | 新增参数与默认值 | 行为 |
-|---|---|---|
-| `dump_draws` | `export_constants=True` | 默认保存逐事件原始常量、完整布局和解码值 |
-| `export_shader_bundle` | `include_event_context=True`, `export_constants=True` | 默认关联事件绑定、采样器、签名和常量 |
-| `get_texture_data` | `output_mode="auto"`, `output_dir=None`, `aspect="all"`, `region=None` | 原始负载 <=256 KiB 内联，更大负载返回二进制文件和 sidecar |
-| `compare_texture_events` | `aspect="all"` | 对指定 MSAA 样本进行颜色/深度/模板数值比较，不隐式 resolve |
-| `get_replay_diagnostics` | `output_dir=None`, `include_device_logs=False`, `remote_host=None` | 不依赖 UI/回放的磁盘诊断包；设备日志需显式开启 |
-
-output_mode 为 auto/inline/file；强制 inline 超过 256 KiB 返回 RESOURCE_LIMIT。
-默认文件目录为系统临时目录 renderdoc_mcp/artifacts/<session>/<unique-id>/，
-响应保留路径、字节数、SHA-256、metadata_path，不在结果里重复大块数据。
-aspect 为 all/depth/stencil；D16、D24S8 已支持，depth 输出归一化 float32 LE，
-stencil 输出 uint8；其他未验证格式只保留原始导出，拒绝猜测解码。
-region={x,y,width,height} 使用左上原点，上限 262144 像素；原始子资源上限 64 MiB。
-元数据区分 source_format/output_format、端序、row_pitch/slice_pitch、通道/位布局、
-原点、数值域、sample 和 provenance；未知布局标记 layout_available=false。
-`save_texture` 仍是可视图片转换，不能替代数值导出。
-
-常量按事件和有效绑定范围读取，不跨事件仅凭 buffer ID/offset 命中缓存，不重复叠加
-Vulkan dynamic offset。常量 JSON 保存类型、数组/矩阵 stride、存储与解码顺序，
-附原始字节文件和哈希；相同内容可去重，但来源记录分别保留。合法未绑定项标记 skipped；
-必要导出失败会进入错误清单并影响完成状态。完整值不进入工具响应或作业摘要。
-
-诊断日志只保存请求元数据、阶段、UTC 时间、耗时和读回字节数，不保存完整像素、缓冲和 shader。
-请求/IPC 日志各轮转三份、每份 10 MiB；本机/设备日志摘录各上限 2 MiB。
-设备诊断复用已配置 ADB，仅调用 get-state、shell ps -A 和有界 crash logcat，总时限 20 秒，
-不执行安装、reset 或服务重启。ADB 服务不存在时降级为不可用；设备证据失败仍交付本机包。
-不自动上传证据。IPC 临时文件访问冲突只重读同一响应，不重复提交原生操作；清理失败不丢结果。
-RESULT_PENDING 代表提交后结果未知，不可自动重提。最后成功调用不能直接认定为断连原因。
-
-完整参数及默认值见 [tool_schemas.json](tool_schemas.json)，迁移步骤见 [migration_v3.md](migration_v3.md)。
+```python
+job = export_shader_bundle(action_event_id=1930, stage="fragment", output_dir="D:/exports")
+job = compare_texture_events(resource_id="ResourceId::17571", action_event_id_a=1900,
+                             action_event_id_b=1930, region={"x":0,"y":0,"width":256,"height":256},
+                             output_dir="D:/exports", aspect="depth")
+```

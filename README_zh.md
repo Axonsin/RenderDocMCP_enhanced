@@ -226,6 +226,16 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 - `save_texture` - 保存纹理到图片文件（PNG/JPG/BMP/TGA/EXR/DDS/HDR）
 - `export_mesh_csv` - 为下游工作流导出网格 CSV
 
+#### 批量导出与诊断
+
+- `dump_draws` - 可续跑的批量导出：网格、纹理与逐事件常量
+- `export_shader_bundle` - 导出原始 Shader、反射、反汇编、事件上下文与常量
+- `compare_texture_events` - 同一纹理在两个 action 后的类型化数值 ROI 差分
+- `get_pixel_history` - 截至某 action 的原生像素历史
+- `get_job_status` / `cancel_job` / `resume_job` - 作业生命周期控制
+- `get_replay_context` - 当前/已配置的回放主机与服务状态
+- `get_replay_diagnostics` - 不等待 UI/回放线程的离线诊断包；设备证据需显式开启
+
 #### Shader 编辑/替换
 
 - `get_shader_edit_context` - 获取 GLSL/SPIR-V 的可编辑文本及编译路径
@@ -234,7 +244,8 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 
 ## 使用示例
 
-详细的工具调用示例请参见 [MCP 工具参考](docs/tools_zh.md)。
+详细的工具调用示例请参见 [MCP 工具参考](docs/tools_zh.md)。完整参数 schema 见
+[tool_schemas.json](docs/tool_schemas.json)·[迁移说明](docs/migration_v3.md)·[验收记录](docs/validation_v3.md)。
 
 ## TODO
 
@@ -245,9 +256,3 @@ Shader 替换影响所有引用同一资源的 draw，不写入 `.rdc`。支持�
 ## 许可证
 
 MIT
-
-## 3.0 导出与诊断
-
-默认完整导出逐事件常量和 shader 事件上下文；纹理按 256 KiB 阈值自动选择内联/文件，支持深度、模板和 ROI。回放失效明确报错；离线诊断不等待 UI，设备日志需显式开启。
-
-[Tools EN](docs/tools.md) · [工具中文](docs/tools_zh.md) · [3.0 migration](docs/migration_v3.md) · [Validation](docs/validation_v3.md)
