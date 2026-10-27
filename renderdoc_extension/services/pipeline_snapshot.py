@@ -238,8 +238,9 @@ class Snapshot:
 
     def _base(self, stage, category, location, label, binding_name=""):
         comparison_location = dict(location)
-        if "binding" in comparison_location:
-            # Reflection order may change between shaders at the same API binding.
+        if "binding" in comparison_location and category != "constant":
+            # Constant blocks can share an API binding (notably GL default uniforms).
+            # Other resources retain comparisons independent of reflection order.
             comparison_location.pop("reflection_index", None)
         store = comparison_location.get("descriptor_store")
         if isinstance(store, dict):

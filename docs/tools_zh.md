@@ -456,7 +456,7 @@ Buffer 范围是实际有效字节范围，Vulkan dynamic offset 已包含，不
 任意 storage buffer 的字节读取继续使用已有 buffer 工具。
 
 `binding_id` 是工具返回的不透明标识，限定在当前捕获、action 和绑定内容中，重载同一捕获也会失效。
-`binding_key` 用于语义位置比较，不作为详情查询参数。
+`binding_key` 用于语义位置比较；常量块的 key 包含反射索引，以区分共享 API 绑定的块，不作为详情查询参数。
 用 `resource.resource_id` 继续调用 `inspect_resource`、`trace_resource_usage`、
 `get_resource_initialization`；全帧名称用于展示和搜索，不保证唯一。
 

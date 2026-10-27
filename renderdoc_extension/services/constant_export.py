@@ -43,15 +43,24 @@ def read_constants(snapshot, stage_filter=None):
             if size < 0 or size > MAX_BYTES:
                 raise ValueError('RESOURCE_LIMIT: constant binding exceeds 64 MiB')
             record.update(byte_offset=offset, byte_size=size, buffer_backed=row.get('buffer_backed', True))
-            if record['buffer_backed']:
-                raw = bytes(snapshot.controller.GetBufferData(descriptor.resource, offset, size)) if size else b''
-            elif snapshot.api == 'Vulkan' and hasattr(snapshot.native, 'pushconsts'):
-                raw = bytes(snapshot.native.pushconsts)[offset:offset+size]
-            else:
-                raise ValueError('CONSTANT_RAW_UNAVAILABLE: direct storage not verified for this API')
-            if len(raw) != size:
-                raise ValueError('RESOURCE_QUERY_FAILED: constant short read')
-            record['_raw'] = raw
+            name = row.get('binding_name', '') or getattr(declaration, 'name', '')
+            record['raw'] = {'status': 'unavailable', 'binding_name': name,
+                             'expected_bytes': size, 'actual_bytes': None}
+            try:
+                if record['buffer_backed']:
+                    raw = bytes(snapshot.controller.GetBufferData(descriptor.resource, offset, size)) if size else b''
+                elif snapshot.api == 'Vulkan' and hasattr(snapshot.native, 'pushconsts'):
+                    raw = bytes(snapshot.native.pushconsts)[offset:offset+size]
+                else:
+                    raise ValueError('CONSTANT_RAW_UNAVAILABLE: direct storage not verified for this API')
+                record['raw']['actual_bytes'] = len(raw)
+                if len(raw) != size:
+                    raise ValueError('RESOURCE_QUERY_FAILED: constant short read for %s (expected %d bytes, actual %d bytes)' %
+                                     (name, size, len(raw)))
+                record['_raw'] = raw
+                record['raw']['status'] = 'exported'
+            except Exception as exc:
+                record['raw']['reason'] = str(exc)
             if declaration is None or reflection is None:
                 raise ValueError('CONSTANT_DECODE_UNAVAILABLE: reflection unavailable')
             record['layout'] = reflected_layout(declaration.variables)
@@ -61,9 +70,9 @@ def read_constants(snapshot, stage_filter=None):
             record['values'] = [full_value(v) for v in values]
             if declaration.variables and not values:
                 raise ValueError('CONSTANT_DECODE_UNAVAILABLE: empty decoded constant tree')
-            record['status'] = 'exported'
+            record.update(status='exported', values_status='exported')
         except Exception as exc:
-            record.update(status='failed', error=str(exc))
+            record.update(status='failed', values_status='failed', error=str(exc))
     return records
 
 def write_constants(directory, records, provenance, label):
@@ -86,11 +95,11 @@ def write_constants(directory, records, provenance, label):
                 with open(temporary, 'wb') as handle:
                     handle.write(raw)
                 os.replace(temporary, path)
-            row['raw'] = {'path': path, 'sha256': digest, 'size_bytes': len(raw)}
+            row.setdefault('raw', {}).update(path=path, sha256=digest, size_bytes=len(raw))
         path = os.path.join(folder, '%s_%d.json' % (label, index))
         atomic_json(path, row)
         with open(path, 'rb') as handle:
             payload = handle.read()
-        result.append({k: row[k] for k in ('binding_key', 'stage', 'status', 'error', 'reason', 'raw') if k in row})
+        result.append({k: row[k] for k in ('binding_key', 'stage', 'status', 'values_status', 'error', 'reason', 'raw') if k in row})
         result[-1].update(details_path=path, sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload))
     return result

@@ -160,15 +160,17 @@ class BatchService:
                         entry["complete"] = not entry.get("ok") or (not export_textures and not export_constants)
                         return {"item": entry}
                     yield ("replay", "draw_%d_instance_%d" % (eid, instance), facts)
-                    if entry.get("ok") and export_constants:
+                    if not entry.get("ok"):
+                        continue
+                    if export_constants:
                         def constants(_, entry=entry, payload=constant_payload, eid=eid, instance=instance):
                             entry["constants"] = write_constants(directory, payload.pop("records", []), entry["provenance"], "e%d_i%d" % (eid, instance))
                             if any(r["status"] == "failed" for r in entry["constants"]):
                                 entry.update(ok=False, error="CONSTANT_EXPORT_FAILED: see constant details")
-                            entry["complete"] = not export_textures or not entry.get("ok")
+                            entry["complete"] = not export_textures
                             return {"item": entry}
                         yield ("worker", "constants_%d" % eid, constants)
-                    if not entry.get("ok") or not export_textures:
+                    if not export_textures:
                         continue
                     for row in entry["textures"]:
                         def texture(controller, row=row, eid=eid, entry=entry):

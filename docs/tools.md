@@ -480,7 +480,8 @@ remains the responsibility of existing buffer tools.
 
 `binding_id` is opaque and valid only for the current capture, action and binding
 contents. Reloading even the same capture invalidates IDs. `binding_key` identifies
-a semantic location for comparisons; it is not an inspector argument.
+a semantic location for comparisons; constant block keys include the reflection index
+to distinguish blocks sharing an API binding. It is not an inspector argument.
 Use `resource.resource_id` for `inspect_resource`, `trace_resource_usage`, and
 `get_resource_initialization`. Resource names are display/search values, not unique IDs.
 
