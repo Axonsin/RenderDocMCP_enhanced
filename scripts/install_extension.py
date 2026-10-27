@@ -36,6 +36,41 @@ def get_extension_dir():
     raise RuntimeError("Cannot determine RenderDoc extension directory")
 
 
+def sync_in_place(staging, dest, expected_hash):
+    """Replace the installed tree's files in place, one by one.
+
+    Used when the directory-level swap fails because a running RenderDoc
+    keeps handles inside the installed directory. Files removed here only
+    disappear from disk; the running instance keeps its imported modules
+    until it restarts.
+    """
+    failed = []
+    for directory, dirs, files in os.walk(dest):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        rel = Path(directory).relative_to(dest)
+        for name in files:
+            if not (staging / rel / name).exists():
+                try:
+                    (Path(directory) / name).unlink()
+                except OSError as exc:
+                    failed.append("%s: %s" % (rel / name, exc))
+    for directory, dirs, files in os.walk(staging):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        rel = Path(directory).relative_to(staging)
+        (dest / rel).mkdir(parents=True, exist_ok=True)
+        for name in files:
+            try:
+                shutil.copyfile(str(Path(directory) / name), str(dest / rel / name))
+            except OSError as exc:
+                failed.append("%s: %s" % (rel / name, exc))
+    if failed:
+        raise RuntimeError("In-place sync failed for %d file(s):\n  %s"
+                           % (len(failed), "\n  ".join(failed)))
+    if fingerprint(dest) != expected_hash:
+        raise RuntimeError("In-place sync left the installed directory different from source")
+    shutil.rmtree(str(staging), ignore_errors=True)
+
+
 def install():
     """Install the extension"""
     # Source directory
@@ -75,13 +110,19 @@ def install():
         raise RuntimeError("Staged extension differs from source")
     if dest.exists():
         backups.mkdir(parents=True, exist_ok=True)
-        os.replace(str(dest), str(backup))
-    try:
+        try:
+            os.replace(str(dest), str(backup))
+            os.replace(str(staging), str(dest))
+        except OSError:
+            # A running RenderDoc holds the installed directory open, so the
+            # swap fails with access denied. The staged package was already
+            # verified against the source, so sync it into place file by file.
+            if backup.exists() and not dest.exists():
+                os.replace(str(backup), str(dest))
+            sync_in_place(staging, dest, build_hash)
+            print("Directory swap was blocked (is RenderDoc running?); synced files in place.")
+    else:
         os.replace(str(staging), str(dest))
-    except Exception:
-        if backup.exists() and not dest.exists():
-            os.replace(str(backup), str(dest))
-        raise
     if backup.exists():
         print("Rollback package: %s" % backup)
     print("Extension installed to %s" % dest)
