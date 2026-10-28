@@ -421,6 +421,46 @@ def test_capture_preflight_upload_and_remote_file_location(capture_environment, 
         assert 'context_connect' in calls
 
 
+@pytest.mark.parametrize("driver_name", ["OpenGL", "OpenGLES", "OpenGL ES 3.2"])
+def test_gles_driver_name_matches_opengl_replay_api(capture_environment, monkeypatch, driver_name):
+    service, jobs, host, calls, directory, current = capture_environment
+    path = directory/'frame.rdc'
+    path.write_bytes(b"capture")
+    rd = service.__class__.__init__.__globals__['rd']
+    outcome = NS(OK=lambda: True, Message=lambda: "Success")
+    monkeypatch.setattr(rd, "OpenCaptureFile", lambda: NS(OpenFile=lambda *args: outcome,
+                        DriverName=lambda: driver_name, Shutdown=lambda: None))
+    service._invoke = lambda callback: callback(NS(
+        GetAPIProperties=lambda: NS(pipelineType="GraphicsAPI.OpenGL", remoteReplay=False),
+        GetFatalErrorStatus=lambda: outcome))
+    key = service.open_capture(str(path), "local", "local")["job_id"]
+    jobs.pump()
+    jobs.pump()
+    status = jobs.status(key)
+    assert status["status"] == "completed", status["error"]
+    assert status["result"]["api"] == "GraphicsAPI.OpenGL"
+    assert status["result"]["capture_api"] == driver_name
+
+
+def test_replay_api_mismatch_still_fails(capture_environment, monkeypatch):
+    service, jobs, host, calls, directory, current = capture_environment
+    path = directory/'frame.rdc'
+    path.write_bytes(b"capture")
+    rd = service.__class__.__init__.__globals__['rd']
+    outcome = NS(OK=lambda: True, Message=lambda: "Success")
+    monkeypatch.setattr(rd, "OpenCaptureFile", lambda: NS(OpenFile=lambda *args: outcome,
+                        DriverName=lambda: "Vulkan", Shutdown=lambda: None))
+    service._invoke = lambda callback: callback(NS(
+        GetAPIProperties=lambda: NS(pipelineType="GraphicsAPI.OpenGL", remoteReplay=False),
+        GetFatalErrorStatus=lambda: outcome))
+    key = service.open_capture(str(path), "local", "local")["job_id"]
+    jobs.pump()
+    jobs.pump()
+    status = jobs.status(key)
+    assert status["status"] == "failed"
+    assert "replay API GraphicsAPI.OpenGL does not match capture metadata Vulkan" in status["error"]
+
+
 @pytest.mark.parametrize("failure", ["version", "start", "connect", "file"])
 def test_remote_preflight_failure_keeps_existing_capture(capture_environment, monkeypatch, failure):
     service, jobs, host, calls, directory, current = capture_environment

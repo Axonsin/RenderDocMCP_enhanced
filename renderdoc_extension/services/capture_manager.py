@@ -9,6 +9,19 @@ import tempfile
 import re
 
 
+def capture_api_family(name):
+    """Normalize a driver name or GraphicsAPI name to a comparable family.
+
+    The capture header records "OpenGLES" for ES captures, while the replay
+    controller reports both desktop GL and GLES as GraphicsAPI.OpenGL.
+    """
+    normalized = str(name or "").strip()
+    if normalized.startswith("GraphicsAPI."):
+        normalized = normalized[len("GraphicsAPI."):]
+    normalized = normalized.replace(" ", "").lower()
+    return "opengl" if normalized.startswith("opengl") else normalized
+
+
 class CaptureManager:
     """Capture management service"""
 
@@ -437,8 +450,10 @@ class CaptureManager:
                 if health.get("replay_healthy") is False or (
                         health.get("remote_replay") is not None and health["remote_replay"] != bool(hostname)):
                     raise RuntimeError("CAPTURE_VALIDATION_FAILED: %s" % health)
-                if facts and health.get("api") and health["api"].split(".")[-1] != facts["capture_api"]:
-                    raise RuntimeError("CAPTURE_VALIDATION_FAILED: replay API differs from capture metadata")
+                if facts and health.get("api") and (
+                        capture_api_family(health["api"]) != capture_api_family(facts.get("capture_api"))):
+                    raise RuntimeError("CAPTURE_VALIDATION_FAILED: replay API %s does not match capture metadata %s"
+                                       % (health["api"], facts.get("capture_api")))
                 actual_host = replay.CurrentRemote().Hostname()
                 if actual_host != hostname:
                     raise RuntimeError("CAPTURE_VALIDATION_FAILED: wrong replay host")
