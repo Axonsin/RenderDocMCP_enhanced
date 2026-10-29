@@ -103,8 +103,8 @@ shader；请求/IPC 日志各轮转三份、每份 10 MiB，本机/设备日志�
 
 ## 6. 作业、来源与数值验证
 
-- 要求 MCP 与扩展均为 3.0.0、RenderDoc >=1.46、API contract=3；核对构建指纹。
-- open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history
+- 要求 MCP 与扩展均为 3.1.0、RenderDoc >=1.46、API contract=3；核对构建指纹。
+- open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history/run_script
   返回 job_id。通过 get_job_status 查询；paused 可补充纹理额度，cancel/resume 为协作操作。
   原生调用不能强行取消。stalled 或提交超时不证明失败，保留原 job_id 查询，勿盲目重试。
   RESULT_PENDING 代表提交后结果未知，不可自动重提；IPC 临时文件访问冲突只重读同一
@@ -115,6 +115,11 @@ shader；请求/IPC 日志各轮转三份、每份 10 MiB，本机/设备日志�
 - 缓存和产物绑定 capture_session、replay_revision、事件与子资源；跨加载或替换失效。
   所有服务共享 capture_session/replay_revision；shader 编辑器自身代次是独立的
   edit_session；重开捕获后 binding_id 与旧作业一并失效。
+- run_script 需要服务器环境变量 RENDERDOC_MCP_ALLOW_SCRIPTS=1；脚本为 Python 3.6 语法，
+  在 replay 线程单步执行，注入 pyrenderdoc/controller、renderdoc/rd 与 mcp 助手
+  （progress/log/cancelled/check_cancel/artifact/set_result/keep_event）。取消只在脚本调用
+  mcp.check_cancel() 处生效；作业不可 resume（JOB_NOT_RESUMABLE），重跑换新 job_id；
+  脚本全文落 jobs/<job_id>/script.py，异常落 traceback.txt。
 - dump_draws 默认 `export_constants=True`，export_shader_bundle 默认
   `include_event_context=True` 且 `export_constants=True`：逐事件保存原始常量、完整
   布局与解码值，并关联事件绑定、采样器与签名；只要 shader 证据时可显式关闭。常量按

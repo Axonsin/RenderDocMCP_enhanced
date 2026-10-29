@@ -94,43 +94,43 @@
     "targets": [
       {
         "path": ".agents/skills/rdoc-analyze-pipeline/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".agents/skills/rdoc-diagnose-performance/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-blender/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".agents/skills/rdoc-reconstruct-unity/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".agents/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".claude/skills/rdoc-analyze-pipeline/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".claude/skills/rdoc-diagnose-performance/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-blender/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".claude/skills/rdoc-reconstruct-unity/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       },
       {
         "path": ".claude/skills/rdoc-troubleshoot-capture/references/tool-usage.md",
-        "sha256": "461809c0995bf4e501b7a353d639abf3001b5354cfa1a396c3ef942689936dbe"
+        "sha256": "38c2ba799f1cbf379006d374a98a0327769c885297e9b40f2b3105a930c4c199"
       }
     ]
   }

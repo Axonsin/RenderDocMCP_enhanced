@@ -100,7 +100,7 @@ class JobService:
         else:
             files[index] = path
 
-    def submit(self, kind, params, factory, job_id=None, capture_bound=True):
+    def submit(self, kind, params, factory, job_id=None, capture_bound=True, resumable=True):
         job_id = str(uuid.UUID(job_id)) if job_id else str(uuid.uuid4())
         signature = hashlib.sha256(json.dumps([kind, params], sort_keys=True).encode()).hexdigest()
         with self.lock:
@@ -112,7 +112,8 @@ class JobService:
                           status="queued", phase="queued", created_at=time.time(),
                           last_progress_at=time.time(), steps_completed=0, items=[],
                           cancel_requested=False, cancel_supported=True, texture_budget=48,
-                          capture_bound=capture_bound, session=list(self.session.token()),
+                          capture_bound=capture_bound, resumable=resumable,
+                          session=list(self.session.token()),
                           result=None, error=None, provenance=self.session.describe())
             self.records[job_id] = record
             self.runners[job_id] = iter(factory(job_id))
@@ -174,6 +175,11 @@ class JobService:
             record = self.records.get(job_id)
             if record is None:
                 raise ValueError("JOB_NOT_FOUND: %s" % job_id)
+            if not record.get("resumable", True):
+                # A consumed single-step job cannot continue; resuming would either
+                # replay side effects or report completion for work already stopped.
+                # This stays ahead of STALE_JOB: a new job_id is the fix either way.
+                raise ValueError("JOB_NOT_RESUMABLE: submit a new job_id to run it again")
             if (job_id not in self.runners or record["session"] != list(self.session.token())):
                 raise ValueError("STALE_JOB: cannot resume across capture/revision or extension restart")
             if record["status"] not in ("paused", "cancelled"):
@@ -231,7 +237,10 @@ class JobService:
                 record["status"] = "cancelled"
             if record["status"] in TERMINAL or record["status"] == "paused":
                 self._save(record)
-                if record["status"] in TERMINAL and record["status"] != "cancelled":
+                # Cancelled jobs keep their runner so resume can continue them, but a
+                # non-resumable job has no such future and would only leak the closure.
+                if record["status"] in TERMINAL and (record["status"] != "cancelled"
+                                                     or not record.get("resumable", True)):
                     self._retire(record)
                 self.active = None
                 return

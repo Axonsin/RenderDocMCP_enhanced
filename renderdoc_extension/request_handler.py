@@ -53,7 +53,8 @@ class RequestHandler:
             "dump_draws": self._handle_dump_draws,
             **{name: (lambda params, name=name: getattr(self.facade, name)(**params)) for name in (
                 "get_replay_context", "get_job_status", "cancel_job", "resume_job",
-                "export_shader_bundle", "compare_texture_events", "get_pixel_history")},
+                "export_shader_bundle", "compare_texture_events", "get_pixel_history",
+                "run_script")},
         }
 
     def handle(self, request):
@@ -157,6 +158,7 @@ class RequestHandler:
             "INVALID_FORMAT_TYPE",
             "INVALID_ALPHA_MODE",
             "INVALID_VIEW_INDEX",
+            "SCRIPT_SYNTAX_ERROR",
         }
         runtime_prefixes = {
             "CAPTURE_NOT_LOADED",
@@ -168,6 +170,10 @@ class RequestHandler:
             "TEXTURE_SAVE_FAILED",
             "REPLAY_RESTORE_FAILED",
             "UNSUPPORTED_CAPTURE_FEATURE",
+            "SCRIPT_ERROR",
+            "SCRIPT_RESULT_TOO_LARGE",
+            "SCRIPT_RESULT_NOT_SERIALIZABLE",
+            "SCRIPT_EXECUTION_DISABLED",
         }
 
         if prefix in invalid_prefixes:

@@ -4,7 +4,7 @@
 
 [English](tools.md)
 
-RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. 完整参数 schema 见
+RenderDoc MCP **3.1.0**, RenderDoc **1.46+**. 完整参数 schema 见
 [tool_schemas.json](tool_schemas.json)，[Migration / 迁移说明](migration_v3.md)。
 
 ## 术语与字段约定
@@ -1026,6 +1026,49 @@ Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=Tr
 job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
 get_job_status(job_id=job["job_id"])
 resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
+```
+
+#### `run_script`
+
+在 RenderDoc 扩展内执行调用方提供的脚本，返回 `job_id`，使用 `get_job_status` 查询。
+用于现有工具够不着的批处理与长程任务：扩展侧 runner 契约固定，迭代只改脚本。
+
+`code` 与 `script_path` 恰选一个；`script_path` 由 MCP 服务器读取后展开为 `code`，
+必须是服务器本机绝对路径。默认关闭：服务器进程需设置 `RENDERDOC_MCP_ALLOW_SCRIPTS=1`，
+否则报 `SCRIPT_EXECUTION_DISABLED`；信任级别等同 RenderDoc 自带 Python Shell。
+
+脚本在 replay 线程单步执行，注入 `pyrenderdoc`/`controller`（同一 ReplayController）、
+`renderdoc`/`rd` 与 `mcp` 助手命名空间；不注入 `ctx`，Qt/UI 专用能力不可用。
+注意 `pyrenderdoc` 这里是 ReplayController，不是 Python Shell 里的 CaptureContext：
+`CurEvent()`、`CurRootActions()` 等捕获级接口不可用，改用 `pyrenderdoc.GetRootActions()`
+等 ReplayController 接口。
+扩展解释器是 Python 3.6，提交前由 `ast.parse(feature_version=(3,6))` 拦截更高版本语法
+（报 `SCRIPT_SYNTAX_ERROR`）。
+
+`mcp` 助手：`progress(stage, current=None, total=None, note=None)` 更新作业阶段与进度
+（节流写盘）、`log(msg)` 追加 `script.log`、`cancelled()`/`check_cancel()` 协作取消、
+`artifact(name, data)`/`artifact_path(name)` 落盘带 SHA-256 的产物、`set_result(obj)`
+声明 JSON 结果（序列化后 ≤256 KiB，否则 `SCRIPT_RESULT_TOO_LARGE`/`SCRIPT_RESULT_NOT_SERIALIZABLE`；
+未调用时回落脚本内 `RESULT` 变量）、`keep_event()` 保留脚本改动的事件。
+
+Options: `label=None`, optional `job_id`。默认执行后恢复进入时的 UI 事件；stdout/stderr
+镜像到 `jobs/<job_id>/output.log` 并继续输出到 RenderDoc 控制台。取消是协作式的：只有
+脚本在循环边界调用 `mcp.check_cancel()` 才会停下，不检查取消的脚本无法强制中断
+（`status` 的 `stalled` 如实暴露 idle）。run_script 作业不可续跑：`resume_job` 返回
+`JOB_NOT_RESUMABLE`，重跑请换新的 `job_id`（同 `job_id` 且脚本相同视为幂等提交）。
+异常落 `jobs/<job_id>/traceback.txt` 并以
+`SCRIPT_ERROR` 失败；脚本全文快照到 `jobs/<job_id>/script.py`，作业记录只保留
+`code_sha256`、`label`、`line_count`、`code_bytes` 与 `script_path`。
+
+```python
+job = run_script(code="""
+for action in pyrenderdoc.GetRootActions():
+    mcp.check_cancel()
+    mcp.log('eid %d' % action.eventId)
+mcp.set_result({'events': len(pyrenderdoc.GetRootActions())})
+""", label="event-sweep")
+get_job_status(job_id=job["job_id"])
+cancel_job(job_id=job["job_id"])   # cooperative: honoured at mcp.check_cancel()
 ```
 
 ## Job control and investigation / 作业控制与调查

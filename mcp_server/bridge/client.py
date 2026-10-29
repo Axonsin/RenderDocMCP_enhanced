@@ -22,7 +22,8 @@ CALL_LOCK_FILE = os.path.join(IPC_DIR, "call.lock")
 
 EDIT_METHODS = {"get_shader_edit_context", "replace_shader", "revert_shader",
                 "list_shader_replacements", "export_shader_source"}
-JOB_METHODS = {"open_capture", "dump_draws", "export_shader_bundle", "compare_texture_events", "get_pixel_history"}
+JOB_METHODS = {"open_capture", "dump_draws", "export_shader_bundle", "compare_texture_events",
+               "get_pixel_history", "run_script"}
 
 
 class RenderDocBridgeError(Exception):
@@ -132,7 +133,7 @@ class RenderDocBridge:
             "method": method,
             "params": params or {},
             "ipc_version": 2,
-            "server_version": "3.0.0",
+            "server_version": "3.1.0",
             "api_contract_version": 3,
         }
         timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout

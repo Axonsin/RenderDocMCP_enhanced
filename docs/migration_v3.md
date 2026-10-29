@@ -1,6 +1,6 @@
 # Migrating to RenderDoc MCP 3.0
 
-Server/extension version **3.0.0**, API contract **3**, file IPC **2**. Minimum
+Server/extension version **3.1.0**, API contract **3**, file IPC **2**. Minimum
 RenderDoc remains **1.46**; extension code remains Python 3.6 standard-library only.
 This release intentionally changes defaults and response transport. Keep the
 [2.0 migration](migration_v2.md) and [2.0 validation](validation_v2.md) as history.
@@ -12,7 +12,7 @@ This release intentionally changes defaults and response transport. Keep the
 2. Update the Python package and run `python scripts/install_extension.py`. The
    installer retains a rollback copy. Reload the extension or restart RenderDoc,
    then restart the client's MCP connection so the tool schemas refresh.
-3. Check `get_capture_status`: both versions must be 3.0.0, contract 3, IPC 2, and
+3. Check `get_capture_status`: both versions must be 3.1.0, contract 3, IPC 2, and
    the extension build hash must match the deployed source. A mismatch is an
    explicit API_VERSION_MISMATCH error, not a partial compatibility mode.
 4. Reopen the capture with its original replay target, verify health, and issue a
@@ -36,6 +36,11 @@ This release intentionally changes defaults and response transport. Keep the
   an explicit MSAA sample. Color storage/linear domains retain their meaning.
 - `capture_session` is shared across capture, pipeline and shader services.
   Shader editor generation is separately named `edit_session`.
+- `run_script` is new in 3.1.0 and disabled by default. Set the server environment
+  variable `RENDERDOC_MCP_ALLOW_SCRIPTS=1` to enable it; scripts are Python 3.6 syntax
+  and run on the replay thread as a job. Cancellation is cooperative and only takes
+  effect where the script calls `mcp.check_cancel()`. Scripts and diagnostics stay
+  under `jobs/<job_id>/`; the job record never stores the script body.
 
 ## Failure and diagnostics
 

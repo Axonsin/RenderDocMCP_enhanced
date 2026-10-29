@@ -71,7 +71,8 @@ def modules():
         services = packages["renderdoc_extension.services"]
         for name in ("CaptureManager", "ActionService", "SearchService", "ResourceService",
                      "PipelineService", "ShaderEditService", "MeshService", "AnalysisService",
-                     "BatchService", "SessionState", "JobService", "InvestigationService"):
+                     "BatchService", "SessionState", "JobService", "InvestigationService",
+                     "ScriptService"):
             setattr(services, name, object)
         facade = load("renderdoc_extension.renderdoc_facade",
                       "renderdoc_extension/renderdoc_facade.py")
@@ -493,11 +494,14 @@ class ResourceTests(unittest.TestCase):
         from mcp_server import server
 
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-        self.assertEqual(len(tools), 45)
+        self.assertEqual(len(tools), 46)
         batch_schema = tools["dump_draws"].parameters
         self.assertEqual(batch_schema["required"], ["output_dir"])
         self.assertIn("marker_filter", batch_schema["properties"])
         self.assertIn("job_id", batch_schema["properties"])
+        self.assertIn("job_id", tools["run_script"].parameters["properties"])
+        self.assertEqual(set(tools["run_script"].parameters["properties"]),
+                         {"code", "script_path", "label", "job_id"})
         for old in ("get_draw_call_details", "get_draw_calls", "search_draws",
                     "inspect_event", "diff_events", "trace_event_dependencies"):
             self.assertNotIn(old, tools)

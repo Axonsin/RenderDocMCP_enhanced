@@ -17,7 +17,7 @@ async def check():
     version = re.search(r'^version = "([^"]+)"',
                         (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
     manifest = json.loads((ROOT / "renderdoc_extension/extension.json").read_text(encoding="utf-8"))
-    assert version == manifest["version"] == "3.0.0"
+    assert version == manifest["version"] == "3.1.0"
     assert manifest["minimum_renderdoc"] == "1.46"
     extension_files = list((ROOT / "renderdoc_extension").rglob("*.py"))
     for path in extension_files:
@@ -43,7 +43,8 @@ async def check():
         text = (ROOT / document).read_text(encoding="utf-8")
         missing = [tool.name for tool in tools if "`" + tool.name + "`" not in text]
         assert not missing, (document, missing)
-    for name in ("open_capture", "dump_draws", "export_shader_bundle", "compare_texture_events", "get_pixel_history"):
+    for name in ("open_capture", "dump_draws", "export_shader_bundle", "compare_texture_events",
+                 "get_pixel_history", "run_script"):
         schema = next(t.parameters for t in tools if t.name == name)
         assert "job_id" in schema["properties"]
     subprocess.run([sys.executable, str(ROOT / "skill-support/sync_references.py"), "--check"],

@@ -25,8 +25,10 @@ __all__ = [
     "SessionState",
     "JobService",
     "InvestigationService",
+    "ScriptService",
 ]
 
 from .session_state import SessionState
 from .job_service import JobService
 from .investigation_service import InvestigationService
+from .script_service import ScriptService

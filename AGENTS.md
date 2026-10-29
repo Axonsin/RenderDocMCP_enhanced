@@ -1,6 +1,6 @@
 # RenderDoc MCP Server
 
-版本 3.0.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 3。完整参数及默认值见
+版本 3.1.0，最低 RenderDoc 1.46。服务器/扩展 API 契约均为 3。完整参数及默认值见
 [tool_schemas.json](docs/tool_schemas.json)，迁移步骤见 [migration_v3.md](docs/migration_v3.md)。
 
 作为 RenderDoc UI 扩展运行的 MCP 服务器。帮助 AI 助手访问 RenderDoc 的捕获数据，辅助 DirectX 11/12 图形调试。
@@ -99,6 +99,7 @@ hull/HS、domain/DS 等别名；网格 VSIn/VSOut/GSOut 表示不同的数据位
 | `export_shader_bundle` | 异步导出原始 Shader、反射、反汇编、已捕获源码及哈希；默认关联事件绑定、采样器、签名与常量（include_event_context/export_constants） |
 | `compare_texture_events` | 异步比较两个 action 后同一纹理 ROI 的数值 |
 | `get_pixel_history` | 异步原生像素历史；按设备能力与原生有效性返回 |
+| `run_script` | 在扩展内执行调用方提供的 Python 脚本（作业制，可传 `code` 或 `script_path`）；脚本经 `pyrenderdoc`/`controller`、`renderdoc`、`mcp` 助手命名空间访问回放；需 `RENDERDOC_MCP_ALLOW_SCRIPTS=1` |
 
 ### get_actions 过滤选项
 
@@ -351,6 +352,36 @@ export_mesh_csv(
 - IDX: 原始顶点索引
 - 属性命名格式：`in_{语义名}{语义索引}.{分量}`
 - 索引 sidecar 文件（.idx）：每行一个重映射后的顶点索引
+
+### 脚本执行工具
+
+`run_script` 把调用方写好的脚本交给扩展执行，用于工具尚未覆盖的批处理与长程任务；
+扩展侧的 runner 契约固定，迭代只改脚本、不需要热更新扩展。
+
+- 参数：`code` 与 `script_path` 恰选一个（`script_path` 由 MCP 服务器读取后展开为
+  `code`，必须是服务器本机绝对路径），另有可选 `label` 与 `job_id`。是作业方法：
+  返回 `job_id`，用 `get_job_status` 查询，执行期间其它回放查询仍返回 `REPLAY_BUSY`。
+  作业不可续跑（单步脚本）：`resume_job` 报 `JOB_NOT_RESUMABLE`，重跑换新 `job_id`。
+- 默认关闭：服务器进程需设置 `RENDERDOC_MCP_ALLOW_SCRIPTS=1`，否则报
+  `SCRIPT_EXECUTION_DISABLED`。信任边界等同 RenderDoc 自带 Python Shell。
+- 脚本在 replay 线程单步执行（一次 `AsyncInvoke`），注入 `pyrenderdoc` 与 `controller`
+  （同一 ReplayController）、`renderdoc`/`rd` 模块、`mcp` 助手命名空间；不注入 `ctx`
+  （Qt/UI 专用能力不可用）。`pyrenderdoc` 是 ReplayController 而非 Python Shell 的
+  CaptureContext，捕获级接口（`CurEvent`、`CurRootActions`）不存在，用
+  `GetRootActions()` 等 ReplayController 接口。
+- `mcp` 助手（冻结契约）：`progress(stage, current, total, note)` 写作业阶段与进度、
+  `log(msg)` 追加 `script.log`、`cancelled()`/`check_cancel()` 协作取消、`artifact(name, data)`
+  与 `artifact_path(name)` 落盘带 SHA-256 的产物、`set_result(obj)` 声明 JSON 结果
+  （≤256 KiB，未调用时回落脚本内 `RESULT` 变量）、`keep_event()` 保留脚本改动的事件。
+- 事件策略：默认在执行前后恢复进入时的 UI 事件；脚本移动事件后需要保留时调用
+  `mcp.keep_event()`。stdout/stderr 镜像到 `jobs/<job_id>/output.log` 并继续输出到
+  RenderDoc 控制台。
+- 取消是协作式的：只有脚本在循环边界调用 `mcp.check_cancel()` 才会停下；不检查取消
+  的脚本无法被强制中断（`status` 的 `stalled` 如实暴露 idle）。脚本异常落
+  `jobs/<job_id>/traceback.txt`，作业以 `SCRIPT_ERROR` 失败；语法错误在提交前被
+  `ast.parse(feature_version=(3,6))` 拦下（扩展解释器是 Python 3.6）。
+- 证据：脚本全文快照到 `jobs/<job_id>/script.py`，作业记录只保留 `code_sha256`、
+  `label`、`line_count`、`code_bytes` 与 `script_path`。
 
 ## MCP 服务器启动
 

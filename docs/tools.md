@@ -4,7 +4,7 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
-RenderDoc MCP **3.0.0**, RenderDoc **1.46+**. Complete published parameter schemas:
+RenderDoc MCP **3.1.0**, RenderDoc **1.46+**. Complete published parameter schemas:
 [tool_schemas.json](tool_schemas.json). [Migration / 迁移说明](migration_v3.md).
 
 ## Naming Conventions
@@ -1076,6 +1076,57 @@ disk and never enter tool responses or job summaries.
 job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
 get_job_status(job_id=job["job_id"])
 resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
+```
+
+#### `run_script`
+
+Execute a caller-supplied script inside the RenderDoc extension. Returns a `job_id`;
+poll `get_job_status`. For batch and long-running work the fixed tool surface does not
+cover: the extension-side runner contract is frozen, so only the script text changes.
+
+Provide exactly one of `code` or `script_path`; `script_path` is read by the MCP server
+and expanded into `code`, and must be an absolute path on the server host. Disabled by
+default: the server process needs `RENDERDOC_MCP_ALLOW_SCRIPTS=1`, otherwise the call
+fails with `SCRIPT_EXECUTION_DISABLED`. Trust level equals RenderDoc's own Python shell.
+
+The script runs as one replay-thread step with `pyrenderdoc`/`controller` (the same
+ReplayController), `renderdoc`/`rd`, and an `mcp` helper namespace. No `ctx` is injected,
+so Qt/UI-only capabilities are unavailable. `pyrenderdoc` here is the ReplayController,
+not the CaptureContext of RenderDoc's Python shell: capture-level calls such as
+`CurEvent()`/`CurRootActions()` do not exist; use ReplayController calls such as
+`pyrenderdoc.GetRootActions()`. The extension interpreter is Python 3.6, so
+`ast.parse(feature_version=(3,6))` rejects newer syntax before submission
+(`SCRIPT_SYNTAX_ERROR`).
+
+`mcp` helpers: `progress(stage, current=None, total=None, note=None)` updates the job
+stage and progress (throttled writes), `log(msg)` appends `script.log`,
+`cancelled()`/`check_cancel()` drive cooperative cancellation,
+`artifact(name, data)`/`artifact_path(name)` write artifacts with SHA-256,
+`set_result(obj)` declares the JSON result (serialized ≤256 KiB, otherwise
+`SCRIPT_RESULT_TOO_LARGE`/`SCRIPT_RESULT_NOT_SERIALIZABLE`; falls back to a script-level
+`RESULT` variable when never called), and `keep_event()` preserves an event the script
+moved to.
+
+Options: `label=None`, optional `job_id`. The entering UI event is restored after the
+run unless `keep_event()` was used; stdout/stderr are mirrored to
+`jobs/<job_id>/output.log` and still reach RenderDoc's console. Cancellation is
+cooperative: it only takes effect where the script calls `mcp.check_cancel()`, and a
+script that never checks cannot be interrupted (`stalled` in `status` reports idle).
+run_script jobs are not resumable: `resume_job` returns `JOB_NOT_RESUMABLE`; submit a
+new `job_id` to run a script again (the same `job_id` with the same script is an
+idempotent submission). Failures write `jobs/<job_id>/traceback.txt` and fail the job with `SCRIPT_ERROR`. The
+full script is snapshotted to `jobs/<job_id>/script.py`; the job record keeps only
+`code_sha256`, `label`, `line_count`, `code_bytes` and `script_path`.
+
+```python
+job = run_script(code="""
+for action in pyrenderdoc.GetRootActions():
+    mcp.check_cancel()
+    mcp.log('eid %d' % action.eventId)
+mcp.set_result({'events': len(pyrenderdoc.GetRootActions())})
+""", label="event-sweep")
+get_job_status(job_id=job["job_id"])
+cancel_job(job_id=job["job_id"])   # cooperative: honoured at mcp.check_cancel()
 ```
 
 ## Job control and investigation / 作业控制与调查

@@ -45,6 +45,7 @@ _RELOAD_MODULES = [
     ".services.constant_export",
     ".services.batch_service",
     ".services.investigation_service",
+    ".services.script_service",
     ".services",
     ".renderdoc_facade",
     ".request_handler",

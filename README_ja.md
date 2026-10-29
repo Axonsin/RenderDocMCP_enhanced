@@ -1,6 +1,6 @@
 # RenderDoc MCP Server Enhanced
 
-Version **3.0.0** — [3.0 migration / 迁移说明](docs/migration_v3.md). Upgrade server and extension together.
+Version **3.1.0** — [3.0 migration / 迁移说明](docs/migration_v3.md). Upgrade server and extension together.
 
 [English](README.md) | [日本語](README_ja.md) | [中文](README_zh.md)
 

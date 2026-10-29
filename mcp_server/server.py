@@ -3,6 +3,8 @@ RenderDoc MCP Server
 FastMCP server providing access to RenderDoc capture data.
 """
 
+import ast
+import os
 from typing import Literal
 
 from fastmcp import FastMCP
@@ -12,11 +14,19 @@ from .bridge.client import RenderDocBridge, RenderDocBridgeError
 # Initialize FastMCP server
 mcp = FastMCP(
     name="RenderDoc MCP Server",
-    version="3.0.0",
+    version="3.1.0",
 )
 
 # RenderDoc bridge client
 bridge = RenderDocBridge()
+
+SCRIPT_EXECUTION_ENV = "RENDERDOC_MCP_ALLOW_SCRIPTS"
+MAX_SCRIPT_BYTES = 512 * 1024
+
+
+def _script_execution_enabled() -> bool:
+    """Script execution is opt-in: the runner is equivalent to RenderDoc's Python shell."""
+    return os.environ.get(SCRIPT_EXECUTION_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _optional_param(params: dict[str, object], name: str, value: object | None) -> None:
@@ -823,6 +833,54 @@ def dump_draws(output_dir: str, action_event_ids: list[int] | None = None,
         instances=instances, view_index=view_index, export_meshes=export_meshes, export_textures=export_textures,
         max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, job_id=job_id,
         export_constants=export_constants))
+
+
+@mcp.tool()
+def run_script(code: str | None = None, script_path: str | None = None,
+               label: str | None = None, job_id: str | None = None) -> dict:
+    """Execute a Python script inside the RenderDoc extension as a cooperative job.
+
+    Provide exactly one of code or script_path (a server-local absolute path read
+    before submission). The script runs on the replay thread with `pyrenderdoc` and
+    `controller` bound to the ReplayController, `renderdoc`/`rd` modules, and an `mcp`
+    helper namespace: progress, log, cancelled, check_cancel, artifact,
+    artifact_path, set_result, keep_event. Scripts must parse as Python 3.6 syntax.
+    Poll with get_job_status; cancel_job is cooperative and only takes effect where
+    the script calls mcp.check_cancel(). Disabled unless the server process has
+    RENDERDOC_MCP_ALLOW_SCRIPTS=1.
+    """
+    if not _script_execution_enabled():
+        raise RenderDocBridgeError("[-32000] SCRIPT_EXECUTION_DISABLED: set %s=1 in the "
+                                   "MCP server environment" % SCRIPT_EXECUTION_ENV)
+    if (code is None) == (script_path is None):
+        raise RenderDocBridgeError("[-32602] INVALID_REQUEST: provide exactly one of code or script_path")
+    if script_path is not None:
+        if not os.path.isabs(script_path):
+            raise RenderDocBridgeError("[-32602] INVALID_REQUEST: script_path must be absolute")
+        try:
+            # Bound the read: checking the size after a full text read would still
+            # allocate the whole file (and a UTF-8 copy) for an oversized input.
+            with open(script_path, "rb") as handle:
+                raw = handle.read(MAX_SCRIPT_BYTES + 1)
+        except OSError as exc:
+            raise RenderDocBridgeError("[-32602] INVALID_REQUEST: cannot read %s: %s" % (script_path, exc))
+        if len(raw) > MAX_SCRIPT_BYTES:
+            raise RenderDocBridgeError("[-32602] INVALID_REQUEST: script exceeds %d KiB" % (MAX_SCRIPT_BYTES // 1024))
+        try:
+            code = raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise RenderDocBridgeError("[-32602] INVALID_REQUEST: script must be UTF-8 text: %s" % exc)
+    if not code.strip():
+        raise RenderDocBridgeError("[-32602] INVALID_REQUEST: script text is empty")
+    if len(code.encode("utf-8")) > MAX_SCRIPT_BYTES:
+        raise RenderDocBridgeError("[-32602] INVALID_REQUEST: script exceeds %d KiB" % (MAX_SCRIPT_BYTES // 1024))
+    try:
+        # The extension interpreter is Python 3.6; reject newer syntax before dispatch.
+        ast.parse(code, filename="<mcp_script>", feature_version=(3, 6))
+    except SyntaxError as exc:
+        raise RenderDocBridgeError("[-32602] SCRIPT_SYNTAX_ERROR: line %s: %s (extension requires "
+                                   "Python 3.6 syntax)" % (exc.lineno, exc.msg))
+    return bridge.call("run_script", dict(code=code, label=label, job_id=job_id))
 
 
 @mcp.tool()

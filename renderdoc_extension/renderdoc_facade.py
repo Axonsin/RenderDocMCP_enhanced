@@ -19,6 +19,7 @@ from .services import (
     SessionState,
     JobService,
     InvestigationService,
+    ScriptService,
 )
 
 
@@ -66,6 +67,7 @@ class RenderDocFacade:
         self._mesh = MeshService(ctx, self._invoke)
         self._batch = BatchService(ctx, self._invoke, self._mesh, self._session, self._jobs)
         self._investigation = InvestigationService(ctx, self._session, self._jobs)
+        self._script = ScriptService(ctx, self._session, self._jobs)
         self._analysis = AnalysisService(
             ctx,
             self._invoke,
@@ -140,6 +142,9 @@ class RenderDocFacade:
                           mip=0, slice_index=0, sample=0, job_id=None):
         return self._investigation.get_pixel_history(resource_id, x, y, action_event_id, output_dir,
                                                      mip, slice_index, sample, job_id)
+
+    def run_script(self, code, label=None, job_id=None):
+        return self._script.run_script(code, label, job_id)
 
     # ==================== Action Operations ====================
 

@@ -49,7 +49,7 @@ async def validate(args):
         tools = await client.list_tools()
         report['checks']['tool_count'] = len(tools)
         initial = await call('get_capture_status',key='initial_status')
-        assert initial['extension_version']=='3.0.0' and initial['api_contract_version']==3
+        assert initial['extension_version']=='3.1.0' and initial['api_contract_version']==3
         assert initial['ipc_version']==2
         opened = await job('open_capture',{'capture_path':args.capture,'replay_target':'remote','remote_host':args.host},'open')
         assert opened['result']['capture_sha256']==SHA, 'this scenario requires the exact Snqx frame3369 capture'
