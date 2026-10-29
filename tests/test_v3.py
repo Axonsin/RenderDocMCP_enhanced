@@ -74,6 +74,21 @@ def controller(api='Vulkan',fatal=False):
     return NS(GetFatalErrorStatus=lambda:NS(OK=lambda:not fatal,Message=lambda:'device lost'),
               GetAPIProperties=lambda:NS(pipelineType=api))
 
+@pytest.mark.parametrize('api',['D3D11','D3D12','Vulkan'])
+@pytest.mark.parametrize('empty_host',[False,True])
+def test_local_remotehost_sentinel_allows_replay(tmp_path,monkeypatch,api,empty_host):
+    g,ctx=make_guard(tmp_path,monkeypatch)
+    remote=NS(Hostname=lambda:'',IsConnected=lambda:False) if empty_host else None
+    ctx.Replay=lambda:NS(CurrentRemote=lambda:remote)
+    ctx.APIProps=lambda:NS(pipelineType=api)
+    try:
+        g.preflight()
+        g.check(controller(api))
+        assert g.state['remote_host'] is None
+        assert g.session.expected_api == api
+    finally:g.dispose()
+
+
 def test_remote_loss_and_api_mismatch_write_first_failure(tmp_path,monkeypatch):
     g,ctx=make_guard(tmp_path,monkeypatch)
     try:

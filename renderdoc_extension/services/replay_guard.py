@@ -104,8 +104,10 @@ class ReplayGuard:
             return
         self.state['event_id'] = self.ctx.CurEvent()
         remote = self.ctx.Replay().CurrentRemote()
-        self.state['remote_host'] = remote.Hostname() if remote else None
-        if remote and not remote.IsConnected():
+        # Local replay can return a truthy RemoteHost with an empty hostname.
+        hostname = remote.Hostname() if remote else ''
+        self.state['remote_host'] = hostname or None
+        if hostname and not remote.IsConnected():
             self.failure('REMOTE_CONNECTION_LOST: remote context is disconnected')
         props = self.ctx.APIProps()
         api = str(props.pipelineType).split('.')[-1]
