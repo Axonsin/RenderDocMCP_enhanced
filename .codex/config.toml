@@ -1,5 +1,5 @@
 [mcp_servers.renderdoc]
-command = "C:/Users/Danny/.local/bin/renderdoc-mcp.exe"
+command = "renderdoc-mcp"
 env = { PYTHONIOENCODING = "utf-8", FASTMCP_SHOW_SERVER_BANNER = "false" }
 enabled = true
 startup_timeout_sec = 30
