@@ -3,6 +3,51 @@
 
 import sys
 import time
+import threading
+
+
+def process_cpu(operation):
+    """Run detached bytes/metadata work without blocking replay or Qt timers.
+
+    Synchronous tools enter on the UI thread. Merely leaving BlockInvoke would
+    still starve the UI timer which queues RenderDoc's remote keepalives.
+    Never capture a controller or replay-owned SWIG object in operation.
+    """
+    result = {}
+    done = threading.Event()
+
+    def run():
+        try:
+            result['value'] = operation()
+        except Exception as exc:
+            result['error'] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=run, name='RenderDocMCP-data', daemon=True)
+    worker.start()
+    try:
+        from PySide2.QtCore import QCoreApplication, QEventLoop, QThread, QTimer
+    except ImportError:
+        # Headless/unit-test use has no Qt event loop to service.
+        done.wait()
+    else:
+        app = QCoreApplication.instance()
+        if app is not None and QThread.currentThread() == app.thread():
+            loop, timer = QEventLoop(), QTimer()
+            timer.timeout.connect(lambda: loop.quit() if done.is_set() else None)
+            timer.start(10)
+            try:
+                if not done.is_set():
+                    loop.exec_()
+            finally:
+                timer.stop()
+        else:
+            done.wait()
+    worker.join()
+    if 'error' in result:
+        raise result['error']
+    return result['value']
 
 def guard_for(ctx):
     module = sys.modules.get(__package__ + ".replay_guard")

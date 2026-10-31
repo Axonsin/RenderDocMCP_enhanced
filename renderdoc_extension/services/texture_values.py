@@ -1,6 +1,28 @@
 """Typed numeric texture decoding. No preview conversion or tone mapping."""
 import math
 import struct
+from collections import namedtuple
+
+
+class FormatSnapshot(namedtuple('FormatSnapshotBase',
+                               'name type compType compByteWidth compCount bgra')):
+    """Python values only; no ResourceFormat/SWIG access on CPU workers."""
+    __slots__ = ()
+
+    def Name(self):
+        return self.name
+
+    def BGRAOrder(self):
+        return self.bgra
+
+
+def snapshot_format(fmt):
+    def enum(value):
+        return str(getattr(value, 'name', str(value).split('.')[-1]))
+    return FormatSnapshot(str(fmt.Name()), enum(getattr(fmt, 'type', '')),
+                          enum(getattr(fmt, 'compType', '')),
+                          getattr(fmt, 'compByteWidth', None), getattr(fmt, 'compCount', None),
+                          bool(fmt.BGRAOrder()) if hasattr(fmt, 'BGRAOrder') else False)
 
 
 MAX_SUBRESOURCE_BYTES = 64 * 1024 * 1024

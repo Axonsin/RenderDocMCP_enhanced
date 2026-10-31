@@ -828,3 +828,20 @@ def test_successful_launch_without_ready_server_does_not_close_old_capture(captu
     jobs.pump()
     assert jobs.status(key)['error'].startswith('REMOTE_START_FAILED:')
     assert 'close_capture' not in calls and 'context_connect' not in calls
+
+
+def test_comparison_pixel_decode_is_a_worker_step(investigation, monkeypatch):
+    service, controller, calls, run, tmp = investigation
+    module = sys.modules.get(service.__class__.__module__)
+    namespace = service.compare_texture_events.__globals__
+    original = namespace['decoder']
+    def decoder(*args):
+        size, count, read = original(*args)
+        def pixel(*values):
+            assert controller.event == 99, 'pixel decode still runs inside at_event'
+            return read(*values)
+        return size, count, pixel
+    monkeypatch.setitem(namespace, 'decoder', decoder)
+    key = service.compare_texture_events('1',10,20,dict(x=0,y=0,width=2,height=1),str(tmp))['job_id']
+    status = run(key)
+    assert status['status'] == 'completed', status

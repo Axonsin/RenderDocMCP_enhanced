@@ -107,7 +107,8 @@ class BatchService:
                              "action_event_id": eid, "instance": instance, "view_index": view_index,
                              "complete": False}
                     constant_payload = {}
-                    def facts(controller, eid=eid, instance=instance, entry=entry, payload=constant_payload):
+                    mesh_payload = {}
+                    def facts(controller, eid=eid, instance=instance, entry=entry, payload=constant_payload, mesh_payload=mesh_payload):
                         try:
                             fatal = controller.GetFatalErrorStatus()
                         except Exception:
@@ -145,10 +146,8 @@ class BatchService:
                                 if export_constants:
                                     payload["records"] = read_constants(snapshot)
                                 if export_meshes:
-                                    local = MeshService(self.ctx, lambda fn: fn(c))
-                                    path = os.path.join(directory, "mesh_%d_i%d_v%d.csv" % (eid, instance, view_index))
-                                    entry["mesh"] = local.export_mesh_csv(eid, path, mesh_stage,
-                                                                         instance=instance, view_index=view_index)
+                                    mesh_payload['snapshot'] = self._mesh._capture_csv(
+                                        c, eid, mesh_stage, None, instance, view_index)
                                 issues = [section.get("reason") for st in entry["fixed_state"].values()
                                           for section in st.get("sections", {}).values() if section.get("available") is False]
                                 entry["warnings"] = issues
@@ -157,11 +156,24 @@ class BatchService:
                             at_event(self.ctx, lambda fn: fn(controller), eid, read)
                         except Exception as exc:
                             entry.update(ok=False, error=str(exc))
-                        entry["complete"] = not entry.get("ok") or (not export_textures and not export_constants)
+                        entry["complete"] = not entry.get("ok") or (not export_meshes and not export_textures and not export_constants)
                         return {"item": entry}
                     yield ("replay", "draw_%d_instance_%d" % (eid, instance), facts)
                     if not entry.get("ok"):
                         continue
+                    if export_meshes:
+                        def mesh(_, entry=entry, payload=mesh_payload, eid=eid, instance=instance):
+                            try:
+                                path = os.path.join(directory, "mesh_%d_i%d_v%d.csv" % (eid, instance, view_index))
+                                entry['mesh'] = self._mesh.write_mesh_csv(payload.pop('snapshot'), eid, path,
+                                                                         mesh_stage, instance, view_index)
+                                entry['complete'] = not export_textures and not export_constants
+                            except Exception as exc:
+                                entry.update(ok=False, error=str(exc), complete=True)
+                            return {'item': entry}
+                        yield ('worker', 'mesh_%d' % eid, mesh)
+                        if not entry.get('ok'):
+                            continue
                     if export_constants:
                         def constants(_, entry=entry, payload=constant_payload, eid=eid, instance=instance):
                             entry["constants"] = write_constants(directory, payload.pop("records", []), entry["provenance"], "e%d_i%d" % (eid, instance))
@@ -197,14 +209,7 @@ class BatchService:
                                     outcome = c.SaveTexture(config, path)
                                     if not outcome.OK():
                                         raise RuntimeError("TEXTURE_SAVE_FAILED: %s" % outcome.Message())
-                                    with open(path, "rb") as handle:
-                                        digest = hashlib.sha256(handle.read()).hexdigest()
-                                    if digest in contents:
-                                        os.remove(path)
-                                        path = contents[digest]
-                                    else:
-                                        contents[digest] = path
-                                    return dict(path=path, sha256=digest, source="capture_texture",
+                                    return dict(path=path, source="capture_texture",
                                                 format=td.format.Name(), export_format="PNG", mip=mip,
                                                 slice_index=layer, sample=0, event_phase="after",
                                                 source_color_space="srgb" if td.format.compType == rd.CompType.UNormSRGB else "linear",
@@ -219,6 +224,24 @@ class BatchService:
                             row["export"] = saved[cache_key]
                             return {"item": entry}
                         yield ("replay", "texture_%d" % eid, texture)
+                        def hash_texture(_, row=row, entry=entry):
+                            exported = row['export']
+                            if 'path' in exported and 'sha256' not in exported:
+                                path = exported['path']
+                                digest = hashlib.sha256()
+                                with open(path, 'rb') as handle:
+                                    for block in iter(lambda: handle.read(1024*1024), b''):
+                                        digest.update(block)
+                                value = digest.hexdigest()
+                                if value in contents:
+                                    os.remove(path)
+                                    exported['path'] = contents[value]
+                                else:
+                                    contents[value] = path
+                                exported['sha256'] = value
+                            return {'item': entry}
+                        yield ('worker', 'hash_texture_%d' % eid, hash_texture)
+
                     def complete(_, entry=entry):
                         entry["complete"] = True
                         return {"item": entry}

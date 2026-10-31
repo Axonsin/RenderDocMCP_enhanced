@@ -7,9 +7,9 @@ import base64
 
 import renderdoc as rd
 
-from .replay_query import at_event, guard_for
+from .replay_query import at_event, guard_for, process_cpu
 from .texture_export import select as select_texture, transport as transport_texture
-from .texture_values import MAX_SUBRESOURCE_BYTES, decoder
+from .texture_values import MAX_SUBRESOURCE_BYTES, decoder, snapshot_format
 
 from ..utils import Parsers
 from .resource_catalog import (
@@ -609,41 +609,14 @@ class ResourceService:
                 raise ValueError("RESOURCE_QUERY_FAILED: empty texture subresource readback")
             if len(data) > MAX_SUBRESOURCE_BYTES:
                 raise ValueError("RESOURCE_LIMIT: raw subresource exceeds 64 MiB")
-            # Extract depth slice for 3D textures if requested
-            output_depth = mip_depth
-            if is_3d and depth_slice is not None:
-                total_size = len(data)
-                bytes_per_slice = total_size // mip_depth
-                slice_start = depth_slice * bytes_per_slice
-                slice_end = slice_start + bytes_per_slice
-                data = data[slice_start:slice_end]
-                output_depth = 1
-
-            api = str(controller.GetAPIProperties().pipelineType).split(".")[-1]
-            data, layout, selected_width, selected_height = select_texture(data, tex_desc.format, mip_width, mip_height, output_depth, aspect, region, api in ("Vulkan", "D3D11", "D3D12"))
-            layout["api"] = api
-            # Data diagnostics: zero-length indicates an unreadable subresource;
-            # all-zero bytes can be legitimate (cleared resource) but is worth flagging.
-            warnings = []
-            all_zero = False
-            if len(data) == 0:
-                warnings.append(
-                    "Texture data returned 0 bytes; the subresource may be unreadable "
-                    "(replay or driver issue)."
-                )
-            else:
-                all_zero = not any(data)
-                if all_zero:
-                    warnings.append(
-                        "All data bytes are zero. This can be legitimate (cleared resource) "
-                        "or a symptom of a replay problem; verify against the texture viewer."
-                    )
-
+            # Only native reads and detached metadata belong on this thread.
+            result["format"] = snapshot_format(tex_desc.format)
+            result["api"] = str(controller.GetAPIProperties().pipelineType).split(".")[-1]
             result["data"] = {
                 "resource_id": Parsers.canonical_resource_id(tex_desc.resourceId),
                 "width": mip_width,
                 "height": mip_height,
-                "depth": output_depth,
+                "depth": mip_depth,
                 "mip": mip,
                 "slice_index": slice_index,
                 "sample": sample,
@@ -657,15 +630,10 @@ class ResourceService:
                     if tex_desc.format.compType == rd.CompType.UNormSRGB
                     else "linear"
                 ),
-                "data_length": len(data),
                 "source_data_length": source_data_length,
                 "source_dimensions": [mip_width, mip_height, mip_depth],
-                "all_zero": all_zero,
                 "_raw": data,
             }
-            result["data"].update(layout, width=selected_width, height=selected_height)
-            if warnings:
-                result["data"]["warnings"] = warnings
 
         def scoped(controller, event):
             callback(controller)
@@ -684,6 +652,25 @@ class ResourceService:
         session = guard.session.capture_session if guard else "unknown"
         if guard:
             metadata["provenance"] = guard.session.describe()
-            guard.phase("texture_transport", readback_bytes=metadata["source_data_length"], output_bytes=len(metadata["_raw"]))
-        raw = metadata.pop("_raw")
-        return transport_texture(raw, metadata, output_mode, output_dir, session)
+            guard.phase("texture_processing", readback_bytes=metadata["source_data_length"])
+
+        def convert():
+            data = metadata.pop("_raw")
+            width, height, depth = metadata["source_dimensions"]
+            if metadata["is_3d"] and depth_slice is not None:
+                bytes_per_slice = len(data) // depth
+                data = data[depth_slice * bytes_per_slice:(depth_slice + 1) * bytes_per_slice]
+                depth = 1
+            api = result["api"]
+            data, layout, selected_width, selected_height = select_texture(
+                data, result["format"], width, height, depth, aspect, region,
+                api in ("Vulkan", "D3D11", "D3D12"))
+            metadata.update(layout, api=api, width=selected_width, height=selected_height,
+                            depth=depth, all_zero=not any(data))
+            if metadata["all_zero"]:
+                metadata["warnings"] = [
+                    "All data bytes are zero. This can be legitimate (cleared resource) "
+                    "or a symptom of a replay problem; verify against the texture viewer."]
+            return transport_texture(data, metadata, output_mode, output_dir, session)
+
+        return process_cpu(convert)

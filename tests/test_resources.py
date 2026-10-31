@@ -650,11 +650,12 @@ class ResourceTests(unittest.TestCase):
         self.ctx.GetAction = lambda _: action
         self.controller.SetFrameEvent = lambda *args: None
         fmt = NS(Name=lambda: "R32G32B32_FLOAT", compCount=3, compByteWidth=4,
-                 compType="Float", Special=lambda: False)
+                 compType="Float", Special=lambda: False, BGRAOrder=lambda: False)
         attribute = NS(name="POSITION", format=fmt, topology="TriangleList",
-                       vertexResourceId=ResourceId(86983), vertexByteOffset=0, vertexByteStride=12)
+                       vertexResourceId=ResourceId(86983), vertexByteOffset=0, vertexByteStride=12,
+                       indexResourceId=ResourceId(1))
         mesh._get_mesh_inputs = lambda *_: [attribute]
-        mesh._get_indices = lambda *_: [0, 1, 2]
+        mesh._capture_indices = lambda *_: dict(raw=None, count=3)
         mesh._batch_get_buffer_data = lambda *_: {attribute.vertexResourceId: struct.pack(
             "<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)}
         mesh._unpack_vertex_data = lambda fmt, data, offset: struct.unpack_from("<3f", data, offset)

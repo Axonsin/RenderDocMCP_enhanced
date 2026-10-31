@@ -23,7 +23,7 @@ from typing import Any, Optional, List
 
 import renderdoc as rd
 
-from .replay_query import at_event, action_for
+from .replay_query import at_event, action_for, process_cpu
 
 _MESH_STAGES = ("VSIn", "VSOut", "GSOut")
 _NO_REGISTER = 0xFFFFFFFF  # rd.SigParameter.NoIndex
@@ -163,7 +163,7 @@ class MeshService:
 
         return value
 
-    def _get_indices(self, controller, mesh) -> list:
+    def _capture_indices(self, controller, mesh):
         """
         Extract index data from mesh.
 
@@ -186,8 +186,6 @@ class MeshService:
             if len(ib_data) < size:
                 raise ValueError("MESH_DATA_SHORT_READ: index buffer has %d bytes, expected %d" %
                                  (len(ib_data), size))
-            indices = struct.unpack_from("<%d%s" % (
-                mesh.numIndices, {1: "B", 2: "H", 4: "I"}[mesh.indexByteStride]), ib_data)
             restart = None
             try:
                 pipe = controller.GetPipelineState()
@@ -195,16 +193,24 @@ class MeshService:
                     restart = pipe.GetRestartIndex() & ((1 << (8 * mesh.indexByteStride)) - 1)
             except AttributeError:
                 pass
-            result = [-1 if i == restart else i + mesh.baseVertex for i in indices]
-            if any(i < 0 and i != -1 for i in result):
-                raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative effective vertex index")
-            # -1 is reserved exclusively for primitive restart.
-            if any(i + mesh.baseVertex == -1 and i != restart for i in indices):
-                raise ValueError("MESH_DATA_OUT_OF_BOUNDS: negative effective vertex index")
-            return result
-        else:
-            # Non-indexed draw
-            return list(range(mesh.numIndices))
+            return dict(raw=bytes(ib_data), count=int(mesh.numIndices), stride=int(mesh.indexByteStride),
+                        base=int(mesh.baseVertex), restart=restart)
+        return dict(raw=None, count=int(mesh.numIndices))
+
+    @staticmethod
+    def _decode_indices(snapshot):
+        if snapshot['raw'] is None:
+            return list(range(snapshot['count']))
+        indices = struct.unpack_from('<%d%s' % (snapshot['count'],
+            {1: 'B', 2: 'H', 4: 'I'}[snapshot['stride']]), snapshot['raw'])
+        restart, base = snapshot['restart'], snapshot['base']
+        result = [-1 if i == restart else i + base for i in indices]
+        if any(i + base < 0 for i in indices if i != restart):
+            raise ValueError('MESH_DATA_OUT_OF_BOUNDS: negative effective vertex index')
+        return result
+
+    def _get_indices(self, controller, mesh):
+        return self._decode_indices(self._capture_indices(controller, mesh))
 
     def _get_mesh_inputs(self, controller, draw, instance=0) -> list:
         """
@@ -640,7 +646,7 @@ class MeshService:
     def _exportable(mesh):
         return not mesh.format.Special() and 1 <= mesh.format.compCount <= 4
 
-    def _attribute_bounding_boxes(self, controller, mesh_inputs, indices):
+    def _attribute_bounding_boxes(self, controller, mesh_inputs, indices, buffer_cache=None):
         """Bounding boxes for 3-component float attributes plus a position guess.
 
         Reflection names are stripped on many mobile captures (attributes arrive
@@ -655,7 +661,8 @@ class MeshService:
                     and mesh.format.compCount >= 3
                     and mesh.format.compType == rd.CompType.Float
                     and not getattr(mesh, "instanced", False)]
-        buffer_cache = self._batch_get_buffer_data(controller, eligible) if sample else {}
+        if buffer_cache is None:
+            buffer_cache = self._batch_get_buffer_data(controller, eligible) if sample else {}
         boxes = OrderedDict()
         normal_like = {}
         for mesh in eligible:
@@ -765,36 +772,50 @@ class MeshService:
                     topology = self._enum_name(mesh_inputs[0].topology)
                     topology_source = "mesh"
 
+            # Detach before index remapping, set construction and bounds loops.
             indexed = bool(action.flags & rd.ActionFlags.Indexed)
             indices_available = True
-            if indexed:
-                try:
-                    if not mesh_inputs or mesh_inputs[0].indexResourceId == rd.ResourceId.Null():
-                        raise ValueError("index buffer unavailable")
-                    indices = self._get_indices(controller, mesh_inputs[0])
-                except Exception:
-                    indices = []
-                    indices_available = False
-                unique_vertex_count = len(set(indices) - {-1}) if indices_available else None
-            else:
-                indices = list(range(action.numIndices))
-                unique_vertex_count = action.numIndices
+            try:
+                if indexed and (not mesh_inputs or mesh_inputs[0].indexResourceId == rd.ResourceId.Null()):
+                    raise ValueError('index buffer unavailable')
+                index_snapshot = self._capture_indices(controller, mesh_inputs[0]) if indexed else dict(raw=None, count=int(action.numIndices))
+            except Exception:
+                index_snapshot = dict(raw=None, count=0)
+                indices_available = False
+            eligible = [m for m in mesh_inputs if not m.format.Special()
+                        and m.format.compCount >= 3 and m.format.compType == rd.CompType.Float
+                        and not getattr(m, 'instanced', False)]
+            buffers = self._batch_get_buffer_data(controller, eligible) if indices_available else {}
+            detached = self._detach_mesh(mesh_inputs, index_snapshot, buffers)
+            return (detached, attributes, topology, topology_source, indexed, indices_available,
+                    int(action.numIndices), self._resolve_mesh_name(controller, mesh_inputs, action))
+
+        captured = at_event(self.ctx, self._invoke, action_event_id, operation)
+
+        def summarize():
+            detached, attributes, topology, topology_source, indexed, indices_available, count, name = captured
+            mesh_inputs, index_snapshot, buffers = detached
+            try:
+                indices = self._decode_indices(index_snapshot)
+            except Exception:
+                indices, indices_available = [], False
+            unique_vertex_count = len(set(indices) - {-1}) if indices_available else None
 
             boxes, bbox_name, bbox_source = self._attribute_bounding_boxes(
-                controller, mesh_inputs, indices
+                None, mesh_inputs, indices, buffers
             )
 
             return {
                 "action_event_id": action_event_id,
                 "instance": instance,
                 "view_index": view_index,
-                "name": self._resolve_mesh_name(controller, mesh_inputs, action),
+                "name": name,
                 "topology": topology,
                 "topology_source": topology_source,
-                "num_vertices": action.numIndices,
+                "num_vertices": count,
                 "unique_vertex_count": unique_vertex_count,
                 "indices_available": indices_available,
-                "num_indices": action.numIndices if indexed else 0,
+                "num_indices": count if indexed else 0,
                 "indexed": indexed,
                 "attributes": attributes,
                 "bounding_box": boxes.get(bbox_name) if bbox_name else None,
@@ -804,7 +825,7 @@ class MeshService:
                 "bounding_boxes": boxes,
             }
 
-        return at_event(self.ctx, self._invoke, action_event_id, operation)
+        return process_cpu(summarize)
 
     def get_mesh_data(
         self,
@@ -875,10 +896,15 @@ class MeshService:
                         % ", ".join(attributes)
                     )
 
-            # Get indices
-            if stage == "VSIn" and view_index:
-                raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
-            all_indices = self._get_indices(controller, mesh_inputs[0])
+            index_snapshot = self._capture_indices(controller, mesh_inputs[0])
+            buffers = self._batch_get_buffer_data(controller, mesh_inputs)
+            return self._detach_mesh(mesh_inputs, index_snapshot, buffers)
+
+        snapshot = at_event(self.ctx, self._invoke, action_event_id, operation)
+
+        def decode():
+            mesh_inputs, index_snapshot, buffer_cache = snapshot
+            all_indices = self._decode_indices(index_snapshot)
 
             # Calculate pagination info
             total_count = len(all_indices)
@@ -888,9 +914,6 @@ class MeshService:
             end_offset = min(offset + limit, total_count)
             indices = all_indices[offset:end_offset]
             truncated = total_count > limit
-
-            # Batch get buffer data for performance
-            buffer_cache = self._batch_get_buffer_data(controller, mesh_inputs)
 
             # Extract vertex data
             vertices = []
@@ -952,7 +975,7 @@ class MeshService:
                 "data_quality": self._quality(vertices, mesh_inputs, offset, total_count),
             }
 
-        return at_event(self.ctx, self._invoke, action_event_id, operation)
+        return process_cpu(decode)
 
     def export_mesh_csv(
         self,
@@ -990,156 +1013,187 @@ class MeshService:
             raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
 
         def operation(controller, target):
-            action = action_for(self.ctx, action_event_id)
-            if not (action.flags & rd.ActionFlags.Drawcall):
+            return self._capture_csv(controller, action_event_id, stage, attributes, instance, view_index)
+
+        snapshot = at_event(self.ctx, self._invoke, action_event_id, operation)
+        return process_cpu(lambda: self.write_mesh_csv(snapshot, action_event_id, output_path,
+                                                       stage, instance, view_index))
+
+    @staticmethod
+    def _detach_mesh(inputs, indices, buffers):
+        detached = []
+        for mesh in inputs:
+            fmt = mesh.format
+            name, special, bgra = str(fmt.Name()), bool(fmt.Special()), bool(fmt.BGRAOrder())
+            plain_format = _AttributeEntry(compType=fmt.compType if isinstance(fmt.compType, str) else int(fmt.compType), compCount=int(fmt.compCount),
+                compByteWidth=int(fmt.compByteWidth), Name=lambda name=name: name,
+                Special=lambda special=special: special, BGRAOrder=lambda bgra=bgra: bgra)
+            fields = {key: getattr(mesh, key) for key in (
+                'name', 'vertexByteOffset', 'vertexByteStride', 'instanced', 'position_semantic',
+                'native_status', 'source_vertex_buffer', 'source_instance_rate',
+                'source_attribute_offset', 'source_binding_offset') if hasattr(mesh, key)}
+            if hasattr(mesh, 'constant_value'):
+                fields['constant_value'] = tuple(mesh.constant_value)
+            fields.update(vertexResourceId=str(mesh.vertexResourceId), topology=str(mesh.topology),
+                          format=plain_format)
+            detached.append(_AttributeEntry(**fields))
+        return detached, indices, {str(key): bytes(value) for key, value in buffers.items()}
+
+    def _capture_csv(self, controller, action_event_id, stage, attributes, instance, view_index):
+        action = action_for(self.ctx, action_event_id)
+        if not (action.flags & rd.ActionFlags.Drawcall):
+            raise ValueError(
+                "INVALID_ACTION_EVENT_ID: event %d is not a draw call"
+                % action_event_id
+            )
+        self._require_instance_in_range(action, action_event_id, instance)
+
+        if stage == "VSIn":
+            mesh_inputs = self._get_mesh_inputs(controller, action, instance)
+            if not mesh_inputs:
                 raise ValueError(
-                    "INVALID_ACTION_EVENT_ID: event %d is not a draw call"
+                    "RESOURCE_NOT_FOUND: no mesh input data available for event %d"
                     % action_event_id
                 )
-            self._require_instance_in_range(action, action_event_id, instance)
-
-            if stage == "VSIn":
-                mesh_inputs = self._get_mesh_inputs(controller, action, instance)
-                if not mesh_inputs:
-                    raise ValueError(
-                        "RESOURCE_NOT_FOUND: no mesh input data available for event %d"
-                        % action_event_id
-                    )
-            else:
-                mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance, view_index)
-                if not mesh_inputs:
-                    raise ValueError(
-                        "RESOURCE_NOT_FOUND: no %s data available for event %d"
-                        % (stage, action_event_id)
-                    )
-
-            # Filter attributes if specified
-            if attributes:
-                attr_names_lower = [a.lower() for a in attributes]
-                mesh_inputs = [
-                    m for m in mesh_inputs
-                    if any(n in m.name.lower() for n in attr_names_lower)
-                ]
-                if not mesh_inputs:
-                    raise ValueError(
-                        "RESOURCE_NOT_FOUND: no matching attributes found: %s"
-                        % ", ".join(attributes)
-                    )
-
-            # Fail before reading buffers when nothing is exportable: a
-            # special/undefined format cannot produce attribute columns.
-            if not any(self._exportable(mesh) for mesh in mesh_inputs):
+        else:
+            mesh_inputs = self._get_postvs_inputs(controller, action, stage, instance, view_index)
+            if not mesh_inputs:
                 raise ValueError(
-                    "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
-                    "at event %d" % (stage, action_event_id)
+                    "RESOURCE_NOT_FOUND: no %s data available for event %d"
+                    % (stage, action_event_id)
                 )
 
-            # Get indices
-            if stage == "VSIn" and view_index:
-                raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
-            indices = self._get_indices(controller, mesh_inputs[0])
-
-            # Batch get buffer data
-            buffer_cache = self._batch_get_buffer_data(controller, mesh_inputs)
-
-            # Build CSV data
-            component_suffixes = [".x", ".y", ".z", ".w"]
-
-            # Build header
-            header = ["VTX", "IDX"]
-            for mesh in mesh_inputs:
-                if not self._exportable(mesh):
-                    continue
-                for i in range(mesh.format.compCount):
-                    header.append("%s%s" % (mesh.name, component_suffixes[i]))
-
-            # Process vertices with deduplication
-            unique_vertices = {}  # {original_idx: [attr_values...]}
-
-            for idx in indices:
-                if idx == -1:
-                    continue
-                if idx not in unique_vertices:
-                    attribute_values = []
-                    for mesh in mesh_inputs:
-                        if not self._exportable(mesh):
-                            continue
-                        values = self._read_attribute(mesh, buffer_cache, idx)
-                        for j in range(mesh.format.compCount):
-                            attribute_values.append(values[j])
-                    unique_vertices[idx] = attribute_values
-
-            # Build remapping
-            remap = {}
-            rows = []
-            for new_vtx, original_idx in enumerate(unique_vertices.keys()):
-                remap[original_idx] = new_vtx
-                row = [new_vtx, original_idx]
-                row.extend(unique_vertices[original_idx])
-                rows.append(row)
-
-            # Build triangle stream
-            triangle_stream = []  # remapped indices
-            for idx in indices:
-                if idx == -1:
-                    triangle_stream.append(-1)
-                elif idx in remap:
-                    triangle_stream.append(remap[idx])
-
-            # A header without attribute columns means every attribute was
-            # dropped as "special": fail loudly instead of writing a file that
-            # only contains VTX/IDX and reporting success.
-            if len(header) <= 2:
+        # Filter attributes if specified
+        if attributes:
+            attr_names_lower = [a.lower() for a in attributes]
+            mesh_inputs = [
+                m for m in mesh_inputs
+                if any(n in m.name.lower() for n in attr_names_lower)
+            ]
+            if not mesh_inputs:
                 raise ValueError(
-                    "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
-                    "at event %d" % (stage, action_event_id)
+                    "RESOURCE_NOT_FOUND: no matching attributes found: %s"
+                    % ", ".join(attributes)
                 )
 
-            # Ensure output directory exists
-            output_dir = os.path.dirname(output_path)
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir, exist_ok=True)
-
-            # Write CSV file
-            with open(output_path, "w", newline="", encoding="utf-8") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(header)
-                writer.writerows(rows)
-
-            # Write index sidecar file
-            index_path = os.path.splitext(output_path)[0] + ".idx"
-            with open(index_path, "w", encoding="utf-8") as idx_file:
-                for remapped_idx in triangle_stream:
-                    idx_file.write("%d\n" % remapped_idx)
-
-            exported = sorted(mesh.name for mesh in mesh_inputs if self._exportable(mesh))
-            skipped = sorted(
-                mesh.name for mesh in mesh_inputs if not self._exportable(mesh)
+        # Fail before reading buffers when nothing is exportable: a
+        # special/undefined format cannot produce attribute columns.
+        if not any(self._exportable(mesh) for mesh in mesh_inputs):
+            raise ValueError(
+                "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
+                "at event %d" % (stage, action_event_id)
             )
-            return {
-                "success": True,
-                "action_event_id": action_event_id,
-                "instance": instance,
-                "view_index": view_index,
-                "restart_index": -1,
-                "topology": str(mesh_inputs[0].topology),
-                "native_status": getattr(mesh_inputs[0], "native_status", ""),
-                "data_quality": self._quality([
-                    {m.name: list(self._read_attribute(m, buffer_cache, idx)) for m in mesh_inputs
-                     if self._exportable(m)} if idx != -1 else {"primitive_restart": True}
-                    for idx in indices[:1000]
-                ], mesh_inputs, 0, len(indices)),
-                "output_path": output_path,
-                "index_path": index_path,
-                "vertex_count": len(unique_vertices),
-                "index_count": len(triangle_stream),
-                "stage": stage,
-                "format": "CSV",
-                "exported_attributes": exported,
-                "skipped_attributes": skipped,
-            }
 
-        return at_event(self.ctx, self._invoke, action_event_id, operation)
+        # Get indices
+        if stage == "VSIn" and view_index:
+            raise ValueError("INVALID_VIEW_INDEX: VSIn does not have multiview data")
+        indices = self._capture_indices(controller, mesh_inputs[0])
+
+        # Batch get buffer data
+        buffer_cache = self._batch_get_buffer_data(controller, mesh_inputs)
+
+        return self._detach_mesh(mesh_inputs, indices, buffer_cache)
+
+    def write_mesh_csv(self, snapshot, action_event_id, output_path, stage, instance, view_index):
+        """Decode detached bytes and write files without any replay access."""
+        mesh_inputs, index_snapshot, buffer_cache = snapshot
+        indices = self._decode_indices(index_snapshot)
+        # Build CSV data
+        component_suffixes = [".x", ".y", ".z", ".w"]
+
+        # Build header
+        header = ["VTX", "IDX"]
+        for mesh in mesh_inputs:
+            if not self._exportable(mesh):
+                continue
+            for i in range(mesh.format.compCount):
+                header.append("%s%s" % (mesh.name, component_suffixes[i]))
+
+        # Process vertices with deduplication
+        unique_vertices = {}  # {original_idx: [attr_values...]}
+
+        for idx in indices:
+            if idx == -1:
+                continue
+            if idx not in unique_vertices:
+                attribute_values = []
+                for mesh in mesh_inputs:
+                    if not self._exportable(mesh):
+                        continue
+                    values = self._read_attribute(mesh, buffer_cache, idx)
+                    for j in range(mesh.format.compCount):
+                        attribute_values.append(values[j])
+                unique_vertices[idx] = attribute_values
+
+        # Build remapping
+        remap = {}
+        rows = []
+        for new_vtx, original_idx in enumerate(unique_vertices.keys()):
+            remap[original_idx] = new_vtx
+            row = [new_vtx, original_idx]
+            row.extend(unique_vertices[original_idx])
+            rows.append(row)
+
+        # Build triangle stream
+        triangle_stream = []  # remapped indices
+        for idx in indices:
+            if idx == -1:
+                triangle_stream.append(-1)
+            elif idx in remap:
+                triangle_stream.append(remap[idx])
+
+        # A header without attribute columns means every attribute was
+        # dropped as "special": fail loudly instead of writing a file that
+        # only contains VTX/IDX and reporting success.
+        if len(header) <= 2:
+            raise ValueError(
+                "MESH_SIGNATURE_UNAVAILABLE: no exportable attributes for %s "
+                "at event %d" % (stage, action_event_id)
+            )
+
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        # Write CSV file
+        with open(output_path, "w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(header)
+            writer.writerows(rows)
+
+        # Write index sidecar file
+        index_path = os.path.splitext(output_path)[0] + ".idx"
+        with open(index_path, "w", encoding="utf-8") as idx_file:
+            for remapped_idx in triangle_stream:
+                idx_file.write("%d\n" % remapped_idx)
+
+        exported = sorted(mesh.name for mesh in mesh_inputs if self._exportable(mesh))
+        skipped = sorted(
+            mesh.name for mesh in mesh_inputs if not self._exportable(mesh)
+        )
+        return {
+            "success": True,
+            "action_event_id": action_event_id,
+            "instance": instance,
+            "view_index": view_index,
+            "restart_index": -1,
+            "topology": str(mesh_inputs[0].topology),
+            "native_status": getattr(mesh_inputs[0], "native_status", ""),
+            "data_quality": self._quality([
+                {m.name: list(self._read_attribute(m, buffer_cache, idx)) for m in mesh_inputs
+                 if self._exportable(m)} if idx != -1 else {"primitive_restart": True}
+                for idx in indices[:1000]
+            ], mesh_inputs, 0, len(indices)),
+            "output_path": output_path,
+            "index_path": index_path,
+            "vertex_count": len(unique_vertices),
+            "index_count": len(triangle_stream),
+            "stage": stage,
+            "format": "CSV",
+            "exported_attributes": exported,
+            "skipped_attributes": skipped,
+        }
 
     @staticmethod
     def _quality(vertices, inputs, offset, total):

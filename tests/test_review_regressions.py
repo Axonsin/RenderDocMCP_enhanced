@@ -244,7 +244,7 @@ def test_mesh_unique_count_is_additive_and_topology_is_from_pipeline():
               vertexByteOffset=0, vertexByteStride=12, instanced=False,
               indexResourceId=mesh_tests.ResourceId(2), topology="Unknown")
     service._get_mesh_inputs = lambda *_: [attr]
-    service._get_indices = lambda *_: [0, 1, 1]
+    service._capture_indices = lambda *_: dict(raw=struct.pack('<3H',0,1,1), count=3, stride=2, base=0, restart=None)
     controller.GetPipelineState = lambda: NS(GetPrimitiveTopology=lambda: "TriangleList")
     controller.buffers[1] = struct.pack("<6f", 2, 3, 4, 5, 6, 7)
     result = service.get_mesh_summary(343)

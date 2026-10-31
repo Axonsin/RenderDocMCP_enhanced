@@ -12,7 +12,7 @@ from .job_service import atomic_json
 from .native_serialization import plain
 from .replay_query import at_event, require_action
 from .resource_catalog import enum_name
-from .texture_values import decoder, validate_region, MAX_SUBRESOURCE_BYTES
+from .texture_values import decoder, validate_region, MAX_SUBRESOURCE_BYTES, snapshot_format
 from .constant_export import read_constants, write_constants
 from .pipeline_snapshot import Snapshot
 
@@ -57,7 +57,7 @@ class InvestigationService:
         stage_enum = Parsers.parse_stage(stage)
         def steps(key):
             directory = self._directory(output_dir, key)
-            payload = {}
+            payload = {'files': {}}
             def export(controller):
                 def read(c, event):
                     pipe = c.GetPipelineState()
@@ -68,16 +68,14 @@ class InvestigationService:
                     suffix = {"SPIRV": ".spv", "GLSL": ".glsl", "HLSL": ".hlsl",
                               "SPIRVAsm": ".spvasm", "Slang": ".slang"}.get(encoding, ".bin")
                     raw_path = os.path.join(directory, "original" + suffix)
-                    with open(raw_path, "wb") as handle:
-                        handle.write(bytes(ref.rawBytes))
+                    payload["files"][raw_path] = bytes(ref.rawBytes)
                     files = [raw_path]
                     pipeline = pipe.GetComputePipelineObject() if enum_name(stage_enum) == "Compute" else pipe.GetGraphicsPipelineObject()
                     disassembly = {}
                     for index, target in enumerate(c.GetDisassemblyTargets(True)):
                         path = os.path.join(directory, "disassembly_%d.txt" % index)
                         try:
-                            with open(path, "w", encoding="utf-8") as handle:
-                                handle.write(c.DisassembleShader(pipeline, ref, target))
+                            payload["files"][path] = str(c.DisassembleShader(pipeline, ref, target))
                             files.append(path)
                             disassembly[target] = path
                         except Exception as exc:
@@ -85,8 +83,7 @@ class InvestigationService:
                     sources = []
                     for index, source in enumerate(getattr(ref.debugInfo, "files", [])):
                         path = os.path.join(directory, "source_%d_%s" % (index, os.path.basename(source.filename)))
-                        with open(path, "w", encoding="utf-8") as handle:
-                            handle.write(source.contents)
+                        payload["files"][path] = str(source.contents)
                         files.append(path)
                         sources.append({"original_filename": source.filename, "path": path})
                     signature_fields = ("varName", "semanticName", "semanticIndex", "regIndex", "systemValue",
@@ -101,7 +98,7 @@ class InvestigationService:
                         _reflect(b, ("name", "byteSize", "bufferBacked", "fixedBindNumber", "fixedBindSetOrSpace")),
                         variables=[_constant(v) for v in b.variables]) for b in ref.constantBlocks]
                     path = os.path.join(directory, "reflection.json")
-                    atomic_json(path, reflection)
+                    payload["files"][path] = reflection
                     files.append(path)
                     if include_event_context or export_constants:
                         snapshot = Snapshot(self.ctx, c, require_action(self.ctx, event), self.session.token())
@@ -111,7 +108,7 @@ class InvestigationService:
                                 "stage": stage_name, "bindings": [b for b in snapshot.bindings if b["stage"] == stage_name],
                                 "input_signature": reflection["input_signature"], "output_signature": reflection["output_signature"]}
                             context_path = os.path.join(directory, "event_context.json")
-                            atomic_json(context_path, context)
+                            payload["files"][context_path] = context
                             files.append(context_path)
                         if export_constants:
                             payload["constants"] = read_constants(snapshot, stage_name)
@@ -119,21 +116,33 @@ class InvestigationService:
                                   shader_id="ResourceId::%d" % int(ref.resourceId), stage=Parsers.parse_stage_name(stage),
                                   entry_point=ref.entryPoint, encoding=encoding, source="capture_shader",
                                   original=raw_path, embedded_sources=sources, disassembly=disassembly,
-                                  files=[{"path": p, "sha256": _digest(p)} for p in files])
+                                  files=files)
                     manifest = os.path.join(directory, "manifest.json")
-                    atomic_json(manifest, result)
                     payload["result"] = dict(result, manifest_path=manifest)
                     return {"result": payload["result"]}
                 return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
             yield ("replay", "export_shader", export)
-            if export_constants:
-                def constants(_):
-                    result = payload["result"]
-                    result["constants"] = write_constants(directory, payload.pop("constants", []), result["provenance"], "shader")
-                    ok = not any(r["status"] == "failed" for r in result["constants"])
-                    atomic_json(result["manifest_path"], result)
-                    return {"result": result, "item": {"item_key": "shader_constants", "ok": ok, "complete": True, "constants": result["constants"]}}
-                yield ("worker", "writing_shader_constants", constants)
+            def write(_):
+                for path, value in payload.pop('files').items():
+                    if isinstance(value, bytes):
+                        with open(path, 'wb') as handle:
+                            handle.write(value)
+                    elif isinstance(value, str):
+                        with open(path, 'w', encoding='utf-8') as handle:
+                            handle.write(value)
+                    else:
+                        atomic_json(path, value)
+                result = payload['result']
+                result['files'] = [{'path': path, 'sha256': _digest(path)} for path in result['files']]
+                if export_constants:
+                    result['constants'] = write_constants(directory, payload.pop('constants', []), result['provenance'], 'shader')
+                atomic_json(result['manifest_path'], result)
+                output = {'result': result}
+                if export_constants:
+                    ok = not any(r['status'] == 'failed' for r in result['constants'])
+                    output['item'] = {'item_key': 'shader_constants', 'ok': ok, 'complete': True, 'constants': result['constants']}
+                return output
+            yield ('worker', 'writing_shader_evidence', write)
         return self.jobs.submit("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
                                                              output_dir=output_dir, include_event_context=include_event_context,
                                                              export_constants=export_constants), steps, job_id)
@@ -155,7 +164,8 @@ class InvestigationService:
             values = []
             metadata = {}
             for eid in (action_event_id_a, action_event_id_b):
-                def fetch(controller, eid=eid):
+                captured = {}
+                def fetch(controller, eid=eid, captured=captured):
                     def read(c, event):
                         api = enum_name(c.GetAPIProperties().pipelineType)
                         if api not in ("Vulkan", "D3D11", "D3D12"):
@@ -179,14 +189,22 @@ class InvestigationService:
                         data = bytes(c.GetTextureData(td.resourceId, sub))
                         if len(data) != expected:
                             raise ValueError("RESOURCE_QUERY_FAILED: unexpected raw layout/short read %d != %d" % (len(data), expected))
-                        rows = [read_pixel(data, ((depth_slice * height + yy) * width + xx) * size, value_domain)
-                                for yy in range(y, y + h) for xx in range(x, x + w)]
-                        metadata.update(format=td.format.Name(), channels=count, coordinate_origin="top_left",
+                        captured.update(data=data, format=snapshot_format(td.format), size=size,
+                                        width=width, height=height, roi=(x,y,w,h))
+                        metadata.update(format=str(td.format.Name()), channels=count, coordinate_origin="top_left",
                                         api=api, mip=mip, slice_index=slice_index, sample=sample,
                                         depth_slice=depth_slice, value_domain=value_domain, region=region, aspect=aspect)
-                        values.append(rows)
                     at_event(self.ctx, lambda fn: fn(controller), eid, read)
                 yield ("replay", "read_texture_event_%d" % eid, fetch)
+                def decode(_, captured=captured):
+                    data = captured.pop('data')
+                    size, count, read_pixel = decoder(captured['format'], aspect)
+                    width, height = captured['width'], captured['height']
+                    x, y, w, h = captured['roi']
+                    values.append([read_pixel(data, ((depth_slice * height + yy) * width + xx) * size, value_domain)
+                                   for yy in range(y, y+h) for xx in range(x, x+w)])
+                yield ("worker", "decode_texture_event_%d" % eid, decode)
+
             def compare(_):
                 channels = metadata["channels"]
                 absolute, signed, maximum, finite = [0.0] * channels, [0.0] * channels, [0.0] * channels, [0] * channels
@@ -243,6 +261,7 @@ class InvestigationService:
                       output_dir=output_dir, mip=mip, slice_index=slice_index, sample=sample)
         def steps(key):
             directory = self._directory(output_dir, key)
+            payload = {}
             def fetch(controller):
                 def read(c, event):
                     if not c.GetAPIProperties().pixelHistory:
@@ -283,9 +302,16 @@ class InvestigationService:
                                   coordinate_origin="top_left", source="native_pixel_history", events=rows,
                                   validity_note="Native API limitations apply; failed/discarded fragments may lack valid values.")
                     path = os.path.join(directory, "manifest.json")
-                    atomic_json(path, result)
-                    self.jobs.update(key, items=rows)
-                    return {"result": {"available": True, "manifest_path": path, "event_count": len(rows)}}
+                    payload.update(path=path, result=result, rows=rows)
+                    return {"result": {"available": True, "event_count": len(rows)}}
                 return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
             yield ("replay", "pixel_history", fetch)
+            if payload:
+                def write(_):
+                    atomic_json(payload['path'], payload['result'])
+                    self.jobs.update(key, items=payload.pop('rows'))
+                    return {'result': {'available': True, 'manifest_path': payload['path'],
+                                       'event_count': len(payload['result']['events'])}}
+                yield ('worker', 'writing_pixel_history', write)
+
         return self.jobs.submit("get_pixel_history", params, steps, job_id)

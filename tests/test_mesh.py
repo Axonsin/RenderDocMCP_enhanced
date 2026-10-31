@@ -610,3 +610,29 @@ class RestoreFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_csv_decode_and_io_happen_on_worker_after_event_restore(tmp_path):
+    import threading
+    controller = Controller()
+    ctx = Context(controller)
+    service = MESH.MeshService(ctx, ctx.invoke)
+    fmt = ResourceFormat()
+    fmt.compCount = 3
+    attr = MeshFormat()
+    attr.name, attr.format = 'POSITION', fmt
+    attr.vertexResourceId, attr.vertexByteStride = ResourceId(1), 12
+    attr.numIndices = 3
+    controller.buffers[1] = struct.pack('<9f',0,0,0,1,0,0,0,1,0)
+    service._get_mesh_inputs = lambda *_: [attr]
+    original = service._read_attribute
+    main = threading.get_ident()
+    def read(*args):
+        assert controller.event == 99
+        assert threading.get_ident() != main
+        return original(*args)
+    service._read_attribute = read
+    path = tmp_path/'mesh.csv'
+    result = service.export_mesh_csv(343, str(path))
+    assert result['vertex_count'] == 3 and result['index_count'] == 3
+    assert path.with_suffix('.idx').read_text() == '0\n1\n2\n'

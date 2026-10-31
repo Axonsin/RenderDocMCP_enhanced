@@ -237,3 +237,47 @@ def test_constant_dedup_checks_existing_content(tmp_path):
     Path(result[0]['raw']['path']).write_bytes(b'corrupt')
     with pytest.raises(RuntimeError,match='ARTIFACT_HASH_MISMATCH'):
         exports.write_constants(str(tmp_path),[row],{'capture_session':'old'},'event')
+
+
+@pytest.mark.parametrize('invalid_layout', [False, True])
+def test_depth_conversion_and_transport_run_after_replay_restore(tmp_path, monkeypatch, invalid_layout):
+    import threading
+    module = pipeline.MODULES['resource_service']
+    main_thread = threading.get_ident()
+    active = [False]
+    def native_only(value):
+        assert active[0], 'native format accessed outside replay callback'
+        return value
+    texture_format = NS(Name=lambda: native_only('D16'),
+        type='D16', compType='Depth', compCount=1, compByteWidth=2,
+        BGRAOrder=lambda: native_only(False))
+    td = NS(resourceId=1, width=2, height=1, depth=1, mips=1, arraysize=1,
+            cubemap=False, msSamp=1, type='Texture2D', format=texture_format)
+    raw = struct.pack('<2H', 0, 65535) if not invalid_layout else b'x'
+    controller = NS(GetTextures=lambda: [td], GetTextureData=lambda *a: raw,
+                    GetAPIProperties=lambda: NS(pipelineType='Vulkan'), event=99)
+    controller.SetFrameEvent = lambda e, force: setattr(controller, 'event', e)
+    ctx = NS(IsCaptureLoaded=lambda: True, CurEvent=lambda:99, GetAction=lambda e:NS(eventId=e))
+    def invoke(fn):
+        active[0] = True
+        try: fn(controller)
+        finally: active[0] = False
+    monkeypatch.setattr(module.rd, 'Subresource', lambda:NS(), raising=False)
+    calls = []
+    original = module.select_texture
+    def convert(*args):
+        assert not active[0] and controller.event == 99
+        assert threading.get_ident() != main_thread
+        calls.append('worker')
+        return original(*args)
+    monkeypatch.setattr(module, 'select_texture', convert)
+    service = module.ResourceService(ctx, invoke)
+    if invalid_layout:
+        with pytest.raises(ValueError, match='layout/length mismatch'):
+            service.get_texture_data('1', action_event_id=539, aspect='depth')
+    else:
+        result = service.get_texture_data('1', action_event_id=539, aspect='depth',
+                                         output_mode='file', output_dir=str(tmp_path))
+        assert Path(result['path']).read_bytes() == struct.pack('<2f',0,1)
+        assert result['action_event_id'] == 539 and result['source_data_length'] == 4
+    assert controller.event == 99 and calls == ['worker']
