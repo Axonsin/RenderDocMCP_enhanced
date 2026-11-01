@@ -539,6 +539,44 @@ def test_texture_comparison_reads_each_event_once_and_restores(investigation):
     assert result['changed_pixels'] == 2 and result['mean_absolute_error'] == [4]
 
 
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_shader_targets_yield_and_restore_between_local_compilers(investigation, unavailable):
+    service, controller, calls, run, tmp = investigation
+    ref = NS(encoding='SPIRV', rawBytes=b'spirv', resourceId=30, entryPoint='main',
+             debugInfo=NS(files=[]), inputSignature=[], outputSignature=[],
+             readOnlyResources=[], readWriteResources=[], samplers=[], constantBlocks=[])
+    controller.GetPipelineState = lambda: NS(GetShaderReflection=lambda stage: ref,
+                                             GetGraphicsPipelineObject=lambda: 40)
+    controller.GetDisassemblyTargets = lambda all_targets: ['SPIR-V', 'AMDIL', 'RDNA']
+    events = []
+    controller.SetFrameEvent = lambda event, force: (events.append(event), setattr(controller, 'event', event))
+    def disassemble(pipeline, reflection, target):
+        # Each local compiler must see a distinct replay callback, including
+        # restoring the UI event after the previous target (remote keepalive).
+        assert events == [10, 99] * (len(calls)+1) + [10]
+        calls.append(target)
+        if unavailable and target == 'AMDIL':
+            raise RuntimeError('compiler unavailable')
+        return target+' text'
+    controller.DisassembleShader = disassemble
+    key = service.export_shader_bundle(10, 'fragment', str(tmp),
+                include_event_context=False, export_constants=False)['job_id']
+    status = run(key)
+    assert status['status'] == 'completed', status['error']
+    assert calls == ['SPIR-V', 'AMDIL', 'RDNA']
+    assert events == [10, 99] * 4 and controller.event == 99
+    result = status['result']
+    assert Path(result['original']).read_bytes() == b'spirv'
+    if unavailable:
+        assert result['disassembly']['AMDIL'] == {'unavailable': 'compiler unavailable'}
+    else:
+        assert Path(result['disassembly']['AMDIL']).read_text() == 'AMDIL text'
+    timings = [json.loads(line) for line in Path(result['timings_path']).read_text().splitlines()]
+    assert len([r for r in timings if r['phase'] == 'disassembly_step' and r['status'] == 'completed']) == 3
+    assert any(r['phase'] == 'disassemble_shader' and r['status'] == ('failed' if unavailable else 'completed')
+               and r['target'] == 'AMDIL' for r in timings)
+
+
 def test_all_nonfinite_roi_has_no_fabricated_zero_error(investigation):
     service,controller,calls,run,tmp=investigation
     texture=controller.GetTextures()[0]

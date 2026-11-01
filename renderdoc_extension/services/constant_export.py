@@ -20,7 +20,7 @@ def full_value(value):
         result['value'] = plain(list(getattr(value.value, field))[:value.rows*value.columns])
     return result
 
-def read_constants(snapshot, stage_filter=None):
+def read_constants(snapshot, stage_filter=None, timing=None):
     records = []
     for row in snapshot.bindings:
         if row['category'] != 'constant' or (stage_filter and row['stage'] != stage_filter):
@@ -48,7 +48,11 @@ def read_constants(snapshot, stage_filter=None):
                              'expected_bytes': size, 'actual_bytes': None}
             try:
                 if record['buffer_backed']:
-                    raw = bytes(snapshot.controller.GetBufferData(descriptor.resource, offset, size)) if size else b''
+                    if timing:
+                        with timing.span('constant_buffer_read', binding=row['binding_key'], byte_size=size):
+                            raw = bytes(snapshot.controller.GetBufferData(descriptor.resource, offset, size)) if size else b''
+                    else:
+                        raw = bytes(snapshot.controller.GetBufferData(descriptor.resource, offset, size)) if size else b''
                 elif snapshot.api == 'Vulkan' and hasattr(snapshot.native, 'pushconsts'):
                     raw = bytes(snapshot.native.pushconsts)[offset:offset+size]
                 else:

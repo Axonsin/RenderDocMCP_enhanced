@@ -217,8 +217,9 @@ class ShaderEditService(qrd.CaptureViewer):
                 raise ValueError("SHADER_TOOL_MISSING: custom decompiler must configure input/output placeholders")
             replacements = {"{input_file}": input_path, "{output_file}": output_path,
                             "{entry_point}": snapshot.entryPoint,
-                            "{glsl_stage4}": {"vertex": "vert", "hull": "tesc", "domain": "tese",
-                                              "geometry": "geom", "pixel": "frag", "compute": "comp"}[
+                            "{glsl_stage4}": {"vertex": "vert", "tess_control": "tesc", "tess_eval": "tese",
+                                              "geometry": "geom", "fragment": "frag", "compute": "comp",
+                                              "task": "task", "mesh": "mesh"}[
                                                   Parsers.stage_name(snapshot.stage)],
                             "{spirv_ver}": self._spirv_version(snapshot.rawBytes)}
             for index, arg in enumerate(args):

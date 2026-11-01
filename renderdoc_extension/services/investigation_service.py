@@ -4,6 +4,8 @@ import json
 import math
 import os
 import struct
+import time
+from contextlib import contextmanager
 
 import renderdoc as rd
 
@@ -15,6 +17,28 @@ from .resource_catalog import enum_name
 from .texture_values import decoder, validate_region, MAX_SUBRESOURCE_BYTES, snapshot_format
 from .constant_export import read_constants, write_constants
 from .pipeline_snapshot import Snapshot
+
+
+class ShaderExportTimings:
+    """Flush each boundary independently so failed native calls leave evidence."""
+    def __init__(self, directory):
+        self.path = os.path.join(directory, 'timings.jsonl')
+
+    @contextmanager
+    def span(self, phase, **fields):
+        started = time.monotonic()
+        def emit(status, **extra):
+            row = dict(fields, phase=phase, status=status, observed_at=time.time(), **extra)
+            with open(self.path, 'a', encoding='utf-8') as handle:
+                handle.write(json.dumps(row, ensure_ascii=False) + '\n')
+        emit('started')
+        try:
+            yield
+        except Exception as exc:
+            emit('failed', elapsed_seconds=time.monotonic()-started, error=str(exc)[:2048])
+            raise
+        else:
+            emit('completed', elapsed_seconds=time.monotonic()-started)
 
 
 def _digest(path):
@@ -58,28 +82,23 @@ class InvestigationService:
         def steps(key):
             directory = self._directory(output_dir, key)
             payload = {'files': {}}
+            timing = ShaderExportTimings(directory)
             def export(controller):
                 def read(c, event):
-                    pipe = c.GetPipelineState()
-                    ref = pipe.GetShaderReflection(stage_enum)
+                    with timing.span('shader_reflection'):
+                        pipe = c.GetPipelineState()
+                        ref = pipe.GetShaderReflection(stage_enum)
                     if ref is None:
                         raise ValueError("RESOURCE_NOT_FOUND: shader reflection unavailable")
                     encoding = enum_name(ref.encoding)
                     suffix = {"SPIRV": ".spv", "GLSL": ".glsl", "HLSL": ".hlsl",
                               "SPIRVAsm": ".spvasm", "Slang": ".slang"}.get(encoding, ".bin")
                     raw_path = os.path.join(directory, "original" + suffix)
-                    payload["files"][raw_path] = bytes(ref.rawBytes)
+                    with timing.span('raw_shader_bytes'):
+                        payload["files"][raw_path] = bytes(ref.rawBytes)
                     files = [raw_path]
-                    pipeline = pipe.GetComputePipelineObject() if enum_name(stage_enum) == "Compute" else pipe.GetGraphicsPipelineObject()
-                    disassembly = {}
-                    for index, target in enumerate(c.GetDisassemblyTargets(True)):
-                        path = os.path.join(directory, "disassembly_%d.txt" % index)
-                        try:
-                            payload["files"][path] = str(c.DisassembleShader(pipeline, ref, target))
-                            files.append(path)
-                            disassembly[target] = path
-                        except Exception as exc:
-                            disassembly[target] = {"unavailable": str(exc)}
+                    with timing.span('disassembly_targets'):
+                        payload['targets'] = [str(t) for t in c.GetDisassemblyTargets(True)]
                     sources = []
                     for index, source in enumerate(getattr(ref.debugInfo, "files", [])):
                         path = os.path.join(directory, "source_%d_%s" % (index, os.path.basename(source.filename)))
@@ -94,14 +113,16 @@ class InvestigationService:
                         reflection[name] = [_reflect(r, ("name", "fixedBindNumber", "fixedBindSetOrSpace",
                                                         "bindArraySize", "isTexture", "textureType", "isReadOnly"))
                                             for r in getattr(ref, name)]
-                    reflection["constant_blocks"] = [dict(
-                        _reflect(b, ("name", "byteSize", "bufferBacked", "fixedBindNumber", "fixedBindSetOrSpace")),
-                        variables=[_constant(v) for v in b.variables]) for b in ref.constantBlocks]
+                    with timing.span('reflection_constant_layouts'):
+                        reflection["constant_blocks"] = [dict(
+                            _reflect(b, ("name", "byteSize", "bufferBacked", "fixedBindNumber", "fixedBindSetOrSpace")),
+                            variables=[_constant(v) for v in b.variables]) for b in ref.constantBlocks]
                     path = os.path.join(directory, "reflection.json")
                     payload["files"][path] = reflection
                     files.append(path)
                     if include_event_context or export_constants:
-                        snapshot = Snapshot(self.ctx, c, require_action(self.ctx, event), self.session.token())
+                        with timing.span('event_snapshot'):
+                            snapshot = Snapshot(self.ctx, c, require_action(self.ctx, event), self.session.token())
                         stage_name = Parsers.parse_stage_name(stage)
                         if include_event_context:
                             context = {"action_event_id": event, "event_phase": "after", "provenance": self.session.describe(),
@@ -111,18 +132,54 @@ class InvestigationService:
                             payload["files"][context_path] = context
                             files.append(context_path)
                         if export_constants:
-                            payload["constants"] = read_constants(snapshot, stage_name)
+                            with timing.span('read_constants'):
+                                payload["constants"] = read_constants(snapshot, stage_name, timing=timing)
                     result = dict(provenance=self.session.describe(), action_event_id=event, event_phase="after",
                                   shader_id="ResourceId::%d" % int(ref.resourceId), stage=Parsers.parse_stage_name(stage),
                                   entry_point=ref.entryPoint, encoding=encoding, source="capture_shader",
-                                  original=raw_path, embedded_sources=sources, disassembly=disassembly,
-                                  files=files)
+                                  original=raw_path, embedded_sources=sources, disassembly={},
+                                  files=files, timings_path=timing.path)
                     manifest = os.path.join(directory, "manifest.json")
                     payload["result"] = dict(result, manifest_path=manifest)
                     return {"result": payload["result"]}
-                return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
+                with timing.span('export_shader', action_event_id=action_event_id):
+                    return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
             yield ("replay", "export_shader", export)
-            def write(_):
+
+            # Offline vendor targets run locally, even during remote Vulkan
+            # replay. A single callback looping over all of them can exceed the
+            # remote receive timeout without making any remote requests. Yield
+            # after EACH target: at_event restores/probes replay and the job
+            # scheduler lets Qt keepalives and cancellation run between targets.
+            # Only detached strings/bytes survive a callback; reacquire SWIG
+            # reflection and pipeline objects on the replay thread each time.
+            def disassemble(index, target):
+                def step(controller):
+                    def read(c, event):
+                        pipe = c.GetPipelineState()
+                        ref = pipe.GetShaderReflection(stage_enum)
+                        if ref is None:
+                            raise ValueError('RESOURCE_NOT_FOUND: shader reflection unavailable')
+                        pipeline = (pipe.GetComputePipelineObject() if stage_enum == rd.ShaderStage.Compute
+                                    else pipe.GetGraphicsPipelineObject())
+                        path = os.path.join(directory, 'disassembly_%d.txt' % index)
+                        result = payload['result']
+                        try:
+                            with timing.span('disassemble_shader', target=target):
+                                text = str(c.DisassembleShader(pipeline, ref, target))
+                            payload['files'][path] = text
+                            result['files'].append(path)
+                            result['disassembly'][target] = path
+                        except Exception as exc:
+                            result['disassembly'][target] = {'unavailable': str(exc)}
+                    with timing.span('disassembly_step', target=target):
+                        return at_event(self.ctx, lambda fn: fn(controller), action_event_id, read)
+                return step
+
+            for index, target in enumerate(payload.pop('targets')):
+                yield ('replay', 'disassemble_shader_%d' % index, disassemble(index, target))
+
+            def write_evidence(_):
                 for path, value in payload.pop('files').items():
                     if isinstance(value, bytes):
                         with open(path, 'wb') as handle:
@@ -136,12 +193,16 @@ class InvestigationService:
                 result['files'] = [{'path': path, 'sha256': _digest(path)} for path in result['files']]
                 if export_constants:
                     result['constants'] = write_constants(directory, payload.pop('constants', []), result['provenance'], 'shader')
-                atomic_json(result['manifest_path'], result)
+                with timing.span('write_manifest'):
+                    atomic_json(result['manifest_path'], result)
                 output = {'result': result}
                 if export_constants:
                     ok = not any(r['status'] == 'failed' for r in result['constants'])
                     output['item'] = {'item_key': 'shader_constants', 'ok': ok, 'complete': True, 'constants': result['constants']}
                 return output
+            def write(_):
+                with timing.span('writing_shader_evidence'):
+                    return write_evidence(_)
             yield ('worker', 'writing_shader_evidence', write)
         return self.jobs.submit("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
                                                              output_dir=output_dir, include_event_context=include_event_context,

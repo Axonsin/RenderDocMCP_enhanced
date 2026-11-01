@@ -250,6 +250,36 @@ class ShaderEditTests(unittest.TestCase):
         self.service = SHADER.ShaderEditService(self.ctx, self.ctx.invoke)
         self.service._decompile = lambda tool, reflection: tool.DisassembleShader(None, reflection, "")
 
+    def test_real_decompiler_arguments_use_canonical_stage_names(self):
+        launched = []
+        class Process:
+            NormalExit = 0
+            def setStandardOutputFile(self, path): pass
+            def setStandardErrorFile(self, path): pass
+            def start(self, executable, args):
+                launched.append(args)
+                Path(args[args.index('--output')+1]).write_bytes(b'decompiled')
+            def waitForStarted(self, timeout): return True
+            def waitForFinished(self, timeout): return True
+            def exitStatus(self): return 0
+            def exitCode(self): return 0
+        qt = types.ModuleType('PySide2.QtCore')
+        qt.QProcess = Process
+        known = types.SimpleNamespace(SPIRV_Cross=1, SPIRV_Cross_OpenGL=2, spirv_dis=3, spirv_dis_OpenGL=4)
+        tool = types.SimpleNamespace(tool=1, executable='spirv-cross',
+                                     DefaultArguments=lambda: '--stage {glsl_stage4}')
+        with patch.dict(sys.modules, {'PySide2': types.ModuleType('PySide2'), 'PySide2.QtCore': qt}), \
+             patch.object(SHADER.rd, 'KnownShaderTool', known, create=True):
+            for stage, expected in ((Stage.Vertex, 'vert'), (Stage.Hull, 'tesc'),
+                                    (Stage.Domain, 'tese'), (Stage.Geometry, 'geom'),
+                                    (Stage.Pixel, 'frag'), (Stage.Compute, 'comp')):
+                with self.subTest(stage=stage):
+                    snapshot = types.SimpleNamespace(stage=stage, entryPoint='main',
+                                rawBytes=b'\x03\x02\x23\x07\x00\x03\x01\x00')
+                    result = SHADER.ShaderEditService._decompile(self.service, tool, snapshot)
+                    self.assertEqual(result.result, b'decompiled')
+                    self.assertEqual(launched[-1][:2], ['--stage', expected])
+
     def prepare(self, mode="auto"):
         return self.service.get_shader_edit_context(12, "pixel", mode)
 
