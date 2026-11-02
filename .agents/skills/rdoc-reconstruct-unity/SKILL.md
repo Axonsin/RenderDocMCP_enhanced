@@ -53,7 +53,7 @@ argument-hint: "[对象/场景范围] [--effects] [--pipeline]"
 3. **取证**：几何、纹理（含数值域标注）、常量与绑定（材质参数推导）、观测 Shader
    反汇编（识别分支与关键字/缓冲布局）。常量与纹理优先消费事件常量导出与文件
    产物（auto/file 落盘并核验哈希）。可疑数据先按证据契约判定再使用。
-4. **设计还原结构**：按 `references/reconstruction.md` §2 规划——默认只用标准 URP
+4. **设计还原结构**：按 `references/reconstruction.md` §2 规划——除非用户要求，否则默认只用标准 URP
    内建能力（Lit/Complex 材质、内建光照/阴影、Volume 参数）；粒子/特效系统仅在带
    `--effects`、Renderer Feature/自定义 Pass 仅在带 `--pipeline` 时纳入计划，未带
    参数时对应机制记为"未还原——需参数"。共享逻辑按功能组织，不做一次性硬编码。
@@ -67,7 +67,7 @@ argument-hint: "[对象/场景范围] [--effects] [--pipeline]"
 
 ## 硬性约束
 
-- 未带 `--effects` 不添加任何粒子/特效系统；未带 `--pipeline` 不改动渲染管线
+- 用户使用slash激活该skill时，未带 `--effects` 不添加任何粒子/特效系统；未带 `--pipeline` 不改动渲染管线
   （Renderer Feature、自定义 Pass、渲染器与管线资产）。对应内容以"未还原——需参数"
   记入差异说明，不由代理自行推断授权。
 - 还原目标是与捕获的外部表现一致；实现精度分级：有可靠 shader 源码或可读反编译
