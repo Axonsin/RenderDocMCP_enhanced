@@ -348,7 +348,7 @@ def test_capture_is_required(tmp_path):
 class Facade(object):
     _guard = None
     _jobs = None
-    runtime_info = {"api_contract_version": 3, "extension_version": "3.1.0"}
+    runtime_info = {"api_contract_version": 4, "extension_version": "4.0.0"}
 
     def __init__(self):
         self.calls = []
@@ -360,7 +360,7 @@ class Facade(object):
 
 def request(method, params):
     return {"id": "request", "method": method, "params": params,
-            "api_contract_version": 3, "server_version": "3.1.0"}
+            "api_contract_version": 4, "server_version": "4.0.0"}
 
 
 def test_request_handler_dispatches_run_script_and_whitelists_params():

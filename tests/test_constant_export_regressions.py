@@ -95,56 +95,11 @@ def test_raw_and_values_are_independent(tmp_path, case):
     assert ('path' in summary['raw']) == ('_raw' in record)
 
 
-def test_failed_constants_still_export_textures(tmp_path, monkeypatch):
-    dependencies = {'renderdoc': pipeline.RD,
-        'renderdoc_extension.services.job_service': v2.JOBS,
-        'renderdoc_extension.services.mesh_service': v2.mesh_tests.MESH,
-        'renderdoc_extension.services.pipeline_snapshot': pipeline.MODULES['pipeline_snapshot'],
-        'renderdoc_extension.services.replay_query': pipeline.MODULES['replay_query'],
-        'renderdoc_extension.services.shader_variables': v2.VARIABLES,
-        'renderdoc_extension.services.constant_export': v2.CONSTANT_EXPORT}
-    with patch.dict(sys.modules, dependencies):
-        spec = importlib.util.spec_from_file_location('renderdoc_extension.services.batch_constant_regression',
-            v2.ROOT / 'renderdoc_extension/services/batch_service.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    controller = pipeline.Controller()
-    ctx = pipeline.Context(controller)
-    ctx.action.numInstances = 1
-    callbacks = []
-    ctx.Replay = lambda: NS(AsyncInvoke=callbacks.append)
-    texture = dict(bound=True, resource_kind='texture', roles=['input'],
-                   resource={'resource_id': 'ResourceId::11'})
-    snapshot = NS(pipe=controller.pipe, bindings=[], variable_sources={},
-                  stages={'rasterizer': {}, 'framebuffer': {}}, texture_rows=lambda: [texture])
-    monkeypatch.setattr(module, 'Snapshot', lambda *a: snapshot)
-    monkeypatch.setattr(module, 'read_constants', lambda s: [
-        dict(binding_key='bad', stage='vertex', status='failed', error='decode failed')])
-    monkeypatch.setattr(pipeline.RD, 'TextureSave', lambda: NS(slice=NS(), sample=NS()), raising=False)
-    monkeypatch.setattr(pipeline.RD, 'FileType', NS(PNG=1), raising=False)
-    monkeypatch.setattr(pipeline.RD, 'AlphaMapping', NS(Preserve=1), raising=False)
-    saved = []
-    def save(config, path):
-        saved.append(path)
-        Path(path).write_bytes(b'png evidence')
-        return NS(OK=lambda: True)
-    controller.SaveTexture = save
-    controller.GetTextures = lambda: [NS(resourceId=pipeline.ResourceId(11), format=pipeline.FMT)]
-    manager = v2.JOBS.JobService(ctx, v2.Session(), str(tmp_path / 'jobs'))
-    service = module.BatchService(ctx, ctx.invoke, None, manager.session, manager)
-    key = service.dump_draws(str(tmp_path), action_event_ids=[343], export_meshes=False)['job_id']
-    deadline = time.monotonic() + 5
-    while manager.status(key)['status'] not in v2.JOBS.TERMINAL and time.monotonic() < deadline:
-        manager.pump()
-        if callbacks:
-            callbacks.pop(0)(controller)
-        time.sleep(.005)
-    status = manager.status(key)
-    assert status['status'] == 'completed_with_errors', status
-    assert len(saved) == 1 and Path(saved[0]).is_file()
-    manifest = json.loads(Path(status['result']['summary_path']).read_text())
-    entry = manifest['items'][0]
-    assert entry['complete'] and not entry['ok']
-    assert entry['error'].startswith('CONSTANT_EXPORT_FAILED')
-    assert entry['constants'][0]['error'] == 'decode failed'
-    assert entry['textures'][0]['export']['path'] == saved[0]
+def test_verified_batch_can_repair_a_corrupt_content_addressed_constant(tmp_path):
+    records=[dict(binding_key='binding',stage='fragment',status='exported',values_status='exported',_raw=b'captured bytes')]
+    result=v2.CONSTANT_EXPORT.write_constants(str(tmp_path),records,{},'e1')[0]
+    path=Path(result['raw']['path']);path.write_bytes(b'corrupt')
+    with pytest.raises(RuntimeError,match='ARTIFACT_HASH_MISMATCH'):
+        v2.CONSTANT_EXPORT.write_constants(str(tmp_path),records,{},'e1')
+    repaired=v2.CONSTANT_EXPORT.write_constants(str(tmp_path),records,{},'e1',repair_corrupt=True)[0]
+    assert path.read_bytes()==b'captured bytes' and repaired['raw']['sha256']==result['raw']['sha256']

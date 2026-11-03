@@ -4,7 +4,7 @@
 
 Detailed reference for all RenderDoc MCP tools, including parameters, return values, and usage examples.
 
-RenderDoc MCP **3.1.0**, RenderDoc **1.46+**. Complete published parameter schemas:
+RenderDoc MCP **4.0.0**, RenderDoc **1.46+**. Complete published parameter schemas:
 [tool_schemas.json](tool_schemas.json). [Migration / 迁移说明](migration_v3.md).
 
 ## Naming Conventions
@@ -1049,33 +1049,44 @@ export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="V
 
 #### `dump_draws`
 
-Submit a resumable batch and return its `job_id`; poll `get_job_status`.
-Required `output_dir` replaces mesh_dir/texture_dir/summary_path. Files and manifest
-live under output_dir/job_id. Select exactly one: `action_event_ids` (1..256 real draws),
-`marker_filter`, `action_event_id_range={"min":...,"max":...}`. Ranges resolve real draws.
+Version 4 uses a single durable export engine. See [migration and full configuration](migration_v4.md).
+Select exactly one of `action_event_ids`, `marker_filter`, `action_event_id_range`.
+Defaults export VSIn+VSOut, vertex+fragment Shader evidence, the first portable
+reflection/disassembly target, preview PNG+raw textures, per-draw constants and
+fixed state into a unified manifest. Empty mesh/shader/texture component lists
+in `export_options` disable those components. Instances default to `[0]`.
 
-Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=True`,
-`export_textures=True`, `export_constants=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
-Texture budget exhaustion pauses the job; resume_job adds allowance. Cancellation is
-cooperative between native steps. No cross-session/revision resume is allowed.
+`export_options` fields: `mesh_stages`, `shader_stages`, `disassembly_targets`,
+`texture_modes`, `preview_format`, `mips`, `slices`, `samples`, `aspects`,
+`hlsl_converter`. Lists of mip/layer/sample indices, `"all"`, and `"bound"` are
+supported. Bound means the descriptor range; cube faces use slice indices.
+`disassembly_targets=["default"]` selects the first available portable target,
+`[]` disables disassembly, and `null` explicitly requests all vendor targets.
+Raw data retains format/layout/color-space metadata. Unknown layouts remain
+opaque; unsupported depth/stencil conversions fail explicitly. Each raw
+subresource is bounded to 64 MiB. Volume preview conversion is explicitly
+unavailable; raw volumes are retained.
 
-Manifest entries include detailed bindings, descriptor subresources, samplers, shader
-identity, vertex layout, quality warnings and provenance. No object_matrix field or
-automatic UV/albedo/normal naming. Same filenames never authorize cache reuse;
-event/subresource/revision reads precede content-hash deduplication. Filtering is explicit.
+Plans and SHA256 checkpoints are written under `output_dir/<job_id>/`.
+`resume_job` can repair a completed export or resume after cancellation,
+failure, capture reopen, or extension restart. The current local RDC, original
+replay, extension build, options and converter hash must match. Binding IDs
+are acquired again; a verified artifact can be reused, a missing/corrupt one
+is re-exported. Shader sharing includes pipeline identity; textures remain
+scoped to event/subresource. Constants keep per-draw provenance.
 
-`export_constants=True` (default) writes per-event constant evidence: raw constant
-bytes, full reflected layout and decoded values, read at each exact event/range with
-dynamic offsets already included. Each binding JSON preserves type, array/matrix
-strides, storage/value order and the raw file hash/size; identical bytes may share a
-file while provenance stays per-event. Unbound bindings are marked skipped; requested
-export failures are reported and prevent a clean completed status. Full values stay on
-disk and never enter tool responses or job summaries.
+Texture budget exhaustion pauses between steps. Single native calls cannot
+be forcibly interrupted. Other asset failures are reported without discarding
+successful assets; replay loss stops the job. No Unity semantics are inferred.
 
 ```python
-job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
-get_job_status(job_id=job["job_id"])
-resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
+job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350],
+    export_options={"mesh_stages":["VSIn","VSOut"],
+                    "texture_modes":["preview","raw"], "slices":"bound"})
+status = get_job_status(job_id=job["job_id"], wait_seconds=10)
+status = get_job_status(job_id=job["job_id"], wait_seconds=10,
+                        after_revision=status["status_revision"])
+resume_job(job_id=job["job_id"], texture_budget=96)
 ```
 
 #### `run_script`
@@ -1142,10 +1153,10 @@ See [migration](migration_v3.md) for the complete lifecycle, limits and file for
 | Tool | Parameters | Result |
 |---|---|---|
 | `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
-| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | State, phase, timestamps, progress, compact draw summaries with details_path/artifact_paths (including constant export counts), error and manifests; pixel-history rows retain native fields |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500), `wait_seconds=0` (0..20), `after_revision=None`, `wait_for="change"` (change/terminal) | State, phase, timestamps, progress, compact draw summaries with details_path/artifact_paths (including constant export counts), error and manifests; pixel-history rows retain native fields |
 | `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
-| `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
-| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
+| `resume_job` | `job_id`, `texture_budget=48` | Rebuild and verify durable draw exports across restart/reopen; other jobs retain same-session rules |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, `disassembly_targets=["default"]` (null=all, []=none), optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
 | `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, `aspect="all"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts; numeric color/depth/stencil comparison at an explicit MSAA sample without implicit resolve |
 | `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
 

@@ -79,7 +79,7 @@ def read_constants(snapshot, stage_filter=None, timing=None):
             record.update(status='failed', values_status='failed', error=str(exc))
     return records
 
-def write_constants(directory, records, provenance, label):
+def write_constants(directory, records, provenance, label, repair_corrupt=False):
     folder = os.path.join(directory, 'constants')
     os.makedirs(folder, exist_ok=True)
     result = []
@@ -90,11 +90,14 @@ def write_constants(directory, records, provenance, label):
         if raw is not None:
             digest = hashlib.sha256(raw).hexdigest()
             path = os.path.join(folder, digest+'.bin')
+            needs_write = not os.path.isfile(path)
             if os.path.isfile(path):
                 with open(path, "rb") as handle:
                     if hashlib.sha256(handle.read()).hexdigest() != digest:
-                        raise RuntimeError("ARTIFACT_HASH_MISMATCH: existing constant blob is corrupt")
-            else:
+                        if not repair_corrupt:
+                            raise RuntimeError("ARTIFACT_HASH_MISMATCH: existing constant blob is corrupt")
+                        needs_write = True
+            if needs_write:
                 temporary = path+'.tmp'
                 with open(temporary, 'wb') as handle:
                     handle.write(raw)

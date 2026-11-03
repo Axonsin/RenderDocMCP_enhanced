@@ -45,7 +45,7 @@ class Handler:
     def handle(self, request):
         self.calls.append(request)
         time.sleep(request["params"].get("delay", 0))
-        return {"id": request["id"], "result": request["params"], "api_contract_version": 3}
+        return {"id": request["id"], "result": request["params"], "api_contract_version": 4}
 
 
 class BridgeTests(unittest.TestCase):
@@ -216,7 +216,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_error_reply_is_not_a_success(self):
         self.server.handler = types.SimpleNamespace(handle=lambda request: {
-            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}, "api_contract_version": 3})
+            "id": request["id"], "error": {"code": -32000, "message": "SHADER_TOOL_MISSING: compiler"}, "api_contract_version": 4})
         self.start_server()
         with self.assertRaisesRegex(CLIENT.RenderDocBridgeError, "SHADER_TOOL_MISSING"):
             CLIENT.RenderDocBridge().call("get_shader_edit_context")

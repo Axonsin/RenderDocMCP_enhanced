@@ -133,8 +133,8 @@ class RenderDocBridge:
             "method": method,
             "params": params or {},
             "ipc_version": 2,
-            "server_version": "3.1.0",
-            "api_contract_version": 3,
+            "server_version": "4.0.0",
+            "api_contract_version": 4,
         }
         timeout = self.edit_timeout if method in EDIT_METHODS else self.timeout
         response_file = os.path.join(IPC_DIR, "response_%s.json" % request["id"])
@@ -169,8 +169,8 @@ class RenderDocBridge:
                         except OSError:
                             pass  # A validated result remains valid if cleanup fails.
                         if response.get("id") == request["id"]:
-                            if response.get("api_contract_version") != 3:
-                                raise RenderDocBridgeError("API_VERSION_MISMATCH: update both MCP server and RenderDoc extension to 3.x")
+                            if response.get("api_contract_version") != 4:
+                                raise RenderDocBridgeError("API_VERSION_MISMATCH: update both MCP server and RenderDoc extension to 4.x")
                             if "error" in response:
                                 error = response["error"]
                                 raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")

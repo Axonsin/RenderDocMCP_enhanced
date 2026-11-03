@@ -206,7 +206,7 @@ def test_diagnostics_device_timeout_keeps_local_bundle(tmp_path,monkeypatch):
 
 def test_mismatched_contract_and_package_versions_are_rejected_before_queries():
     calls=[]
-    facade=NS(runtime_info={'api_contract_version':3,'extension_version':'3.0.0'},
+    facade=NS(runtime_info={'api_contract_version':4,'extension_version':'3.0.0'},
               get_capture_status=lambda probe_replay=True:calls.append('called') or {})
     # Supply method placeholders only for handler construction; queried method is real.
     class Facade:
@@ -217,7 +217,7 @@ def test_mismatched_contract_and_package_versions_are_rejected_before_queries():
             return facade.get_capture_status if name=='get_capture_status' else lambda **kwargs:None
     handler=pipeline.HANDLER.RequestHandler(Facade())
     for request in [{'api_contract_version':2,'server_version':'3.0.0'},
-                    {'api_contract_version':3,'server_version':'2.0.0'}]:
+                    {'api_contract_version':4,'server_version':'2.0.0'}]:
         result=handler.handle(dict(request,id='request',method='get_capture_status',params={}))
         assert 'API_VERSION_MISMATCH' in result['error']['message']
     assert not calls

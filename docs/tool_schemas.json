@@ -1258,15 +1258,6 @@
         ],
         "default": null
       },
-      "mesh_stage": {
-        "default": "VSIn",
-        "enum": [
-          "VSIn",
-          "VSOut",
-          "GSOut"
-        ],
-        "type": "string"
-      },
       "instances": {
         "anyOf": [
           {
@@ -1285,11 +1276,7 @@
         "default": 0,
         "type": "integer"
       },
-      "export_meshes": {
-        "default": true,
-        "type": "boolean"
-      },
-      "export_textures": {
+      "export_constants": {
         "default": true,
         "type": "boolean"
       },
@@ -1323,9 +1310,17 @@
         ],
         "default": null
       },
-      "export_constants": {
-        "default": true,
-        "type": "boolean"
+      "export_options": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
       }
     },
     "required": [
@@ -1433,6 +1428,29 @@
       "limit": {
         "default": 100,
         "type": "integer"
+      },
+      "wait_seconds": {
+        "default": 0,
+        "type": "number"
+      },
+      "after_revision": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "wait_for": {
+        "default": "change",
+        "enum": [
+          "change",
+          "terminal"
+        ],
+        "type": "string"
       }
     },
     "required": [
@@ -1498,6 +1516,22 @@
       "export_constants": {
         "default": true,
         "type": "boolean"
+      },
+      "disassembly_targets": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": [
+          "default"
+        ]
       }
     },
     "required": [

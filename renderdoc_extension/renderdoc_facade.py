@@ -129,8 +129,8 @@ class RenderDocFacade:
     def resume_job(self, job_id, texture_budget=48):
         return self._jobs.resume(job_id, texture_budget)
 
-    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None, include_event_context=True, export_constants=True):
-        return self._investigation.export_shader_bundle(action_event_id, stage, output_dir, job_id, include_event_context, export_constants)
+    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None, include_event_context=True, export_constants=True, disassembly_targets=['default']):
+        return self._investigation.export_shader_bundle(action_event_id, stage, output_dir, job_id, include_event_context, export_constants, disassembly_targets)
 
     def compare_texture_events(self, resource_id, action_event_id_a, action_event_id_b, region, output_dir,
                                mip=0, slice_index=0, sample=0, depth_slice=0, value_domain="storage", job_id=None, aspect="all"):
@@ -384,8 +384,7 @@ class RenderDocFacade:
         )
 
     def dump_draws(self, output_dir, action_event_ids=None, marker_filter=None, action_event_id_range=None,
-                   mesh_stage="VSIn", instances=None, view_index=0, export_meshes=True, export_textures=True,
-                   max_textures=48, max_texture_edge=None, skip_depth=False, job_id=None, export_constants=True):
-        return self._batch.dump_draws(output_dir, action_event_ids, marker_filter, action_event_id_range,
-                                     mesh_stage, instances, view_index, export_meshes, export_textures,
-                                     max_textures, max_texture_edge, skip_depth, job_id, export_constants)
+                   instances=None, view_index=0, export_constants=True, max_textures=48,
+                   max_texture_edge=None, skip_depth=False, job_id=None, export_options=None):
+        return self._batch.dump_draws(output_dir,action_event_ids,marker_filter,action_event_id_range,
+            instances,view_index,export_constants,max_textures,max_texture_edge,skip_depth,job_id,export_options)

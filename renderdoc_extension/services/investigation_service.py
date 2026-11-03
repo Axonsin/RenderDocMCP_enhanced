@@ -73,8 +73,8 @@ class InvestigationService:
         os.makedirs(path, exist_ok=True)
         return path
 
-    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None,
-                             include_event_context=True, export_constants=True):
+    def shader_steps(self, action_event_id, stage, output_dir,
+                     include_event_context=True, export_constants=True, disassembly_targets=['default']):
         require_action(self.ctx, action_event_id)
         if any(type(x) is not bool for x in (include_event_context, export_constants)):
             raise ValueError("INVALID_REQUEST: export options must be booleans")
@@ -98,7 +98,13 @@ class InvestigationService:
                         payload["files"][raw_path] = bytes(ref.rawBytes)
                     files = [raw_path]
                     with timing.span('disassembly_targets'):
-                        payload['targets'] = [str(t) for t in c.GetDisassemblyTargets(True)]
+                        available = [str(t) for t in c.GetDisassemblyTargets(True)]
+                        requested = available[:1] if disassembly_targets == ['default'] else disassembly_targets
+                        if requested is not None:
+                            missing = set(requested) - set(available)
+                            if missing:
+                                raise ValueError('INVALID_DISASSEMBLY_TARGET: '+', '.join(sorted(missing)))
+                        payload['targets'] = available if requested is None else list(requested)
                     sources = []
                     for index, source in enumerate(getattr(ref.debugInfo, "files", [])):
                         path = os.path.join(directory, "source_%d_%s" % (index, os.path.basename(source.filename)))
@@ -204,9 +210,19 @@ class InvestigationService:
                 with timing.span('writing_shader_evidence'):
                     return write_evidence(_)
             yield ('worker', 'writing_shader_evidence', write)
+        return steps
+
+    def export_shader_bundle(self, action_event_id, stage, output_dir, job_id=None,
+                             include_event_context=True, export_constants=True, disassembly_targets=['default']):
+        if disassembly_targets is not None and (not isinstance(disassembly_targets, list) or
+                any(not isinstance(t, str) or not t for t in disassembly_targets)):
+            raise ValueError('INVALID_REQUEST: disassembly_targets must be a list of target names')
+        steps = self.shader_steps(action_event_id, stage, output_dir, include_event_context,
+                                  export_constants, disassembly_targets)
         return self.jobs.submit("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
                                                              output_dir=output_dir, include_event_context=include_event_context,
-                                                             export_constants=export_constants), steps, job_id)
+                                                             export_constants=export_constants,
+                                                             disassembly_targets=disassembly_targets), steps, job_id)
 
     def compare_texture_events(self, resource_id, action_event_id_a, action_event_id_b,
                                region, output_dir, mip=0, slice_index=0, sample=0,

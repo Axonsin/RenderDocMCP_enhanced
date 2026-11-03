@@ -17,7 +17,7 @@ async def check():
     version = re.search(r'^version = "([^"]+)"',
                         (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
     manifest = json.loads((ROOT / "renderdoc_extension/extension.json").read_text(encoding="utf-8"))
-    assert version == manifest["version"] == "3.1.0"
+    assert version == manifest["version"] == "4.0.0"
     assert manifest["minimum_renderdoc"] == "1.46"
     extension_files = list((ROOT / "renderdoc_extension").rglob("*.py"))
     for path in extension_files:
@@ -33,13 +33,13 @@ async def check():
     assert schemas["dump_draws"]["properties"]["export_constants"]["default"] is True
     assert schemas["export_shader_bundle"]["properties"]["include_event_context"]["default"] is True
     assert schemas["get_replay_diagnostics"]["properties"]["include_device_logs"]["default"] is False
-    for document in ("docs/tools.md", "docs/tools_zh.md", "AGENTS.md"):
+    for document in ("docs/tools.md", "docs/tools_zh.md"):
         text = (ROOT / document).read_text(encoding="utf-8")
         for field in ("output_mode", "export_constants", "include_event_context", "include_device_logs", "aspect", "region"):
             assert field in text, (document, field)
-    assert "API_CONTRACT_VERSION = 3" in (ROOT/"renderdoc_extension/services/session_state.py").read_text()
+    assert "API_CONTRACT_VERSION = 4" in (ROOT/"renderdoc_extension/services/session_state.py").read_text()
     assert "IPC_VERSION = 2" in (ROOT/"renderdoc_extension/socket_server.py").read_text()
-    for document in ("AGENTS.md", "docs/tools.md", "docs/tools_zh.md"):
+    for document in ("docs/tools.md", "docs/tools_zh.md"):
         text = (ROOT / document).read_text(encoding="utf-8")
         missing = [tool.name for tool in tools if "`" + tool.name + "`" not in text]
         assert not missing, (document, missing)

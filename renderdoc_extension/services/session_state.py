@@ -6,7 +6,7 @@ import uuid
 import qrenderdoc as qrd
 
 
-API_CONTRACT_VERSION = 3
+API_CONTRACT_VERSION = 4
 
 
 def build_fingerprint():

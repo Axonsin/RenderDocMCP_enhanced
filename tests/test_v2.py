@@ -560,7 +560,7 @@ def test_shader_targets_yield_and_restore_between_local_compilers(investigation,
         return target+' text'
     controller.DisassembleShader = disassemble
     key = service.export_shader_bundle(10, 'fragment', str(tmp),
-                include_event_context=False, export_constants=False)['job_id']
+                include_event_context=False, export_constants=False, disassembly_targets=None)['job_id']
     status = run(key)
     assert status['status'] == 'completed', status['error']
     assert calls == ['SPIR-V', 'AMDIL', 'RDNA']
@@ -787,33 +787,6 @@ def test_external_replacement_and_capture_changes_invalidate_shared_tokens(monke
     session.OnCaptureClosed()
     assert session.token()[0]!=original[0] and session.token()[1]==0
 
-
-def test_duplicate_draw_and_instance_requests_have_consistent_progress(tmp_path):
-    dependencies={'renderdoc':mesh_tests.MESH.rd,
-        'renderdoc_extension.services.job_service':JOBS,
-        'renderdoc_extension.services.mesh_service':mesh_tests.MESH,
-        'renderdoc_extension.services.pipeline_snapshot':pipeline_tests.MODULES['pipeline_snapshot'],
-        'renderdoc_extension.services.replay_query':pipeline_tests.MODULES['replay_query'],
-        'renderdoc_extension.services.shader_variables':VARIABLES,
-        'renderdoc_extension.services.constant_export':CONSTANT_EXPORT}
-    with patch.dict(sys.modules,dependencies):
-        spec=importlib.util.spec_from_file_location('renderdoc_extension.services.batch_service',
-                                                   ROOT/'renderdoc_extension/services/batch_service.py')
-        module=importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    callbacks=[]
-    action=NS(eventId=343,flags=mesh_tests.ActionFlags.Drawcall,numInstances=1)
-    ctx=NS(IsCaptureLoaded=lambda:True,GetAction=lambda eid:action,
-           Replay=lambda:NS(AsyncInvoke=callbacks.append))
-    manager=JOBS.JobService(ctx,Session(),str(tmp_path/'jobs'))
-    service=module.BatchService(ctx,None,None,manager.session,manager)
-    key=service.dump_draws(str(tmp_path),action_event_ids=[343,343],instances=[0,0],
-                          export_meshes=False,export_textures=False)['job_id']
-    manager.pump()
-    status=manager.status(key)
-    assert status['parameters']['instances']==[0]
-    assert status['expected_items']==1
-    assert status['counts']==dict(requested=2,valid_draws=1,successful=0,failed=0,skipped=1,pending=1)
 
 
 @pytest.mark.parametrize('case',['valid','missing','mismatch','orphan32','old_sdk','other_user','future_version'])

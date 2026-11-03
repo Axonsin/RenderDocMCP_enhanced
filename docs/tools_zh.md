@@ -4,7 +4,7 @@
 
 [English](tools.md)
 
-RenderDoc MCP **3.1.0**, RenderDoc **1.46+**. 完整参数 schema 见
+RenderDoc MCP **4.0.0**, RenderDoc **1.46+**. 完整参数 schema 见
 [tool_schemas.json](tool_schemas.json)，[Migration / 迁移说明](migration_v3.md)。
 
 ## 术语与字段约定
@@ -1002,30 +1002,37 @@ export_mesh_csv(action_event_id=1234, output_path="D:/output/mesh.csv", stage="V
 
 #### `dump_draws`
 
-提交可续跑的批量导出，返回 `job_id`，使用 `get_job_status` 查询。
-必需的 `output_dir` 替代 mesh_dir/texture_dir/summary_path；文件和清单位于
-output_dir/job_id。三种选择方式互斥：`action_event_ids`（1..256 个真实 draw）、
-`marker_filter`、`action_event_id_range={"min":...,"max":...}`；范围由服务端解析真实 draw。
+4.0 使用唯一的持久化导出引擎，完整配置见[迁移说明](migration_v4.md)。
+事件选择三选一：`action_event_ids`、`marker_filter`、`action_event_id_range`。
+默认导出 VSIn+VSOut、vertex+fragment Shader 证据、首个通用反汇编目标、
+PNG 预览与原始数值纹理、逐 draw 常量及固定管线状态，生成关联这些产物的统一清单。
+`instances` 默认为 `[0]`。组件列表设为空可以关闭对应的网格、Shader 或纹理导出。
 
-Options: `mesh_stage="VSIn"`, `instances=[0]`, `view_index=0`, `export_meshes=True`,
-`export_textures=True`, `export_constants=True`, `max_textures=48`, `max_texture_edge=None`, `skip_depth=False`, optional `job_id`.
-纹理额度耗尽时暂停，resume_job 补充额度。取消在原生步骤之间协作执行；
-不能跨捕获会话、修订或扩展重启续跑。
+`export_options` 字段：`mesh_stages`、`shader_stages`、`disassembly_targets`、
+`texture_modes`、`preview_format`、`mips`、`slices`、`samples`、`aspects`、`hlsl_converter`。
+mip/layer/sample 可选索引列表、`"all"` 或 `"bound"`；bound 覆盖 descriptor 范围，
+立方体面使用 slice 索引。`disassembly_targets=["default"]` 选择首个通用目标，
+`[]` 关闭反汇编，`null` 显式请求所有厂商目标。
+原始数据保留来源格式、布局和颜色空间；未知布局保留 opaque 字节，不猜测像素结构。
+不支持的深度/模板转换明确报错。每个 raw 子资源上限 64 MiB；卷纹理可导出 raw，
+卷预览明确报不支持。
 
-清单包含绑定、descriptor 子资源、采样器、Shader 身份、顶点布局、质量诊断和来源。
-移除 object_matrix 特判，不自动命名 UV/albedo/normal。相同文件名不代表可复用；
-跨事件重新读取后，才按导出内容哈希去重。过滤条件必须显式配置。
+计划及 SHA256 checkpoint 位于 `output_dir/<job_id>/`。`resume_job` 可补导完成任务中
+缺失/损坏的文件，也可在取消、失败、捕获重开或扩展重启后恢复。当前本地 RDC、原始
+回放、扩展构建、选项和转换器哈希必须一致。绑定 ID 重新获取，文件校验通过才复用。
+Shader 共享时包含管线身份；纹理保持每个事件/子资源独立；常量保留逐 draw 来源。
 
-`export_constants=True`（默认）逐事件保存常量证据：原始常量字节、完整反射布局与
-解码值，按每个确切事件/范围读取（dynamic offset 已包含）。每个绑定 JSON 保留类型、
-数组/矩阵 stride、存储/解码顺序及原始文件哈希/大小；相同字节可共享文件，但来源
-记录按事件分别保留。合法未绑定项标记 skipped；请求的导出失败会进入错误清单并阻止
-干净的完成状态。完整值只留在磁盘，不进入工具响应或作业摘要。
+纹理额度耗尽会暂停，取消在步骤之间生效。原生调用不能强制中断。普通资产失败不会
+丢弃其他成功产物；回放失联停止任务。不会推断 Unity 专用语义。
 
 ```python
-job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350], max_textures=48)
-get_job_status(job_id=job["job_id"])
-resume_job(job_id=job["job_id"], texture_budget=48)  # only paused/cancelled
+job = dump_draws(output_dir="D:/exports", action_event_ids=[343,350],
+    export_options={"mesh_stages":["VSIn","VSOut"],
+                    "texture_modes":["preview","raw"], "slices":"bound"})
+state = get_job_status(job_id=job["job_id"], wait_seconds=10, wait_for="terminal")
+state = get_job_status(job_id=job["job_id"], wait_seconds=10,
+                       after_revision=state["status_revision"])
+resume_job(job_id=job["job_id"], texture_budget=96)
 ```
 
 #### `run_script`
@@ -1073,7 +1080,7 @@ cancel_job(job_id=job["job_id"])   # cooperative: honoured at mcp.check_cancel()
 
 ## Job control and investigation / 作业控制与调查
 
-要求 RenderDoc 1.46+，路径必须为绝对路径，服务器与扩展一起升级：API 契约为 **3**、
+要求 RenderDoc 1.46+，路径必须为绝对路径，服务器与扩展一起升级：API 契约为 **4**、
 文件 IPC 为 **2**，版本不匹配直接报 `API_VERSION_MISMATCH`，不会返回看似合法的空状态。
 回放查询拒绝断连、fatal 或 API 不一致的控制器。所有服务共享
 `capture_session`/`replay_revision`，shader 编辑另返回独立的 `edit_session`；
@@ -1083,10 +1090,10 @@ cancel_job(job_id=job["job_id"])   # cooperative: honoured at mcp.check_cancel()
 | Tool | Parameters | Result |
 |---|---|---|
 | `get_replay_context` | none | Current/configured hosts, official protocol device discovery, cached service/version state, active job |
-| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500) | 状态、阶段、进度、紧凑 draw 摘要、details_path／artifact_paths（含常量导出计数）、错误及清单；像素历史页保留原生字段 |
+| `get_job_status` | `job_id`, `offset=0`, `limit=100` (1..500), `wait_seconds=0` (0..20), `after_revision=None`, `wait_for="change"` (change/terminal) | 状态、阶段、进度、紧凑 draw 摘要、details_path／artifact_paths（含常量导出计数）、错误及清单；像素历史页保留原生字段 |
 | `cancel_job` | `job_id` | Cooperative cancellation request; native loading cannot be interrupted |
-| `resume_job` | `job_id`, `texture_budget=48` | Continue paused/cancelled work in the same session/revision |
-| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
+| `resume_job` | `job_id`, `texture_budget=48` | Rebuild and verify durable draw exports across restart/reopen; other jobs retain same-session rules |
+| `export_shader_bundle` | `action_event_id`, `stage`, `output_dir`, `include_event_context=True`, `export_constants=True`, `disassembly_targets=["default"]` (null=all, []=none), optional `job_id` | Job ID; raw shader, encoding, entry point, reflection, disassembly, captured sources, event/stage bindings, samplers, signatures, constant artifacts and SHA256 files |
 | `compare_texture_events` | `resource_id`, `action_event_id_a`, `action_event_id_b`, `region={x,y,width,height}`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, `depth_slice=0`, `value_domain="storage"`, `aspect="all"`, optional `job_id` | Job ID; signed B-minus-A float64 file, per-channel metrics, changed/nonfinite counts；可对指定 MSAA 样本做颜色/深度/模板数值比较，不隐式 resolve |
 | `get_pixel_history` | `resource_id`, `x`, `y`, `action_event_id`, `output_dir`, `mip=0`, `slice_index=0`, `sample=0`, optional `job_id` | Job ID; native fragments up to the action, validity/failure flags; get_job_status paginates fragments |
 

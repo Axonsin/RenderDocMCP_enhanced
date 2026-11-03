@@ -18,7 +18,7 @@ schema 与响应为准**——以下记录的是当前已知的能力面与语�
 - 捕获是否加载、图形 API、文件名；
 - **回放健康**：响应中的 replay 健康字段（如 `replay_healthy`/`replay_error`）；
 - 版本与协议一致性：扩展版本、RenderDoc 版本、IPC 协议版本与预期是否相符
-  （当前 API 契约为 **3**、文件 IPC 为 **2**；MCP 服务器与扩展必须成套同版本，
+  （当前 API 契约为 **4**、文件 IPC 为 **2**；MCP 服务器与扩展必须成套同版本，
   混部直接报 `API_VERSION_MISMATCH`，不会进入部分兼容模式）。
 
 断连、fatal 或 API 不一致时回放查询直接失败，不返回看似合法的空管线。健康核对不通过
@@ -103,7 +103,7 @@ shader；请求/IPC 日志各轮转三份、每份 10 MiB，本机/设备日志�
 
 ## 6. 作业、来源与数值验证
 
-- 要求 MCP 与扩展均为 3.1.0、RenderDoc >=1.46、API contract=3；核对构建指纹。
+- 要求 MCP 与扩展均为 4.0.0、RenderDoc >=1.46、API contract=4；核对构建指纹。
 - open_capture/dump_draws/export_shader_bundle/compare_texture_events/get_pixel_history/run_script
   返回 job_id。通过 get_job_status 查询；paused 可补充纹理额度，cancel/resume 为协作操作。
   原生调用不能强行取消。stalled 或提交超时不证明失败，保留原 job_id 查询，勿盲目重试。
@@ -144,3 +144,20 @@ shader；请求/IPC 日志各轮转三份、每份 10 MiB，本机/设备日志�
   并如实标注来源。
 - 把 UI 或原生补取的结果记成纯 MCP 成功。
 - 在未核对健康的情况下把空结果当真值进入下游。
+
+
+## 完整批量导出（4.0）
+
+`dump_draws` 使用唯一的持久化导出引擎。用 `export_options.mesh_stages`（默认
+VSIn+VSOut）、`shader_stages`（默认 vertex+fragment）、`texture_modes`（默认
+preview+raw）选择证据；空列表关闭组件。旧 mesh_stage/export_meshes/export_textures
+参数已移除。默认只导出首个通用反汇编目标，显式 disassembly_targets=null 才导出全部。
+
+先提交计划，再用 `get_job_status(wait_seconds=10, after_revision=...)` 等待快照更新；
+不向 UI 连续发送轮询。阶段计时、当前 EID/资源、失败摘要与产物进度可直接查询。
+任务停滞不等于原生调用已失败，不自动重提 RESULT_PENDING。
+
+`resume_job` 可在重载、重开同一捕获后恢复，也可补导已完成任务中损坏的文件。
+需要原始回放和本地 RDC：捕获、API、构建、选项及转换器哈希必须一致；每个已有
+产物通过 SHA256 才复用；绑定 ID 必须重取。纹理复用按事件和子资源区分。
+这些能力通过标准 MCP 调用提供，无需自行访问文件 IPC 或写循环导出脚本。

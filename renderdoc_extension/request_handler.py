@@ -84,8 +84,8 @@ class RequestHandler:
                 )
 
             runtime = getattr(self.facade, "runtime_info", {}) or {}
-            if runtime.get("api_contract_version") == 3 and request.get("api_contract_version") != 3:
-                raise ValueError("API_VERSION_MISMATCH: MCP server and extension must both use API contract 3")
+            if runtime.get("api_contract_version") == 4 and request.get("api_contract_version") != 4:
+                raise ValueError("API_VERSION_MISMATCH: MCP server and extension must both use API contract 4")
             jobs = getattr(self.facade, "_jobs", None)
             controls = {"ping", "get_capture_status", "get_replay_context", "get_job_status", "cancel_job"}
             resubmission = (jobs and params.get("job_id") in jobs.records and
@@ -105,7 +105,7 @@ class RequestHandler:
             if runtime.get("extension_version") and request.get("server_version") != runtime["extension_version"]:
                 raise ValueError("API_VERSION_MISMATCH: deploy matching MCP server and extension versions")
             result = self._methods[method](params)
-            return {"id": request_id, "result": result, "api_contract_version": 3}
+            return {"id": request_id, "result": result, "api_contract_version": 4}
 
         except ValueError as e:
             code, message = self._classify_error(str(e))
@@ -117,7 +117,7 @@ class RequestHandler:
 
     def _error_response(self, request_id, code, message):
         """Create an error response"""
-        return {"id": request_id, "error": {"code": code, "message": message}, "api_contract_version": 3}
+        return {"id": request_id, "error": {"code": code, "message": message}, "api_contract_version": 4}
 
     def _classify_error(self, message):
         """Classify exception messages into stable JSON-RPC error responses."""
@@ -207,7 +207,7 @@ class RequestHandler:
             "renderdoc_version": runtime.get("renderdoc_version"),
             "ipc_version": runtime.get("ipc_version"),
             "capture_loaded": capture_loaded,
-            "api_contract_version": 3,
+            "api_contract_version": 4,
             "extension_build_hash": runtime.get("extension_build_hash"),
         }
 

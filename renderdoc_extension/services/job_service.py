@@ -19,7 +19,16 @@ def atomic_json(path, value):
     try:
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, allow_nan=False, indent=2)
-        os.replace(temporary, path)
+        # Windows readers/antivirus can briefly omit FILE_SHARE_DELETE. Retry
+        # the SAME atomic publication, never rerun a native export operation.
+        for attempt in range(7):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as exc:
+                if getattr(exc,'winerror',None) not in (5,32,33) or attempt == 6:
+                    raise
+                time.sleep(.005*(2**attempt))
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
@@ -30,23 +39,35 @@ class PauseJob(Exception):
 
 
 def item_summary(item, details_path):
-    result = {k: item[k] for k in ("item_key", "action_event_id", "instance", "view_index",
-              "complete", "ok", "error", "warnings", "serialization_complete") if k in item}
-    result["details_path"] = details_path
-    mesh = item.get("mesh") or {}
-    result["mesh"] = {k: mesh[k] for k in ("success", "output_path", "index_path", "vertex_count",
-                      "index_count", "stage", "data_quality") if k in mesh}
-    textures = item.get("textures") or []
-    exports = [t["export"] for t in textures if "export" in t]
-    result["texture_exports"] = {"total": len(textures), "saved": sum("path" in e for e in exports),
-        "failed": sum("error" in e for e in exports), "skipped": sum("skipped" in e for e in exports),
-        "pending": len(textures) - len(exports)}
-    result["artifact_paths"] = list(dict.fromkeys([mesh[k] for k in ("output_path", "index_path") if k in mesh] +
-                                                [e["path"] for e in exports if "path" in e]))
-    constants = item.get("constants", [])
-    result["constant_exports"] = {"total": len(constants), "saved": sum(r.get("status") == "exported" for r in constants),
-                                  "failed": sum(r.get("status") == "failed" for r in constants)}
-    result["artifact_paths"].extend(p for r in constants for p in [r.get("details_path"), r.get("raw", {}).get("path")] if p)
+    result = {k:item[k] for k in ('item_key','action_event_id','instance','view_index',
+              'complete','ok','error','warnings','serialization_complete') if k in item}
+    result['details_path'] = details_path
+    mesh = item.get('mesh') or {}
+    fields = ('success','output_path','index_path','vertex_count','index_count','stage','data_quality')
+    result['mesh'] = {k:mesh[k] for k in fields if k in mesh}
+    result['meshes'] = {stage:{k:value[k] for k in fields if k in value}
+                        for stage,value in item.get('meshes',{}).items()}
+    result['shader_exports'] = {stage:{k:value[k] for k in ('shader_id','original','manifest_path','hlsl') if k in value}
+                                for stage,value in item.get('shader_exports',{}).items()}
+    textures = item.get('textures') or []
+    exports = [e for t in textures for e in (t.get('exports') or ([t['export']] if 'export' in t else []))]
+    result['texture_exports'] = dict(total=len(exports),saved=sum('path' in e for e in exports),
+        failed=sum('error' in e for e in exports),skipped=sum('skipped' in e for e in exports),
+        pending=sum('export' not in t and 'exports' not in t for t in textures))
+    def artifacts(value):
+        found=[]
+        if isinstance(value,dict):
+            for key,v in value.items():
+                if key in ('path','output_path','index_path','details_path','metadata_path','manifest_path','original') and isinstance(v,str):
+                    found.append(v)
+                else: found.extend(artifacts(v))
+        elif isinstance(value,list):
+            for v in value: found.extend(artifacts(v))
+        return found
+    result['artifact_paths']=list(dict.fromkeys(artifacts(item)))
+    constants=item.get('constants',[])
+    result['constant_exports']=dict(total=len(constants),saved=sum(r.get('status')=='exported' for r in constants),
+                                    failed=sum(r.get('status')=='failed' for r in constants))
     return result
 
 
@@ -57,6 +78,7 @@ class JobService:
         os.makedirs(self.directory, exist_ok=True)
         self.lock = threading.RLock()
         self.records, self.runners, self.pending = {}, {}, {}
+        self.recovery_handlers = {}
         self.active = None
         self.inflight = False
         for name in os.listdir(self.directory):
@@ -75,7 +97,8 @@ class JobService:
                 continue
 
     def _save(self, record):
-        record["api_contract_version"] = 3
+        record['status_revision'] = record.get('status_revision', 0)+1
+        record["api_contract_version"] = 4
         if record["kind"] == "dump_draws" and record["items"] is not None:
             complete = sum(bool(i.get("complete")) for i in record["items"])
             record["counts"] = {
@@ -84,6 +107,8 @@ class JobService:
                 "failed": sum(bool(i.get("complete")) and i.get("ok") is False for i in record["items"]),
                 "skipped": record.get("skipped_count", 0),
                 "pending": max(0, record.get("expected_items", 0) - complete)}
+            record['failures'] = [dict(action_event_id=i.get('action_event_id'),error=i.get('error'),
+                                      item_key=i.get('item_key')) for i in record['items'] if i.get('ok') is False][-10:]
         if "item_files" not in record:
             record["item_files"] = []
             for index, item in enumerate(record["items"] or []):
@@ -154,6 +179,8 @@ class JobService:
                           manifest_path=os.path.join(self.directory, job_id + ".json"),
                           idle_seconds=max(0, time.time() - result["last_progress_at"]))
             result["stalled"] = result["status"] == "running" and result["idle_seconds"] > 30
+            if result['status'] == 'running' and 'phase_started_at' in result:
+                result['phase_elapsed_seconds'] = max(0,time.time()-result['phase_started_at'])
             return result
 
     def cancel(self, job_id):
@@ -180,6 +207,17 @@ class JobService:
                 # replay side effects or report completion for work already stopped.
                 # This stays ahead of STALE_JOB: a new job_id is the fix either way.
                 raise ValueError("JOB_NOT_RESUMABLE: submit a new job_id to run it again")
+            if record.get('durable_plan') and record['kind'] in self.recovery_handlers:
+                if self.inflight or record['status'] in ('queued','running','cancelling'):
+                    raise ValueError('JOB_BUSY: wait for the current operation before resuming')
+                runner = self.recovery_handlers[record['kind']](record)
+                self.runners[job_id] = iter(runner)
+                self.pending.pop(job_id,None)
+                if self.active == job_id: self.active = None
+                record.update(session=list(self.session.token()),provenance=self.session.describe(),items=[],item_files=[])
+                # Durable recovery rebuilds the plan, validating identity and every
+                # artifact on a worker before reusing anything in this session.
+                record.update(status='paused')
             if (job_id not in self.runners or record["session"] != list(self.session.token())):
                 raise ValueError("STALE_JOB: cannot resume across capture/revision or extension restart")
             if record["status"] not in ("paused", "cancelled"):
@@ -188,7 +226,7 @@ class JobService:
             if os.path.exists(cancel_path):
                 os.remove(cancel_path)
             record.update(status="queued", cancel_requested=False, error=None,
-                          texture_budget=texture_budget, last_progress_at=time.time())
+                          texture_budget=texture_budget, pause_reason=None, last_progress_at=time.time())
             self._save(record)
             return self.status(job_id, limit=1)
 
@@ -262,7 +300,10 @@ class JobService:
                 return
             kind, phase, function = self.pending[key]
             record.update(status="running", phase=phase,
+                          step_kind=kind, phase_started_at=time.time(),
+                          waiting_for_native=kind in ('replay','ui_native'),
                           cancel_supported=kind != "ui_native", last_progress_at=time.time())
+            record['current_operation'] = phase
             self.inflight = True
             self._save(record)
 
@@ -308,6 +349,12 @@ class JobService:
                 if "guard" in locals() and guard and controller is not None:
                     guard.thread_state.active = False
                 with self.lock:
+                    record['phase_elapsed_seconds'] = max(0,time.time()-record.get('phase_started_at',time.time()))
+                    record['waiting_for_native'] = False
+                    record.setdefault('phase_timings',{})[phase] = record['phase_elapsed_seconds']
+                    if len(record['phase_timings']) > 64:
+                        record['phase_timings'].pop(next(iter(record['phase_timings'])))
+                    if record['status'] == 'paused': record['pause_reason'] = record.get('error')
                     self.inflight = False
                     self._save(record)
 

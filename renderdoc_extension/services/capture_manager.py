@@ -198,6 +198,8 @@ class CaptureManager:
         result["capabilities"] = {"async_jobs": True, "event_scoped_buffers": True,
                                   "shader_bundles": True, "texture_comparison": True,
                                   "event_constant_exports": True, "texture_file_transport": True,
+                                  "durable_batch_exports": True, "multi_stage_mesh_exports": True,
+                                  "selectable_disassembly_targets": True,
                                   "offline_diagnostics": True, "depth_stencil_aspects": ["D16", "D24S8"]}
 
         if not self.ctx.IsCaptureLoaded():

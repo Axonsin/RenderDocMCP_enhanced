@@ -14,7 +14,7 @@ from .bridge.client import RenderDocBridge, RenderDocBridgeError
 # Initialize FastMCP server
 mcp = FastMCP(
     name="RenderDoc MCP Server",
-    version="3.1.0",
+    version="4.0.0",
 )
 
 # RenderDoc bridge client
@@ -815,24 +815,30 @@ def export_mesh_csv(
 @mcp.tool()
 def dump_draws(output_dir: str, action_event_ids: list[int] | None = None,
                marker_filter: str | None = None, action_event_id_range: dict[str, int] | None = None,
-               mesh_stage: Literal["VSIn", "VSOut", "GSOut"] = "VSIn",
                instances: list[int] | None = None, view_index: int = 0,
-               export_meshes: bool = True, export_textures: bool = True,
-               max_textures: int = 48, max_texture_edge: int | None = None,
-               skip_depth: bool = False, job_id: str | None = None,
-               export_constants: bool = True) -> dict:
-    """Submit a resumable export into output_dir/<job_id>/.
+               export_constants: bool = True, max_textures: int = 48,
+               max_texture_edge: int | None = None, skip_depth: bool = False,
+               job_id: str | None = None, export_options: dict | None = None) -> dict:
+    """Submit a complete, durable evidence export into output_dir/<job_id>/.
 
-    Select exactly one of explicit draw IDs, a marker, or an EID range. Range/marker
-    selectors resolve real draws. Instances default to [0]. Texture allowance
-    exhaustion pauses the job; resume_job supplies a fresh allowance. All exports
-    retain event, binding and subresource provenance. No object-matrix inference.
+    Select draws by IDs, marker or range. Defaults: VSIn+VSOut, vertex+fragment
+    shaders, SPIR-V (RenderDoc) disassembly, PNG preview+raw textures, per-draw
+    constants, fixed state and a unified manifest. Empty component lists disable
+    those components. export_options accepts mesh_stages, shader_stages,
+    disassembly_targets (["default"]=first portable target, null=all, []=none), texture_modes (preview/raw),
+    preview_format (PNG/EXR/DDS), mips/slices/samples (bound/all/index list),
+    aspects (all/depth/stencil), hlsl_converter (installed SPIRV-Cross path).
+    Bound selection includes the descriptor's mip/layer range. Slice indices
+    include cube faces. A local RDC copy and original unmodified replay are
+    required for durable recovery. resume_job rebuilds interrupted exports and
+    verifies capture/build/options/each artifact before reuse. No replacement
+    is applied, and no Unity-specific semantics are inferred.
     """
     return bridge.call("dump_draws", dict(output_dir=output_dir, action_event_ids=action_event_ids,
-        marker_filter=marker_filter, action_event_id_range=action_event_id_range, mesh_stage=mesh_stage,
-        instances=instances, view_index=view_index, export_meshes=export_meshes, export_textures=export_textures,
-        max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth, job_id=job_id,
-        export_constants=export_constants))
+        marker_filter=marker_filter, action_event_id_range=action_event_id_range,
+        instances=instances, view_index=view_index, export_constants=export_constants,
+        max_textures=max_textures, max_texture_edge=max_texture_edge, skip_depth=skip_depth,
+        job_id=job_id, export_options=export_options))
 
 
 @mcp.tool()
@@ -903,15 +909,22 @@ def get_replay_diagnostics(output_dir: str | None = None, include_device_logs: b
 
 
 @mcp.tool()
-def get_job_status(job_id: str, offset: int = 0, limit: int = 100) -> dict:
+def get_job_status(job_id: str, offset: int = 0, limit: int = 100,
+                   wait_seconds: float = 0, after_revision: int | None = None,
+                   wait_for: Literal['change','terminal'] = 'change') -> dict:
     """Get persisted job progress/results. Pagination uses items; limit is 1..500.
 
     A completed job is not a certification of reconstruction or user acceptance.
     stalled means no recent progress, not proof that the native operation failed.
+    wait_seconds bounds a file-only wait to 0..20 seconds. wait_for='terminal'
+    waits for completion/pause/error instead of waking at each small step;
+    'change' wakes on status_revision updates. after_revision suppresses
+    unchanged item pages. No UI or replay request is made while waiting.
     Batch items are compact summaries; details_path points to full persisted
     bindings/layouts, while artifact_paths lists exported files.
     """
-    return bridge.call("get_job_status", dict(job_id=job_id, offset=offset, limit=limit))
+    return bridge.call("get_job_status", dict(job_id=job_id, offset=offset, limit=limit,
+                       wait_seconds=wait_seconds, after_revision=after_revision, wait_for=wait_for))
 
 
 @mcp.tool()
@@ -922,14 +935,19 @@ def cancel_job(job_id: str) -> dict:
 
 @mcp.tool()
 def resume_job(job_id: str, texture_budget: int = 48) -> dict:
-    """Resume a paused/cancelled export in the same capture/replay revision."""
+    """Resume durable draw exports after pause, cancellation, failure or restart.
+
+    Completed durable exports can be verified/repaired too. Open the same local
+    capture in original replay first. Build/capture/options/converter identity
+    and artifact hashes must match. Other job kinds retain same-session rules.
+    """
     return bridge.call("resume_job", dict(job_id=job_id, texture_budget=texture_budget))
 
 
 @mcp.tool()
 def export_shader_bundle(action_event_id: int, stage: str, output_dir: str,
                          job_id: str | None = None, include_event_context: bool = True,
-                         export_constants: bool = True) -> dict:
+                         export_constants: bool = True, disassembly_targets: list[str] | None = ["default"]) -> dict:
     """Submit a shader evidence export: raw bytes, reflection, disassembly and embedded sources.
 
     Source text is only included when actually preserved in the capture. Returns a
@@ -937,7 +955,8 @@ def export_shader_bundle(action_event_id: int, stage: str, output_dir: str,
     """
     return bridge.call("export_shader_bundle", dict(action_event_id=action_event_id, stage=stage,
                                                    output_dir=output_dir, job_id=job_id,
-                                                   include_event_context=include_event_context, export_constants=export_constants))
+                                                   include_event_context=include_event_context, export_constants=export_constants,
+                                                   disassembly_targets=disassembly_targets))
 
 
 @mcp.tool()

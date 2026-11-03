@@ -43,8 +43,10 @@ _RELOAD_MODULES = [
     ".services.shader_edit_service",
     ".services.analysis_service",
     ".services.constant_export",
-    ".services.batch_service",
     ".services.investigation_service",
+    ".services.export_checkpoint",
+    ".services.batch_export",
+    ".services.batch_service",
     ".services.script_service",
     ".services",
     ".renderdoc_facade",
@@ -118,7 +120,7 @@ def _runtime_info(renderdoc_version):
     from .services.session_state import build_fingerprint
     return {
         "extension_version": _extension_version(),
-        "api_contract_version": 3,
+        "api_contract_version": 4,
         "extension_build_hash": build_fingerprint(),
         "renderdoc_version": renderdoc_version,
         "ipc_version": socket_server.IPC_VERSION,
